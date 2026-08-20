@@ -20,6 +20,8 @@ Environment (.env):
 import asyncio
 import logging
 import os
+import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional, Sequence
 
@@ -256,6 +258,49 @@ SCHEMA_STATEMENTS = [
         FOREIGN KEY (user_id) REFERENCES users(id)
     );
     """,
+    # ------------------------------------------------------------------
+    # Referral / seller growth system.
+    # These two tables are additive-only (CREATE TABLE IF NOT EXISTS) and
+    # do not touch any existing table, so applying this on a database that
+    # already has data is safe (no ALTER TABLE, no data migration needed).
+    #
+    # `referrals` is the "Referral Event" from the architecture:
+    #   Referral (seller.id used directly as the referral code)
+    #     -> Referral Event  (one row per successfully-attributed new user)
+    #     -> Reward Rules    (REFERRAL_REWARD_RULES constant, see below)
+    #     -> Reward          (referral_rewards table, reserved for later)
+    #
+    # UNIQUE(referred_user_id) guarantees a given user can be attributed to
+    # at most ONE seller, ONE time, ever -- this is what prevents double
+    # counting / repeated referral credit for the same user.
+    # ------------------------------------------------------------------
+    """
+    CREATE TABLE IF NOT EXISTS referrals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        seller_id INTEGER NOT NULL,
+        referred_user_id INTEGER NOT NULL UNIQUE,
+        source TEXT NOT NULL DEFAULT 'deep_link',
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (seller_id) REFERENCES sellers(id),
+        FOREIGN KEY (referred_user_id) REFERENCES users(id)
+    );
+    """,
+    # Reserved for future automated rewards (5/20/50/100 referral
+    # milestones -> badge / boost / featured / special-seller). No code
+    # path writes to this table yet; it only exists now so that adding
+    # real rewards later never requires a schema migration.
+    """
+    CREATE TABLE IF NOT EXISTS referral_rewards (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        seller_id INTEGER NOT NULL,
+        milestone INTEGER NOT NULL,
+        reward_type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        granted_at TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (seller_id) REFERENCES sellers(id)
+    );
+    """,
 ]
 
 INDEX_STATEMENTS = [
@@ -269,6 +314,8 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_reviews_product ON reviews(product_id);",
     "CREATE INDEX IF NOT EXISTS idx_claims_seller ON seller_claims(seller_id);",
     "CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);",
+    "CREATE INDEX IF NOT EXISTS idx_referrals_seller ON referrals(seller_id);",
+    "CREATE INDEX IF NOT EXISTS idx_referral_rewards_seller ON referral_rewards(seller_id);",
 ]
 
 
@@ -630,6 +677,104 @@ async def notify_user(user_id: int, title: str, message: str, ntype: str = "info
 
 
 # ======================================================================
+# 9.5 REFERRAL / SELLER GROWTH SYSTEM
+# ======================================================================
+# Deep-link format used everywhere in this section:
+#   https://t.me/<bot_username>?start=shop_<seller_id>
+# aiogram delivers this to handle_start() as message.text == "/start shop_123".
+#
+# Reward milestones are declared here as a plain constant (NOT written to
+# any table yet) so the thresholds/labels are visible to the user as soon
+# as this system launches, without activating any real reward yet. When
+# real automated rewards are built, they read this same list and write
+# into the already-existing `referral_rewards` table -- no schema change,
+# no rewrite of the counting logic below.
+REFERRAL_REWARD_RULES = [
+    (5, "⭐ امتیاز"),
+    (20, "🔥 Boost رایگان"),
+    (50, "⭐ Featured چندروزه"),
+    (100, "🏆 فروشنده ویژه"),
+]
+
+REFERRAL_DEEP_LINK_RE = re.compile(r"^shop_(\d+)$")
+
+
+def build_referral_link(bot_username: str, seller_id: int) -> str:
+    return f"https://t.me/{bot_username}?start=shop_{seller_id}"
+
+
+async def get_referral_count(seller_id: int) -> int:
+    row = await db.fetchone(
+        "SELECT COUNT(*) AS c FROM referrals WHERE seller_id = ?;", (seller_id,)
+    )
+    return row["c"] if row else 0
+
+
+def next_referral_milestone(count: int):
+    """Returns (threshold, reward_label) for the next milestone not yet
+    reached, or None if every currently-defined milestone is reached."""
+    for threshold, label in REFERRAL_REWARD_RULES:
+        if count < threshold:
+            return threshold, label
+    return None
+
+
+async def record_referral_if_new(seller_id: int, referred_user_id: int) -> bool:
+    """Attribute `referred_user_id` to `seller_id`'s referral link.
+
+    Returns True if a new referral was recorded, False if this user was
+    already attributed to some seller before (UNIQUE(referred_user_id)
+    enforces this at the database level too -- this is belt-and-suspenders
+    so we never even attempt a doomed INSERT, and never raise to the
+    caller either way).
+    """
+    try:
+        existing = await db.fetchone(
+            "SELECT id FROM referrals WHERE referred_user_id = ?;", (referred_user_id,)
+        )
+        if existing:
+            return False
+        await db.execute(
+            """INSERT INTO referrals (seller_id, referred_user_id, source, created_at)
+               VALUES (?, ?, 'deep_link', ?);""",
+            (seller_id, referred_user_id, now_iso()),
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 - a referral glitch must never break /start
+        logger.error("Failed to record referral for seller %s: %s", seller_id, exc)
+        return False
+
+
+async def get_sellers_owned_by_user(user_id: int) -> list:
+    return await db.fetchall(
+        """SELECT id, name FROM sellers
+           WHERE created_by_user_id = ? OR owner_user_id = ?
+           ORDER BY id DESC;""",
+        (user_id, user_id),
+    )
+
+
+async def referral_stats_text(bot_username: str, seller_id: int, seller_name: str) -> str:
+    count = await get_referral_count(seller_id)
+    link = build_referral_link(bot_username, seller_id)
+    milestone = next_referral_milestone(count)
+    lines = [
+        f"🎁 لینک اختصاصی فروشگاه «{seller_name}»",
+        "",
+        "این لینک را در استوری اینستاگرام یا کانال تلگرامت منتشر کن تا افراد بیشتری فروشگاهت را پیدا کنند.",
+        "",
+        f"🔗 لینک اختصاصی فروشگاه:\n{link}",
+        "",
+        "📊 آمار معرفی:",
+        f"👥 کاربران معرفی‌شده: {count}",
+    ]
+    if milestone:
+        threshold, label = milestone
+        lines.append(f"🏁 مرحله بعدی: {threshold} معرفی ← {label}")
+    return "\n".join(lines)
+
+
+# ======================================================================
 # 10. KEYBOARDS
 # ======================================================================
 def kb_add_back(builder: InlineKeyboardBuilder, callback_data: str, text: str = f"{EMOJI_BACK} بازگشت") -> None:
@@ -834,6 +979,467 @@ async def handle_category(callback: CallbackQuery, state: FSMContext) -> None:
 
 
 # ======================================================================
+# 12.5 SEARCH ENGINE — LocalQueryParser (local, free, no external API)
+# ======================================================================
+# Architecture (as required):
+#
+#     User Query -> QueryParser -> StructuredQuery -> SearchEngine
+#                 -> Ranking -> Results
+#
+# `QueryParser` is a small interface/contract. `LocalQueryParser` is the
+# only implementation today: pure Python, regex + dictionary based, no
+# network calls, no paid API, nothing external at all. `SearchEngine`
+# only ever talks to the `QueryParser` interface, never to
+# `LocalQueryParser` directly -- so a future `AIQueryParser` (calling an
+# external AI model) can be added later as a drop-in replacement:
+#
+#     search_engine = SearchEngine(AIQueryParser())
+#
+# without touching SearchEngine, the ranking logic, or any handler.
+# ------------------------------------------------------------------
+
+
+@dataclass
+class StructuredQuery:
+    """The output of any QueryParser. Every field is optional -- a parser
+    is allowed to leave anything it isn't confident about as None, and
+    SearchEngine will simply not filter on that field."""
+
+    raw_query: str
+    keyword: Optional[str] = None
+    category: Optional[str] = None
+    city: Optional[str] = None
+    min_price: Optional[float] = None
+    max_price: Optional[float] = None
+    color: Optional[str] = None
+    gender: Optional[str] = None
+
+    def has_any_extracted_field(self) -> bool:
+        """True only if the parser extracted something MORE than a bare
+        keyword (category/city/price/color/gender). A keyword-only result
+        is deliberately NOT treated as "structured": plain_keyword_search
+        already covers product name+description+seller name+description+
+        category name for a single term, which is STRICTLY broader than
+        the structured path's name/description-only match. Routing a bare
+        keyword through the structured pipeline would only narrow the
+        results for no benefit, so bare-keyword queries go straight to
+        the plain fallback instead.
+        """
+        return any([
+            self.category, self.city,
+            self.min_price is not None, self.max_price is not None,
+            self.color, self.gender,
+        ])
+
+    def simplified(self) -> "StructuredQuery":
+        """Drop the most restrictive fields (price, city) but keep the
+        core intent (keyword/category), used as a middle fallback step
+        between a full structured search and the raw-text plain search."""
+        return StructuredQuery(raw_query=self.raw_query, keyword=self.keyword, category=self.category)
+
+
+class QueryParser:
+    """Contract every query parser must follow. SearchEngine depends on
+    this interface only -- see module docstring above."""
+
+    def parse(self, raw_query: str) -> StructuredQuery:  # pragma: no cover - interface
+        raise NotImplementedError
+
+
+# ------------------------------------------------------------------
+# LocalQueryParser building blocks (all pure functions -> easy to unit
+# test without a database or network connection).
+# ------------------------------------------------------------------
+_PERSIAN_DIGITS = "۰۱۲۳۴۵۶۷۸۹"
+_ARABIC_DIGITS = "٠١٢٣٤٥٦٧٨٩"
+_ASCII_DIGITS = "0123456789"
+_PUNCTUATION_CHARS = "،؛؟!.,:;()[]{}«»\"'؟?/\\"
+
+_DIGIT_LETTER_MAP = {
+    **{ch: _ASCII_DIGITS[i] for i, ch in enumerate(_PERSIAN_DIGITS)},
+    **{ch: _ASCII_DIGITS[i] for i, ch in enumerate(_ARABIC_DIGITS)},
+    "ي": "ی", "ك": "ک", "ة": "ه", "ۀ": "ه", "إ": "ا", "أ": "ا",
+}
+
+
+def normalize_persian_text(text: str) -> str:
+    """Unifies Arabic/Persian digits and letter variants, strips ZWNJ and
+    punctuation, and collapses whitespace. This alone fixes a large chunk
+    of "typo"/spelling-variant issues (١٢٣ vs ۱۲۳ vs 123, ي vs ی, ك vs ک,
+    "می‌خوام" vs "می خوام", ...)."""
+    if not text:
+        return ""
+    out = []
+    for ch in text:
+        if ch in _DIGIT_LETTER_MAP:
+            out.append(_DIGIT_LETTER_MAP[ch])
+        elif ch == "\u200c" or ch in _PUNCTUATION_CHARS:
+            out.append(" ")
+        else:
+            out.append(ch)
+    return re.sub(r"\s+", " ", "".join(out)).strip()
+
+
+ALT_CITY_SPELLINGS = {
+    "تهرون": "تهران",
+    "اصفون": "اصفهان",
+    "اهوازو": "اهواز",
+}
+
+CATEGORY_SYNONYMS = {
+    "گوشی موبایل": "موبایل",
+    "گوشی": "موبایل",
+    "لپ تاپ": "لپ‌تاپ",
+    "لپتاپ": "لپ‌تاپ",
+    "کفشو": "کفش",
+}
+
+_GENDER_WORD_MAP = {
+    "مردونه": "مردانه", "مردانه": "مردانه",
+    "زنونه": "زنانه", "زنانه": "زنانه",
+    "دخترونه": "دخترانه", "دخترانه": "دخترانه",
+    "پسرونه": "پسرانه", "پسرانه": "پسرانه",
+    "بچگونه": "بچگانه", "بچگانه": "بچگانه",
+}
+
+_COLOR_WORDS = [
+    "سفید", "مشکی", "قرمز", "آبی", "سبز", "زرد", "صورتی", "بنفش",
+    "طلایی", "نقره‌ای", "قهوه‌ای", "خاکستری", "نارنجی", "کرم",
+]
+
+_STOPWORDS = [
+    "می خوام", "میخوام", "میخواستم", "می خواستم", "دنبال", "برای من",
+    "برام", "لطفا", "لطفاً", "میخوام که", "هست", "دارید", "دارین",
+    "کنید", "میشه", "می شه", "یه", "یک", "رو", "را", "ممنون",
+    "تو", "در", "توی", "داخل", "تومان", "تومن", "چی", "چیزی",
+]
+
+# Reuse the SAME data the bot already seeds the database with (CITY_NAMES
+# and CATEGORY_TREE, defined in section 6 above) so the parser can never
+# drift out of sync with what actually exists in the database.
+_NORMALIZED_CITY_NAMES = sorted(
+    {normalize_persian_text(name) for name in CITY_NAMES}, key=len, reverse=True
+)
+
+_ALL_CATEGORY_NAMES = [_main_name for _main_emoji, _main_name, _subs in CATEGORY_TREE] + [
+    _sub_name
+    for _main_emoji, _main_name, _subs in CATEGORY_TREE
+    for _sub_emoji, _sub_name in _subs
+]
+_SORTED_CATEGORY_NAMES = sorted(
+    {normalize_persian_text(name) for name in _ALL_CATEGORY_NAMES}, key=len, reverse=True
+)
+
+_NORMALIZED_COLOR_WORDS = sorted(
+    {normalize_persian_text(w) for w in _COLOR_WORDS}, key=len, reverse=True
+)
+
+# Stopwords are split into multi-word PHRASES (removed via word-boundary
+# regex -- safe because a multi-word phrase can't accidentally be a
+# substring of an unrelated single word) and single-word TOKENS (removed
+# via exact token match after splitting on whitespace). This matters:
+# a naive text.replace("یک", " ") would also mangle unrelated words that
+# merely CONTAIN "یک" as a substring, e.g. "نزدیک" (nearby) or "شیک"
+# (stylish/chic) -- both plausible words in a real shopping query.
+_NORMALIZED_STOPWORDS = sorted(
+    {normalize_persian_text(w) for w in _STOPWORDS if w.strip()}, key=len, reverse=True
+)
+_STOPWORD_PHRASES = sorted(
+    (w for w in _NORMALIZED_STOPWORDS if " " in w), key=len, reverse=True
+)
+_STOPWORD_TOKENS = {w for w in _NORMALIZED_STOPWORDS if " " not in w}
+
+_PRICE_UNIT_RE = r"(\d+(?:\.\d+)?)\s*(میلیون|هزار)?"
+_PRICE_RANGE_RE = re.compile(rf"بین\s+{_PRICE_UNIT_RE}\s+تا\s+{_PRICE_UNIT_RE}")
+_PRICE_MAX_RE = re.compile(rf"(?:زیر|کمتر از|کمتر|حداکثر|تا)\s+{_PRICE_UNIT_RE}")
+_PRICE_MIN_RE = re.compile(rf"(?:بالای|بیشتر از|بیشتر|حداقل|از)\s+{_PRICE_UNIT_RE}")
+
+
+def _remove_stopwords(text: str) -> str:
+    """Word-boundary-safe stopword removal: multi-word phrases first
+    (regex \\b...\\b, safe since spaces disambiguate them), then
+    single-word tokens via exact post-split matching -- never a blind
+    substring replace, so real words are never corrupted."""
+    for phrase in _STOPWORD_PHRASES:
+        text = re.sub(rf"\b{re.escape(phrase)}\b", " ", text)
+    tokens = [t for t in text.split() if t not in _STOPWORD_TOKENS]
+    return " ".join(tokens)
+
+
+def _convert_number_unit(num_str: str, unit: Optional[str]) -> float:
+    value = float(num_str)
+    if unit == "میلیون":
+        value *= 1_000_000
+    elif unit == "هزار":
+        value *= 1_000
+    return value
+
+
+def _extract_price(text: str):
+    """Returns (min_price, max_price, remaining_text). Only ASCII-digit,
+    already-normalized text should be passed in."""
+    match = _PRICE_RANGE_RE.search(text)
+    if match:
+        v1 = _convert_number_unit(match.group(1), match.group(2))
+        v2 = _convert_number_unit(match.group(3), match.group(4))
+        min_price, max_price = (v1, v2) if v1 <= v2 else (v2, v1)
+        text = text[:match.start()] + " " + text[match.end():]
+        return min_price, max_price, text
+
+    match = _PRICE_MAX_RE.search(text)
+    if match:
+        max_price = _convert_number_unit(match.group(1), match.group(2))
+        text = text[:match.start()] + " " + text[match.end():]
+        return None, max_price, text
+
+    match = _PRICE_MIN_RE.search(text)
+    if match:
+        min_price = _convert_number_unit(match.group(1), match.group(2))
+        text = text[:match.start()] + " " + text[match.end():]
+        return min_price, None, text
+
+    return None, None, text
+
+
+class LocalQueryParser(QueryParser):
+    """Fully local, free, deterministic natural-language-ish parser for
+    Persian shopping queries. No network calls, no API keys, no external
+    services of any kind -- everything here is regex + dictionary
+    lookups against data already in this file."""
+
+    def parse(self, raw_query: str) -> StructuredQuery:
+        original = (raw_query or "").strip()
+        text = normalize_persian_text(original)
+
+        for alt, canonical in ALT_CITY_SPELLINGS.items():
+            text = text.replace(normalize_persian_text(alt), normalize_persian_text(canonical))
+        for alt, canonical in sorted(CATEGORY_SYNONYMS.items(), key=lambda kv: -len(kv[0])):
+            text = text.replace(normalize_persian_text(alt), normalize_persian_text(canonical))
+
+        min_price, max_price, text = _extract_price(text)
+
+        city = None
+        for city_name in _NORMALIZED_CITY_NAMES:
+            if city_name and city_name in text:
+                city = city_name
+                text = text.replace(city_name, " ")
+                break
+
+        gender = None
+        for alt, canonical in sorted(_GENDER_WORD_MAP.items(), key=lambda kv: -len(kv[0])):
+            norm_alt = normalize_persian_text(alt)
+            if norm_alt in text:
+                gender = canonical
+                text = text.replace(norm_alt, " ")
+                break
+
+        color = None
+        for c in _NORMALIZED_COLOR_WORDS:
+            if c and c in text:
+                color = c
+                text = text.replace(c, " ")
+                break
+
+        category = None
+        for cat_name in _SORTED_CATEGORY_NAMES:
+            if cat_name and cat_name in text:
+                category = cat_name
+                text = text.replace(cat_name, " ")
+                break
+
+        text = _remove_stopwords(text)
+
+        keyword = re.sub(r"\s+", " ", text).strip() or None
+
+        return StructuredQuery(
+            raw_query=original,
+            keyword=keyword,
+            category=category,
+            city=city,
+            min_price=min_price,
+            max_price=max_price,
+            color=color,
+            gender=gender,
+        )
+
+
+def build_search_summary(sq: StructuredQuery) -> str:
+    parts = [p for p in (sq.keyword, sq.category, sq.gender, sq.color) if p]
+    first_line = " • ".join(parts) if parts else sq.raw_query
+    lines = [f"{EMOJI_SEARCH} جستجو برای:", first_line]
+    if sq.min_price is not None and sq.max_price is not None:
+        lines.append(f"بین {format_price(sq.min_price)} تا {format_price(sq.max_price)}")
+    elif sq.max_price is not None:
+        lines.append(f"تا {format_price(sq.max_price)}")
+    elif sq.min_price is not None:
+        lines.append(f"از {format_price(sq.min_price)}")
+    if sq.city:
+        lines.append(f"{EMOJI_CITY} {sq.city}")
+    return "\n".join(lines)
+
+
+def score_search_candidate(row, sq: StructuredQuery, resolved_category_ids: set, resolved_city_id) -> float:
+    """Pure ranking function -- takes a dict-like row (works with both a
+    plain dict in tests and a real aiosqlite.Row at runtime) and returns
+    a relevance score. Combines: category match, keyword-in-name,
+    keyword-in-description, city match, price fit, rating, review_count,
+    views -- exactly the factors requested."""
+    score = 0.0
+    name = row["name"] or ""
+    description = row["description"] or ""
+
+    if resolved_category_ids and row["category_id"] in resolved_category_ids:
+        score += 30
+    if sq.keyword:
+        if sq.keyword in name:
+            score += 25
+        elif sq.keyword in description:
+            score += 10
+    for term in (sq.color, sq.gender):
+        if term and (term in name or term in description):
+            score += 8
+
+    if resolved_city_id and row["seller_city_id"] == resolved_city_id:
+        score += 15
+
+    price = row["price"]
+    if price is not None:
+        if sq.min_price is not None and price < sq.min_price:
+            score -= 20
+        if sq.max_price is not None and price > sq.max_price:
+            score -= 20
+        elif sq.min_price is not None or sq.max_price is not None:
+            score += 10
+
+    rating = row["rating"] or 0
+    review_count = row["review_count"] or 0
+    views = row["views"] or 0
+    score += min(rating, 5) * 2
+    score += min(review_count, 50) * 0.1
+    score += min(views, 500) * 0.01
+    return score
+
+
+async def resolve_category_ids(name: Optional[str]) -> set:
+    if not name:
+        return set()
+    like = f"%{name.strip()}%"
+    rows = await db.fetchall(
+        "SELECT id, parent_id FROM categories WHERE name LIKE ? LIMIT 5;", (like,)
+    )
+    ids = set()
+    for r in rows:
+        ids.add(r["id"])
+        if r["parent_id"] is None:
+            children = await db.fetchall(
+                "SELECT id FROM categories WHERE parent_id = ?;", (r["id"],)
+            )
+            ids.update(c["id"] for c in children)
+    return ids
+
+
+async def resolve_city_id(name: Optional[str]):
+    if not name:
+        return None
+    like = f"%{name.strip()}%"
+    row = await db.fetchone("SELECT id FROM cities WHERE name LIKE ? LIMIT 1;", (like,))
+    return row["id"] if row else None
+
+
+async def plain_keyword_search(query: str, limit: int = 20) -> list:
+    """The ORIGINAL search query, unchanged, kept as the universal
+    fallback: if the parser can't structure a query, or a structured
+    search finds nothing, this always still works with zero external
+    dependencies."""
+    like = f"%{query}%"
+    return await db.fetchall(
+        """SELECT DISTINCT p.* FROM products p
+           JOIN sellers s ON s.id = p.seller_id
+           LEFT JOIN categories c ON c.id = p.category_id
+           WHERE p.name LIKE ? OR p.description LIKE ?
+              OR s.name LIKE ? OR s.description LIKE ?
+              OR c.name LIKE ?
+           ORDER BY p.views DESC LIMIT ?;""",
+        (like, like, like, like, like, limit),
+    )
+
+
+class SearchEngine:
+    """Depends only on the QueryParser interface -- swapping
+    LocalQueryParser for a future AIQueryParser requires no change here."""
+
+    def __init__(self, parser: QueryParser):
+        self.parser = parser
+
+    async def _structured_search(self, sq: StructuredQuery, limit: int = 30) -> list:
+        resolved_category_ids = await resolve_category_ids(sq.category)
+        resolved_city_id = await resolve_city_id(sq.city)
+
+        conditions = []
+        params: list = []
+
+        if resolved_category_ids:
+            placeholders = ",".join("?" for _ in resolved_category_ids)
+            conditions.append(f"p.category_id IN ({placeholders})")
+            params.extend(resolved_category_ids)
+        if resolved_city_id:
+            conditions.append("s.city_id = ?")
+            params.append(resolved_city_id)
+
+        for term in (sq.keyword, sq.color, sq.gender):
+            if term:
+                like = f"%{term}%"
+                conditions.append("(p.name LIKE ? OR p.description LIKE ?)")
+                params.extend([like, like])
+
+        if sq.max_price is not None:
+            conditions.append("(p.price IS NOT NULL AND p.price <= ?)")
+            params.append(sq.max_price)
+        if sq.min_price is not None:
+            conditions.append("(p.price IS NOT NULL AND p.price >= ?)")
+            params.append(sq.min_price)
+
+        where_clause = " AND ".join(conditions) if conditions else "1=1"
+        query = (
+            "SELECT p.*, s.name AS seller_name, s.city_id AS seller_city_id "
+            "FROM products p JOIN sellers s ON s.id = p.seller_id "
+            f"WHERE {where_clause} ORDER BY p.views DESC LIMIT 200;"
+        )
+        rows = await db.fetchall(query, params)
+        scored = [
+            (score_search_candidate(r, sq, resolved_category_ids, resolved_city_id), r)
+            for r in rows
+        ]
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        return [r for _score, r in scored[:limit]]
+
+    async def search(self, raw_query: str):
+        """Returns (structured_query, results, mode) where mode is
+        "structured" (LocalQueryParser understood something and it
+        matched) or "plain" (full fallback to the original LIKE search)."""
+        structured = self.parser.parse(raw_query)
+
+        if structured.has_any_extracted_field():
+            results = await self._structured_search(structured)
+            if results:
+                return structured, results, "structured"
+
+            simplified = structured.simplified()
+            if simplified != structured and simplified.has_any_extracted_field():
+                results = await self._structured_search(simplified)
+                if results:
+                    return simplified, results, "structured"
+
+        plain_results = await plain_keyword_search(raw_query)
+        return structured, plain_results, "plain"
+
+
+# Module-level singleton. Swapping to AIQueryParser in the future is a
+# one-line change here -- nothing else in the file needs to know.
+search_engine = SearchEngine(LocalQueryParser())
+
+
+# ======================================================================
 # 13. SEARCH
 # ======================================================================
 @router.callback_query(F.data == "search")
@@ -844,6 +1450,23 @@ async def handle_search_start(callback: CallbackQuery, state: FSMContext) -> Non
     kb_add_back(b, "main")
     await safe_edit(callback, f"{EMOJI_SEARCH} دنبال چه چیزی می‌گردی؟\n\nمتن جستجو را بفرست:", b.as_markup())
     await callback.answer()
+
+
+async def _render_search_results(message: Message, header: str, products: list) -> None:
+    b = InlineKeyboardBuilder()
+    for p in products[:PAGE_SIZE_LIST]:
+        b.row(InlineKeyboardButton(
+            text=f"{EMOJI_PRODUCT} {p['name']} - {format_price(p['price'])}",
+            callback_data=f"product:{p['id']}",
+        ))
+    kb_add_back(b, "main")
+    await message.answer(header, reply_markup=b.as_markup())
+
+
+async def _render_no_results(message: Message, text: str) -> None:
+    b = InlineKeyboardBuilder()
+    kb_add_back(b, "main")
+    await message.answer(text, reply_markup=b.as_markup())
 
 
 @router.message(StateFilter(SearchStates.waiting_query))
@@ -858,34 +1481,18 @@ async def handle_search_query(message: Message, state: FSMContext) -> None:
         await message.answer("⚠️ لطفاً یک متن معتبر برای جستجو بفرست.")
         return
 
-    like = f"%{query}%"
-    products = await db.fetchall(
-        """SELECT DISTINCT p.* FROM products p
-           JOIN sellers s ON s.id = p.seller_id
-           LEFT JOIN categories c ON c.id = p.category_id
-           WHERE p.name LIKE ? OR p.description LIKE ?
-              OR s.name LIKE ? OR s.description LIKE ?
-              OR c.name LIKE ?
-           ORDER BY p.views DESC LIMIT 20;""",
-        (like, like, like, like, like),
-    )
-
-    await log_event(user_id, "search", "query", None)
+    structured, products, mode = await search_engine.search(query)
+    await log_event(user_id, "search", "local_smart" if mode == "structured" else "query", None)
 
     if not products:
-        b = InlineKeyboardBuilder()
-        kb_add_back(b, "main")
-        await message.answer(f"🔎 نتیجه‌ای برای «{query}» پیدا نشد.", reply_markup=b.as_markup())
+        await _render_no_results(message, f"🔎 نتیجه‌ای برای «{query}» پیدا نشد.")
         return
 
-    b = InlineKeyboardBuilder()
-    for p in products[:PAGE_SIZE_LIST]:
-        b.row(InlineKeyboardButton(
-            text=f"{EMOJI_PRODUCT} {p['name']} - {format_price(p['price'])}",
-            callback_data=f"product:{p['id']}",
-        ))
-    kb_add_back(b, "main")
-    await message.answer(f"🔎 نتایج جستجو برای «{query}»:", reply_markup=b.as_markup())
+    if mode == "structured":
+        header = build_search_summary(structured) + "\n\nنتایج:"
+    else:
+        header = f"🔎 نتایج جستجو برای «{query}»:"
+    await _render_search_results(message, header, products)
 
 
 # ======================================================================
@@ -1384,8 +1991,59 @@ async def handle_account(callback: CallbackQuery, state: FSMContext) -> None:
         f"عضویت از: {user['created_at'][:10]}\n"
     )
     b = InlineKeyboardBuilder()
+    owned_sellers = await get_sellers_owned_by_user(user_id)
+    if owned_sellers:
+        b.row(InlineKeyboardButton(text="🎁 لینک معرفی فروشگاه من", callback_data="reflist"))
     b.row(InlineKeyboardButton(text="📍 تغییر شهر", callback_data="setcity"))
     kb_add_back(b, "main")
+    await safe_edit(callback, text, b.as_markup())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "reflist")
+async def handle_referral_list(callback: CallbackQuery) -> None:
+    user_id = await ensure_user(callback.from_user)
+    sellers = await get_sellers_owned_by_user(user_id)
+    if not sellers:
+        await callback.answer("⚠️ شما هنوز فروشگاهی ثبت نکرده‌اید.", show_alert=True)
+        return
+    if len(sellers) == 1:
+        await _render_referral_stats(callback, sellers[0]["id"])
+        return
+    b = InlineKeyboardBuilder()
+    for s in sellers:
+        b.row(InlineKeyboardButton(text=f"{EMOJI_SELLERS} {s['name']}", callback_data=f"refstats:{s['id']}"))
+    kb_add_back(b, "account")
+    await safe_edit(callback, "کدوم فروشگاهت رو می‌خوای ببینی؟", b.as_markup())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("refstats:"))
+async def handle_referral_stats(callback: CallbackQuery) -> None:
+    seller_id = parse_int(callback.data.split(":")[1])
+    if seller_id is None:
+        await callback.answer("⚠️ شناسه نامعتبر است.", show_alert=True)
+        return
+    await _render_referral_stats(callback, seller_id)
+
+
+async def _render_referral_stats(callback: CallbackQuery, seller_id: int) -> None:
+    user_id = await ensure_user(callback.from_user)
+    seller = await db.fetchone(
+        "SELECT id, name, owner_user_id, created_by_user_id FROM sellers WHERE id = ?;",
+        (seller_id,),
+    )
+    if not seller:
+        await callback.answer("⚠️ این فروشگاه یافت نشد.", show_alert=True)
+        return
+    if seller["owner_user_id"] != user_id and seller["created_by_user_id"] != user_id:
+        await callback.answer("⚠️ شما به این فروشگاه دسترسی ندارید.", show_alert=True)
+        return
+
+    me = await callback.bot.get_me()
+    text = await referral_stats_text(me.username, seller["id"], seller["name"])
+    b = InlineKeyboardBuilder()
+    kb_add_back(b, "account")
     await safe_edit(callback, text, b.as_markup())
     await callback.answer()
 
@@ -1647,7 +2305,7 @@ async def handle_register_description(message: Message, state: FSMContext) -> No
 
 
 @router.callback_query(F.data.startswith("regskip:"))
-async def handle_register_skip(callback: CallbackQuery, state: FSMContext) -> None:
+async def handle_register_skip(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
     field = callback.data.split(":")[1]
     if field == "instagram":
         await state.set_state(RegisterSellerStates.telegram)
@@ -1660,7 +2318,7 @@ async def handle_register_skip(callback: CallbackQuery, state: FSMContext) -> No
         b.row(InlineKeyboardButton(text="رد کردن", callback_data="regskip:website"))
         await safe_edit(callback, "وبسایت فروشگاه (اختیاری):", b.as_markup())
     elif field == "website":
-        await _finish_register_seller(callback.from_user, state, callback=callback)
+        await _finish_register_seller(callback.from_user, state, bot, callback=callback)
     await callback.answer()
 
 
@@ -1687,15 +2345,19 @@ async def handle_register_telegram(message: Message, state: FSMContext) -> None:
 
 
 @router.message(StateFilter(RegisterSellerStates.website))
-async def handle_register_website(message: Message, state: FSMContext) -> None:
+async def handle_register_website(message: Message, state: FSMContext, bot: Bot) -> None:
     if await restart_requested(message, state):
         return
     await state.update_data(seller_website=(message.text or "").strip())
-    await _finish_register_seller(message.from_user, state, message=message)
+    await _finish_register_seller(message.from_user, state, bot, message=message)
 
 
 async def _finish_register_seller(
-    tg_user, state: FSMContext, callback: Optional[CallbackQuery] = None, message: Optional[Message] = None
+    tg_user,
+    state: FSMContext,
+    bot: Bot,
+    callback: Optional[CallbackQuery] = None,
+    message: Optional[Message] = None,
 ) -> None:
     user_id = await ensure_user(tg_user)
     data = await state.get_data()
@@ -1714,7 +2376,7 @@ async def _finish_register_seller(
         return
 
     now = now_iso()
-    await db.execute(
+    cur = await db.execute(
         """INSERT INTO sellers (name, description, city_id, instagram, telegram, website,
                status, rating, review_count, views, created_by_user_id, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, 'UNCLAIMED', 0, 0, 0, ?, ?, ?);""",
@@ -1730,8 +2392,14 @@ async def _finish_register_seller(
             now,
         ),
     )
+    seller_id = cur.lastrowid
 
-    text = "✅ فروشگاه شما با موفقیت ثبت شد و در وضعیت «معرفی‌شده» قرار دارد."
+    # Referral / growth system: give the seller their shareable link right
+    # away, per the "🎁 فروشگاهت در ارزانکده ثبت شد!" flow.
+    me = await bot.get_me()
+    referral_block = await referral_stats_text(me.username, seller_id, name)
+    text = "🎁 فروشگاهت در ارزانکده ثبت شد!\n\n" + referral_block
+
     b = InlineKeyboardBuilder()
     kb_add_back(b, "main")
     if callback:
@@ -1768,8 +2436,39 @@ async def handle_unknown_callback(callback: CallbackQuery) -> None:
 @router.message(CommandStart())
 async def handle_start(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await ensure_user(message.from_user)
+    user_id = await ensure_user(message.from_user)
+    await _handle_referral_deep_link(message, user_id)
     await send_main_menu(message)
+
+
+async def _handle_referral_deep_link(message: Message, user_id: int) -> None:
+    """Parses an optional '/start shop_<seller_id>' deep-link payload and
+    attributes the visit as a referral. Never raises -- a malformed or
+    missing payload just means "no referral", /start still works exactly
+    as before."""
+    text = (message.text or "").strip()
+    parts = text.split(maxsplit=1)
+    if len(parts) != 2:
+        return
+    match = REFERRAL_DEEP_LINK_RE.match(parts[1].strip())
+    if not match:
+        return
+    seller_id = int(match.group(1))
+
+    seller = await db.fetchone("SELECT id, owner_user_id FROM sellers WHERE id = ?;", (seller_id,))
+    if not seller:
+        return
+    if seller["owner_user_id"] == user_id:
+        return  # a seller visiting their own link is not a referral
+
+    recorded = await record_referral_if_new(seller_id, user_id)
+    if recorded and seller["owner_user_id"]:
+        await notify_user(
+            seller["owner_user_id"],
+            "🎉 معرفی جدید",
+            "یک کاربر جدید از طریق لینک اختصاصی فروشگاه شما وارد ارزانکده شد!",
+            ntype="referral",
+        )
 
 
 @router.message()

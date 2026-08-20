@@ -28,6 +28,9 @@ isn't covered.
 from __future__ import annotations
 
 import ast
+import logging as _logging
+import re as _re
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -50,6 +53,10 @@ def extract_names(names) -> dict:
         "Optional": Optional,
         "datetime": datetime,
         "timezone": timezone,
+        "re": _re,
+        "dataclass": dataclass,
+        "field": field,
+        "logging": _logging,
     }
 
     wanted = set(names)
@@ -67,6 +74,10 @@ def extract_names(names) -> dict:
                 matched = True
                 found.add(node.target.id)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name in wanted:
+                matched = True
+                found.add(node.name)
+        elif isinstance(node, ast.ClassDef):
             if node.name in wanted:
                 matched = True
                 found.add(node.name)
