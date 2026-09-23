@@ -24,6 +24,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Sequence
+from urllib.parse import urlparse
 
 import aiosqlite
 from dotenv import load_dotenv
@@ -38,6 +39,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     CallbackQuery,
+    ErrorEvent,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
@@ -374,6 +376,32 @@ SCHEMA_STATEMENTS = [
         FOREIGN KEY (actor_user_id) REFERENCES users(id)
     );
     """,
+    # ------------------------------------------------------------------
+    # Orders (Phase 1 infrastructure only -- see the module docstring
+    # near the ORDERS REPOSITORY section below). No handler, keyboard, or
+    # FSM creates an order yet; this table + its repository functions
+    # exist purely so seller/product statistics have real data to read
+    # from once a checkout flow is built in a later phase. Nothing here
+    # implements payments -- `total_price` is just a recorded amount, no
+    # gateway integration exists or is implied.
+    # ------------------------------------------------------------------
+    """
+    CREATE TABLE IF NOT EXISTS orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        buyer_user_id INTEGER NOT NULL,
+        seller_id INTEGER NOT NULL,
+        product_id INTEGER NOT NULL,
+        quantity INTEGER NOT NULL DEFAULT 1,
+        total_price INTEGER,
+        status TEXT NOT NULL DEFAULT 'PENDING'
+            CHECK (status IN ('PENDING', 'CONFIRMED', 'COMPLETED', 'CANCELLED')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (buyer_user_id) REFERENCES users(id),
+        FOREIGN KEY (seller_id) REFERENCES sellers(id),
+        FOREIGN KEY (product_id) REFERENCES products(id)
+    );
+    """,
 ]
 
 # ------------------------------------------------------------------------
@@ -464,6 +492,10 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_requests_user ON requests(user_id);",
     "CREATE INDEX IF NOT EXISTS idx_requests_status ON requests(status);",
     "CREATE INDEX IF NOT EXISTS idx_audit_log_entity ON audit_log(entity_type, entity_id);",
+    "CREATE INDEX IF NOT EXISTS idx_orders_buyer ON orders(buyer_user_id);",
+    "CREATE INDEX IF NOT EXISTS idx_orders_seller ON orders(seller_id);",
+    "CREATE INDEX IF NOT EXISTS idx_orders_product ON orders(product_id);",
+    "CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);",
 ]
 
 
@@ -752,14 +784,45 @@ def telegram_url(username: Optional[str]) -> Optional[str]:
     return f"https://t.me/{clean}" if clean else None
 
 
+_UNSAFE_URL_CHARS = set(' \t\n\r<>"\'\\()[]{}')
+_DANGEROUS_URL_SCHEME_PREFIXES = ("javascript:", "data:", "vbscript:", "file:", "about:")
+
+
 def website_url(url: Optional[str]) -> Optional[str]:
+    """Builds/validates a website link. Any string that already worked
+    before this validation was added still works identically (adding
+    "https://" when no scheme is given, keeping http/https as-is). What's
+    new: a URL that Telegram would reject as a button (BUTTON_URL_INVALID)
+    -- empty host, embedded whitespace, characters that have no business
+    in a URL, or a non-http(s) scheme (e.g. "ftp://x.com", "javascript:...",
+    "data:...") -- now returns None instead of silently producing a
+    broken or dangerous button. Notably: the old code only checked the
+    raw string didn't start with "http(s)://" and then unconditionally
+    prepended "https://", which for "ftp://x.com" produced the malformed
+    "https://ftp://x.com" -- always broken, never validated."""
     if not url:
         return None
     clean = url.strip()
-    if not clean:
+    if not clean or any(ch in clean for ch in _UNSAFE_URL_CHARS):
         return None
-    if not clean.startswith("http://") and not clean.startswith("https://"):
+    if clean.lower().startswith(_DANGEROUS_URL_SCHEME_PREFIXES):
+        return None
+    if clean.startswith("http://") or clean.startswith("https://"):
+        pass
+    elif "://" in clean:
+        # A different scheme was smuggled in (ftp://, tg://, custom://,
+        # ...) -- never coerce this into an https:// URL.
+        return None
+    else:
         clean = "https://" + clean
+    try:
+        parsed = urlparse(clean)
+    except ValueError:
+        return None
+    if parsed.scheme not in ("http", "https"):
+        return None
+    if not parsed.netloc or any(ch in parsed.netloc for ch in _UNSAFE_URL_CHARS):
+        return None
     return clean
 
 
@@ -793,7 +856,16 @@ async def safe_edit(callback: CallbackQuery, text: str, kb: InlineKeyboardMarkup
             pass
         else:
             logger.warning("edit_text failed, sending new message instead: %s", exc)
-            await callback.message.answer(text, reply_markup=kb)
+            try:
+                await callback.message.answer(text, reply_markup=kb)
+            except TelegramBadRequest as exc2:
+                # Both attempts failed (e.g. a malformed button URL that
+                # Telegram rejects either way) -- never let this reach
+                # the dispatcher uncaught. The user gets nothing rather
+                # than a broken interaction, but the bot keeps running
+                # and the global error handler doesn't need to catch a
+                # failure we can already identify and log precisely here.
+                logger.error("safe_edit fallback also failed, giving up for this update: %s", exc2)
 
 
 async def ensure_user(tg_user) -> int:
@@ -988,6 +1060,141 @@ async def referral_stats_text(bot_username: str, seller_id: int, seller_name: st
 
 
 # ======================================================================
+# 9.4 DATA ACCESS / REPOSITORY LAYER
+# ======================================================================
+# Phase 1 goal: a single, reusable place for the most-repeated read/write
+# operations, so handlers stop being the primary home of business logic.
+# These are pure behavior-preserving extractions of SQL that was
+# previously duplicated inline across many handlers (get_product_by_id /
+# get_seller_by_id alone were each repeated 8-11 times) -- the SQL text
+# is byte-for-byte identical to what existing call sites already ran, so
+# swapping a call site to use these is a zero-risk, no-behavior-change
+# refactor. New call sites (and all of Phase 2) should prefer these over
+# writing the same SELECT again.
+async def get_product_by_id(product_id: int) -> Optional[dict]:
+    return await db.fetchone("SELECT * FROM products WHERE id = ?;", (product_id,))
+
+
+async def get_seller_by_id(seller_id: int) -> Optional[dict]:
+    return await db.fetchone("SELECT * FROM sellers WHERE id = ?;", (seller_id,))
+
+
+async def create_product_record(seller_id: int, name: str, **fields) -> int:
+    """Repository-level product creation. `fields` may include
+    description/price/old_price/image_url/category_id -- anything not
+    passed defaults exactly as the products table already defaults."""
+    now = now_iso()
+    cur = await db.execute(
+        """INSERT INTO products (seller_id, name, description, price, old_price, image_url,
+               category_id, stock_status, rating, review_count, views, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'AVAILABLE', 0, 0, 0, ?, ?);""",
+        (
+            seller_id, name, fields.get("description"), fields.get("price"),
+            fields.get("old_price"), fields.get("image_url"), fields.get("category_id"), now, now,
+        ),
+    )
+    return cur.lastrowid
+
+
+async def delete_product_record(product_id: int) -> None:
+    await db.execute("DELETE FROM products WHERE id = ?;", (product_id,))
+
+
+# ------------------------------------------------------------------
+# Orders (Phase 1 infrastructure only). No handler/keyboard/FSM in this
+# phase creates or displays an order -- see the `orders` table comment
+# in SCHEMA_STATEMENTS. These functions exist so a future checkout flow,
+# and the statistics functions right below them, have a real, working
+# data layer to build on without another migration.
+# ------------------------------------------------------------------
+ORDER_STATUSES = ("PENDING", "CONFIRMED", "COMPLETED", "CANCELLED")
+
+
+async def create_order(
+    buyer_user_id: int, seller_id: int, product_id: int, quantity: int = 1, total_price: Optional[int] = None
+) -> int:
+    now = now_iso()
+    cur = await db.execute(
+        """INSERT INTO orders (buyer_user_id, seller_id, product_id, quantity, total_price, status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?);""",
+        (buyer_user_id, seller_id, product_id, quantity, total_price, now, now),
+    )
+    return cur.lastrowid
+
+
+async def get_order(order_id: int) -> Optional[dict]:
+    return await db.fetchone("SELECT * FROM orders WHERE id = ?;", (order_id,))
+
+
+async def update_order_status(order_id: int, status: str) -> bool:
+    if status not in ORDER_STATUSES:
+        raise ValueError(f"Invalid order status: {status}")
+    await db.execute(
+        "UPDATE orders SET status = ?, updated_at = ? WHERE id = ?;", (status, now_iso(), order_id)
+    )
+    return True
+
+
+async def list_orders_for_buyer(buyer_user_id: int, limit: int = 20) -> list:
+    return await db.fetchall(
+        "SELECT * FROM orders WHERE buyer_user_id = ? ORDER BY created_at DESC LIMIT ?;",
+        (buyer_user_id, limit),
+    )
+
+
+async def list_orders_for_seller(seller_id: int, limit: int = 20) -> list:
+    return await db.fetchall(
+        "SELECT * FROM orders WHERE seller_id = ? ORDER BY created_at DESC LIMIT ?;",
+        (seller_id, limit),
+    )
+
+
+# ------------------------------------------------------------------
+# Statistics infrastructure. get_seller_statistics()/get_product_
+# statistics() already power the live "👀 چقدر دیده شدم" / per-product
+# stats screens (views, favorites, clicks, request count -- all from
+# data that genuinely exists today). The *_sales fields additionally
+# read from `orders`; since nothing writes an order yet in this phase,
+# they are always 0/None for now -- never fabricated, just genuinely
+# empty until a later phase's checkout flow starts writing real rows.
+# ------------------------------------------------------------------
+async def get_seller_statistics(seller_id: int) -> dict:
+    seller = await get_seller_by_id(seller_id)
+    products = await db.fetchall("SELECT * FROM products WHERE seller_id = ?;", (seller_id,))
+    fav_count = await count_seller_favorites(seller_id)
+    request_row = await db.fetchone("SELECT COUNT(*) AS c FROM requests WHERE seller_id = ?;", (seller_id,))
+    completed_orders = await db.fetchone(
+        "SELECT COUNT(*) AS c, COALESCE(SUM(total_price), 0) AS revenue FROM orders WHERE seller_id = ? AND status = 'COMPLETED';",
+        (seller_id,),
+    )
+    return {
+        "views": seller["views"] if seller else 0,
+        "product_count": len(products),
+        "active_product_count": sum(1 for p in products if p["stock_status"] == "AVAILABLE"),
+        "total_product_views": sum(p["views"] for p in products),
+        "favorite_count": fav_count,
+        "request_count": request_row["c"] if request_row else 0,
+        "completed_order_count": completed_orders["c"] if completed_orders else 0,
+        "completed_order_revenue": completed_orders["revenue"] if completed_orders else 0,
+    }
+
+
+async def get_product_statistics(product_id: int) -> dict:
+    product = await get_product_by_id(product_id)
+    fav_row = await db.fetchone("SELECT COUNT(*) AS c FROM favorites WHERE product_id = ?;", (product_id,))
+    completed_orders = await db.fetchone(
+        "SELECT COUNT(*) AS c, COALESCE(SUM(quantity), 0) AS units FROM orders WHERE product_id = ? AND status = 'COMPLETED';",
+        (product_id,),
+    )
+    return {
+        "views": product["views"] if product else 0,
+        "favorite_count": fav_row["c"] if fav_row else 0,
+        "completed_order_count": completed_orders["c"] if completed_orders else 0,
+        "completed_units_sold": completed_orders["units"] if completed_orders else 0,
+    }
+
+
+# ======================================================================
 # 9.5 ROLES (Buyer / Seller / Admin)
 # ======================================================================
 # A user's role is DERIVED, not stored as a fixed enum: "seller" simply
@@ -995,7 +1202,7 @@ async def referral_stats_text(bot_username: str, seller_id: int, seller_name: st
 # (users.active_mode) only decides which of the two panels a dual-role
 # user is currently looking at -- it is a UI preference, never a
 # permission check by itself.
-VALID_MODES = ("buyer", "seller")
+VALID_MODES = ("buyer", "seller", "admin")
 
 
 async def user_has_any_seller(user_id: int) -> bool:
@@ -1006,21 +1213,48 @@ async def user_has_any_seller(user_id: int) -> bool:
     return row is not None
 
 
+async def is_admin_user_id(user_id: int) -> bool:
+    """Whether this internal user_id belongs to the configured admin
+    (ADMIN_CHAT_ID, read from .env). This is the ONLY source of truth
+    for admin authorization anywhere in the bot -- never a hardcoded id,
+    never a flag a user can set on themselves."""
+    if not ADMIN_CHAT_ID:
+        return False
+    row = await db.fetchone("SELECT telegram_id FROM users WHERE id = ?;", (user_id,))
+    return bool(row and row["telegram_id"] == ADMIN_CHAT_ID)
+
+
 async def get_active_mode(user_id: int) -> str:
-    """Returns 'buyer' or 'seller'. A user with no seller at all is
-    ALWAYS 'buyer', regardless of whatever is stored (defends against a
-    stale flag from before their last seller was removed/rejected)."""
-    has_seller = await user_has_any_seller(user_id)
-    if not has_seller:
-        return "buyer"
+    """Returns 'buyer', 'seller', or 'admin'.
+
+    Phase 2 change: a user's chosen mode is now respected even BEFORE
+    they've registered a store. Role selection ("I want Seller mode")
+    and seller onboarding ("I have a store") are deliberately separate
+    concerns -- forcing a fallback to buyer just because no seller row
+    exists yet would effectively demand store registration merely for
+    picking Seller mode, which Phase 2 explicitly forbids. The seller
+    panel itself is responsible for showing a graceful "no store yet"
+    state (see _render_seller_panel), not this function.
+
+    'admin' is the one mode still enforced here, not just at the call
+    site: nobody but the configured ADMIN_CHAT_ID can ever actually be
+    resolved into admin mode, even if the stored value somehow says so
+    (e.g. a stale value from before an admin was reconfigured).
+    """
     row = await db.fetchone("SELECT active_mode FROM users WHERE id = ?;", (user_id,))
-    mode = row["active_mode"] if row and row["active_mode"] in VALID_MODES else "buyer"
-    return mode
+    stored_mode = row["active_mode"] if row and row["active_mode"] in VALID_MODES else "buyer"
+
+    if stored_mode == "admin" and not await is_admin_user_id(user_id):
+        return "buyer"
+
+    return stored_mode
 
 
 async def set_active_mode(user_id: int, mode: str) -> None:
     if mode not in VALID_MODES:
         raise ValueError(f"Invalid mode: {mode}")
+    if mode == "admin" and not await is_admin_user_id(user_id):
+        raise PermissionError("Only the configured admin (ADMIN_CHAT_ID) may enter admin mode.")
     await db.execute(
         "UPDATE users SET active_mode = ?, updated_at = ? WHERE id = ?;",
         (mode, now_iso(), user_id),
@@ -1365,6 +1599,10 @@ class AdminAdSettingStates(StatesGroup):
     waiting_price = State()
     waiting_duration = State()
     waiting_placement = State()
+
+
+class AdminSearchStates(StatesGroup):
+    waiting_user_query = State()
 
 
 # ======================================================================
@@ -1947,21 +2185,43 @@ async def handle_search_start(callback: CallbackQuery, state: FSMContext) -> Non
     await callback.answer()
 
 
-async def _render_search_results(message: Message, header: str, products: list) -> None:
+async def _render_search_results(target, header: str, products: list, page: int = 0) -> None:
+    offset = page * PAGE_SIZE_LIST
+    page_products = products[offset: offset + PAGE_SIZE_LIST]
+    has_next = offset + PAGE_SIZE_LIST < len(products)
+
     b = InlineKeyboardBuilder()
-    for p in products[:PAGE_SIZE_LIST]:
+    for p in page_products:
         b.row(InlineKeyboardButton(
             text=f"{EMOJI_PRODUCT} {p['name']} - {format_price(p['price'])}",
             callback_data=f"product:{p['id']}",
         ))
+    kb_pagination_row(b, "searchpage", page, has_next)
     kb_add_back(b, "main")
-    await message.answer(header, reply_markup=b.as_markup())
+
+    if isinstance(target, CallbackQuery):
+        await safe_edit(target, header, b.as_markup())
+        await target.answer()
+    else:
+        await target.answer(header, reply_markup=b.as_markup())
 
 
 async def _render_no_results(message: Message, text: str) -> None:
     b = InlineKeyboardBuilder()
     kb_add_back(b, "main")
     await message.answer(text, reply_markup=b.as_markup())
+
+
+# Search results come from a free-text message, not a callback -- there is
+# no callback_data to carry the query string back for a "Next page" tap
+# (and re-running the whole search per page would also risk re-scoring
+# ties differently). Same low-risk pattern already used for compare
+# selection: a small in-memory per-user cache of the LAST computed,
+# already-sorted result list, keyed by internal user_id. Not persisted,
+# not cleared by state.clear() (mode-switch/restart-safe), and bounded in
+# practice by how many distinct users search between process restarts --
+# identical tradeoff already accepted for _compare_sessions.
+_search_result_cache: dict = {}
 
 
 @router.message(StateFilter(SearchStates.waiting_query))
@@ -1987,7 +2247,23 @@ async def handle_search_query(message: Message, state: FSMContext) -> None:
         header = build_search_summary(structured) + "\n\nنتایج:"
     else:
         header = f"🔎 نتایج جستجو برای «{query}»:"
-    await _render_search_results(message, header, products)
+    _search_result_cache[user_id] = {"header": header, "products": products}
+    await _render_search_results(message, header, products, page=0)
+
+
+@router.callback_query(F.data.startswith("searchpage:"))
+async def handle_search_page(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    page = parse_int(callback.data.split(":")[1])
+    if page is None:
+        await callback.answer("⚠️ درخواست نامعتبر است.", show_alert=True)
+        return
+    user_id = await ensure_user(callback.from_user)
+    cached = _search_result_cache.get(user_id)
+    if not cached:
+        await callback.answer("⚠️ نتایج جستجو منقضی شده. دوباره جستجو کن.", show_alert=True)
+        return
+    await _render_search_results(callback, cached["header"], cached["products"], page=page)
 
 
 # ======================================================================
@@ -2625,7 +2901,7 @@ async def handle_admin_report_decision(callback: CallbackQuery) -> None:
         return
 
     admin_user_id = await ensure_user(callback.from_user)
-    if not ADMIN_CHAT_ID or callback.from_user.id != ADMIN_CHAT_ID:
+    if not _is_admin(callback):
         await callback.answer("⛔️ این عملیات فقط برای ادمین در دسترس است.", show_alert=True)
         return
 
@@ -2792,7 +3068,7 @@ async def handle_admin_request_decision(callback: CallbackQuery) -> None:
         return
 
     admin_user_id = await ensure_user(callback.from_user)
-    if not ADMIN_CHAT_ID or callback.from_user.id != ADMIN_CHAT_ID:
+    if not _is_admin(callback):
         await callback.answer("⛔️ این عملیات فقط برای ادمین در دسترس است.", show_alert=True)
         return
 
@@ -2923,13 +3199,16 @@ async def handle_notification_read(callback: CallbackQuery) -> None:
 # ======================================================================
 @router.callback_query(F.data == "account")
 async def handle_account(callback: CallbackQuery, state: FSMContext) -> None:
-    """Role-aware entry point: renders the Buyer panel or Seller panel
-    depending on the user's current active_mode. A user with no seller
-    at all always sees the Buyer panel, full stop -- see get_active_mode()."""
+    """Role-aware entry point: renders the Buyer panel, Seller panel, or
+    (Phase 4) the real Admin Panel depending on the user's current
+    active_mode. A user with no seller at all always sees the Buyer
+    panel, full stop -- see get_active_mode()."""
     await state.clear()
     user_id = await ensure_user(callback.from_user)
     mode = await get_active_mode(user_id)
-    if mode == "seller":
+    if mode == "admin":
+        await _render_admin_home(callback)
+    elif mode == "seller":
         await _render_seller_panel(callback, user_id)
     else:
         await _render_buyer_panel(callback, user_id)
@@ -2950,10 +3229,18 @@ async def handle_set_mode(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer("⚠️ حالت نامعتبر است.", show_alert=True)
         return
     user_id = await ensure_user(callback.from_user)
-    if mode == "seller" and not await user_has_any_seller(user_id):
-        await callback.answer("⚠️ شما هنوز فروشگاهی ثبت نکرده‌اید.", show_alert=True)
+    # Phase 2: seller MODE and owning a store are separate concerns (see
+    # get_active_mode()/handle_role_pick()) -- this toggle must not
+    # re-impose the old "you need a store first" gate that those two
+    # already dropped, or a user who legitimately entered seller mode
+    # with no store yet (via the role picker) would get stuck unable to
+    # switch back into it after visiting buyer mode. _render_seller_panel
+    # already shows a graceful "no store yet" state with a way forward.
+    try:
+        await set_active_mode(user_id, mode)
+    except PermissionError:
+        await callback.answer("⛔️ این حالت فقط برای ادمین در دسترس است.", show_alert=True)
         return
-    await set_active_mode(user_id, mode)
     if mode == "seller":
         await _render_seller_panel(callback, user_id)
     else:
@@ -2962,11 +3249,16 @@ async def handle_set_mode(callback: CallbackQuery, state: FSMContext) -> None:
 
 
 async def _render_buyer_panel(callback: CallbackQuery, user_id: int) -> None:
-    has_seller = await user_has_any_seller(user_id)
     lines = [f"{EMOJI_ACCOUNT} <b>حساب من</b>", "", "👤 حالت خرید"]
     b = InlineKeyboardBuilder()
-    if has_seller:
-        b.row(_mode_switch_button("buyer"))
+    # Phase 2: seller MODE is no longer gated on owning a store (see
+    # get_active_mode()/handle_set_mode()), so this switch button can't
+    # be conditional on user_has_any_seller() either -- that would trap
+    # a user who picked seller intent with no store yet: they'd land
+    # here after "🛍️ برم خرید کنم" with literally no way back to seller
+    # mode. _render_seller_panel already shows a graceful "no store yet"
+    # call-to-action, so it's always safe to offer the switch.
+    b.row(_mode_switch_button("buyer"))
     b.row(InlineKeyboardButton(text=f"{EMOJI_FAVORITES} علاقه‌مندی‌ها", callback_data="favorites:0"))
     b.row(InlineKeyboardButton(text=f"{EMOJI_COMPARE} مقایسه", callback_data="comparelist"))
     b.row(InlineKeyboardButton(text="💬 پیام‌های من", callback_data="notifications"))
@@ -2987,6 +3279,16 @@ async def _render_seller_panel(callback: CallbackQuery, user_id: int) -> None:
     ]
     b = InlineKeyboardBuilder()
     b.row(_mode_switch_button("seller"))
+    has_store = await user_has_any_seller(user_id)
+    if not has_store:
+        # Seller MODE and store REGISTRATION are deliberately separate
+        # (Phase 2): picking "🏪 فروشنده باشم" never auto-launches
+        # registration. But once here, every other button below just
+        # alerts "no store yet" with no way forward -- so the ONE thing
+        # this panel adds for a store-less seller is a plain link to the
+        # existing registration flow (registerseller), not a new feature.
+        lines.append("\nهنوز فروشگاهی ثبت نکردی؛ هر وقت آماده بودی از همینجا شروع کن 👇")
+        b.row(InlineKeyboardButton(text="➕ ثبت فروشگاه من", callback_data="registerseller"))
     b.row(InlineKeyboardButton(text="📦 محصولاتم", callback_data="myproducts"))
     b.row(InlineKeyboardButton(text="🏪 فروشگاهم", callback_data="myshop"))
     b.row(InlineKeyboardButton(text="👀 چقدر دیده شدم", callback_data="storestatus"))
@@ -3023,7 +3325,7 @@ async def resolve_single_seller_or_show_picker(
 
 
 async def _check_seller_ownership(user_id: int, seller_id: int) -> Optional[dict]:
-    seller = await db.fetchone("SELECT * FROM sellers WHERE id = ?;", (seller_id,))
+    seller = await get_seller_by_id(seller_id)
     if not seller:
         return None
     if user_id not in (seller["owner_user_id"], seller["created_by_user_id"]):
@@ -3089,7 +3391,7 @@ async def handle_store_status_picked(callback: CallbackQuery, state: FSMContext)
 
 
 async def _render_store_status(callback: CallbackQuery, seller_id: int) -> None:
-    seller = await db.fetchone("SELECT * FROM sellers WHERE id = ?;", (seller_id,))
+    seller = await get_seller_by_id(seller_id)
     if not seller:
         await callback.answer("⚠️ این فروشگاه یافت نشد.", show_alert=True)
         return
@@ -3348,29 +3650,37 @@ async def handle_my_products(callback: CallbackQuery, state: FSMContext) -> None
         callback, user_id, "prodlist", "کدوم فروشگاهت رو می‌خوای مدیریت کنی؟"
     )
     if seller_id:
-        await _render_product_list(callback, seller_id)
+        await _render_product_list(callback, seller_id, page=0)
 
 
 @router.callback_query(F.data.startswith("prodlist:"))
 async def handle_product_list_picked(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
-    seller_id = parse_int(callback.data.split(":")[1])
+    parts = callback.data.split(":")
+    # "prodlist:<seller_id>" comes from resolve_single_seller_or_show_picker
+    # (always page 0); "prodlist:<seller_id>:<page>" comes from this
+    # screen's own Next/Prev buttons (kb_pagination_row). Both are valid.
+    seller_id = parse_int(parts[1]) if len(parts) >= 2 else None
+    page = parse_int(parts[2]) if len(parts) >= 3 else 0
+    if seller_id is None or page is None:
+        await callback.answer("⚠️ درخواست نامعتبر است.", show_alert=True)
+        return
     user_id = await ensure_user(callback.from_user)
-    if seller_id is None or not await _check_seller_ownership(user_id, seller_id):
+    if not await _check_seller_ownership(user_id, seller_id):
         await callback.answer("⚠️ شما به این فروشگاه دسترسی ندارید.", show_alert=True)
         return
-    await _render_product_list(callback, seller_id)
+    await _render_product_list(callback, seller_id, page=page)
 
 
 _STOCK_LABELS = {"AVAILABLE": "موجود", "OUT_OF_STOCK": "ناموجود", "PREORDER": "پیش‌فروش"}
 
 
-async def _render_product_list(callback: CallbackQuery, seller_id: int) -> None:
-    products = await db.fetchall(
+async def _render_product_list(callback: CallbackQuery, seller_id: int, page: int = 0) -> None:
+    all_products = await db.fetchall(
         "SELECT * FROM products WHERE seller_id = ? ORDER BY created_at DESC;", (seller_id,)
     )
     b = InlineKeyboardBuilder()
-    if not products:
+    if not all_products:
         b.row(InlineKeyboardButton(text="➕ اضافه کردن اولین محصول", callback_data=f"prodadd:{seller_id}"))
         text = (
             "📦 هنوز محصولی اینجا نیست.\n"
@@ -3382,7 +3692,10 @@ async def _render_product_list(callback: CallbackQuery, seller_id: int) -> None:
             "📦 محصولاتت آماده‌ان!\n"
             "هر کدوم رو خواستی انتخاب کن تا ببینیم چه تغییراتی لازم داره."
         )
-        for p in products:
+        offset = page * PAGE_SIZE_LIST
+        page_products = all_products[offset: offset + PAGE_SIZE_LIST]
+        has_next = offset + PAGE_SIZE_LIST < len(all_products)
+        for p in page_products:
             stock = _STOCK_LABELS.get(p["stock_status"], p["stock_status"])
             b.row(InlineKeyboardButton(
                 text=f"🛍️ {p['name']} — {format_price(p['price'])} ({stock})",
@@ -3392,6 +3705,7 @@ async def _render_product_list(callback: CallbackQuery, seller_id: int) -> None:
                 InlineKeyboardButton(text="✏️ ویرایش", callback_data=f"prodedit:{p['id']}"),
                 InlineKeyboardButton(text="🗑️ حذف", callback_data=f"proddel:{p['id']}"),
             )
+        kb_pagination_row(b, f"prodlist:{seller_id}", page, has_next)
     kb_add_back(b, "account")
     await safe_edit(callback, text, b.as_markup())
     await callback.answer()
@@ -3545,7 +3859,7 @@ async def handle_product_edit_menu(callback: CallbackQuery, state: FSMContext) -
     if product_id is None:
         await callback.answer("⚠️ شناسه نامعتبر است.", show_alert=True)
         return
-    product = await db.fetchone("SELECT * FROM products WHERE id = ?;", (product_id,))
+    product = await get_product_by_id(product_id)
     if not product:
         await callback.answer("⚠️ این محصول یافت نشد.", show_alert=True)
         return
@@ -3574,7 +3888,7 @@ async def handle_product_field_edit_start(callback: CallbackQuery, state: FSMCon
     if product_id is None or field not in PRODUCT_EDITABLE_FIELDS:
         await callback.answer("⚠️ درخواست نامعتبر است.", show_alert=True)
         return
-    product = await db.fetchone("SELECT * FROM products WHERE id = ?;", (product_id,))
+    product = await get_product_by_id(product_id)
     user_id = await ensure_user(callback.from_user)
     if not product or not await _check_seller_ownership(user_id, product["seller_id"]):
         await callback.answer("⚠️ شما به این محصول دسترسی ندارید.", show_alert=True)
@@ -3597,7 +3911,7 @@ async def handle_product_field_edit_value(message: Message, state: FSMContext) -
         await message.answer("⚠️ فرآیند ویرایش منقضی شده. لطفاً دوباره تلاش کن.")
         return
 
-    product = await db.fetchone("SELECT * FROM products WHERE id = ?;", (product_id,))
+    product = await get_product_by_id(product_id)
     user_id = await ensure_user(message.from_user)
     if not product or not await _check_seller_ownership(user_id, product["seller_id"]):
         await message.answer("⚠️ شما به این محصول دسترسی ندارید.")
@@ -3638,7 +3952,7 @@ async def handle_product_stock_menu(callback: CallbackQuery, state: FSMContext) 
     if product_id is None:
         await callback.answer("⚠️ شناسه نامعتبر است.", show_alert=True)
         return
-    product = await db.fetchone("SELECT * FROM products WHERE id = ?;", (product_id,))
+    product = await get_product_by_id(product_id)
     user_id = await ensure_user(callback.from_user)
     if not product or not await _check_seller_ownership(user_id, product["seller_id"]):
         await callback.answer("⚠️ شما به این محصول دسترسی ندارید.", show_alert=True)
@@ -3662,7 +3976,7 @@ async def handle_product_stock_set(callback: CallbackQuery) -> None:
     if product_id is None or status not in _STOCK_LABELS:
         await callback.answer("⚠️ درخواست نامعتبر است.", show_alert=True)
         return
-    product = await db.fetchone("SELECT * FROM products WHERE id = ?;", (product_id,))
+    product = await get_product_by_id(product_id)
     user_id = await ensure_user(callback.from_user)
     if not product or not await _check_seller_ownership(user_id, product["seller_id"]):
         await callback.answer("⚠️ شما به این محصول دسترسی ندارید.", show_alert=True)
@@ -3681,7 +3995,7 @@ async def handle_product_delete_confirm_screen(callback: CallbackQuery, state: F
     if product_id is None:
         await callback.answer("⚠️ شناسه نامعتبر است.", show_alert=True)
         return
-    product = await db.fetchone("SELECT * FROM products WHERE id = ?;", (product_id,))
+    product = await get_product_by_id(product_id)
     user_id = await ensure_user(callback.from_user)
     if not product or not await _check_seller_ownership(user_id, product["seller_id"]):
         await callback.answer("⚠️ شما به این محصول دسترسی ندارید.", show_alert=True)
@@ -3709,7 +4023,7 @@ async def handle_product_delete_confirmed(callback: CallbackQuery, state: FSMCon
     if product_id is None:
         await callback.answer("⚠️ شناسه نامعتبر است.", show_alert=True)
         return
-    product = await db.fetchone("SELECT * FROM products WHERE id = ?;", (product_id,))
+    product = await get_product_by_id(product_id)
     user_id = await ensure_user(callback.from_user)
     if not product or not await _check_seller_ownership(user_id, product["seller_id"]):
         await callback.answer("⚠️ شما به این محصول دسترسی ندارید.", show_alert=True)
@@ -3749,7 +4063,7 @@ async def _render_stats_home(callback: CallbackQuery, seller_id: int) -> None:
     products = await db.fetchall(
         "SELECT * FROM products WHERE seller_id = ? ORDER BY views DESC;", (seller_id,)
     )
-    seller = await db.fetchone("SELECT * FROM sellers WHERE id = ?;", (seller_id,))
+    seller = await get_seller_by_id(seller_id)
     fav_count = await count_seller_favorites(seller_id)
     total_product_views = sum(p["views"] for p in products)
     active_products = sum(1 for p in products if p["stock_status"] == "AVAILABLE")
@@ -3780,7 +4094,7 @@ async def handle_stats_product(callback: CallbackQuery, state: FSMContext) -> No
     if product_id is None:
         await callback.answer("⚠️ شناسه نامعتبر است.", show_alert=True)
         return
-    product = await db.fetchone("SELECT * FROM products WHERE id = ?;", (product_id,))
+    product = await get_product_by_id(product_id)
     user_id = await ensure_user(callback.from_user)
     if not product or not await _check_seller_ownership(user_id, product["seller_id"]):
         await callback.answer("⚠️ شما به این محصول دسترسی ندارید.", show_alert=True)
@@ -4499,8 +4813,198 @@ async def _finish_public_ad(
 # Admin: setting price / duration / placement on an ad request, and a
 # lightweight ads-management overview (📢 تبلیغات).
 # ------------------------------------------------------------------
+# ======================================================================
+# PHASE 4: ADMIN PANEL
+# ======================================================================
+# Admin is a thin control layer over EXISTING business logic/repository
+# functions -- not a parallel system. Every admin-gated handler here
+# re-checks _is_admin() itself (never relies on a hidden button alone),
+# and admin-specific screens are deliberately separate from the
+# seller-facing ones (rather than reusing seller handlers/redirects) so
+# that zero existing seller-facing behavior is touched by this phase.
+async def _render_admin_home(callback: CallbackQuery) -> None:
+    text = "🛡 <b>پنل مدیریت</b>"
+    b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text="👥 کاربران", callback_data="adminusers"))
+    kb_add_back(b, "main")
+    await safe_edit(callback, text, b.as_markup())
+
+
+@router.callback_query(F.data == "adminhome")
+async def handle_admin_home(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    if not _is_admin(callback):
+        await callback.answer("⛔️ این بخش فقط برای ادمین در دسترس است.", show_alert=True)
+        return
+    await _render_admin_home(callback)
+    await callback.answer()
+
+
+# ------------------------------------------------------------------
+# 👥 کاربران
+# ------------------------------------------------------------------
+@router.callback_query(F.data == "adminusers")
+async def handle_admin_users_menu(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    if not _is_admin(callback):
+        await callback.answer("⛔️ این بخش فقط برای ادمین در دسترس است.", show_alert=True)
+        return
+    text = "👥 <b>کاربران</b>"
+    b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text="🔎 جستجوی کاربر", callback_data="adminusersearch"))
+    b.row(InlineKeyboardButton(text="📋 همه کاربران", callback_data="adminuserlist:0"))
+    kb_add_back(b, "adminhome")
+    await safe_edit(callback, text, b.as_markup())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "adminusersearch")
+async def handle_admin_user_search_start(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _is_admin(callback):
+        await callback.answer("⛔️ این بخش فقط برای ادمین در دسترس است.", show_alert=True)
+        return
+    await state.set_state(AdminSearchStates.waiting_user_query)
+    b = InlineKeyboardBuilder()
+    kb_add_back(b, "adminusers")
+    await safe_edit(callback, "🔎 نام، username یا آیدی عددی تلگرام کاربر را بفرست:", b.as_markup())
+    await callback.answer()
+
+
+@router.message(StateFilter(AdminSearchStates.waiting_user_query))
+async def handle_admin_user_search_query(message: Message, state: FSMContext) -> None:
+    if await restart_requested(message, state):
+        return
+    if not is_admin_telegram_id(message.from_user.id):
+        await state.clear()
+        return
+    await state.clear()
+    query = (message.text or "").strip()
+    if not query:
+        await message.answer("⚠️ لطفاً یک متن معتبر بفرست.")
+        return
+
+    like = f"%{query}%"
+    if query.isdigit():
+        rows = await db.fetchall(
+            """SELECT * FROM users
+               WHERE username LIKE ? OR first_name LIKE ? OR last_name LIKE ? OR CAST(telegram_id AS TEXT) LIKE ?
+               ORDER BY id DESC LIMIT ?;""",
+            (like, like, like, like, PAGE_SIZE_LIST),
+        )
+    else:
+        rows = await db.fetchall(
+            """SELECT * FROM users
+               WHERE username LIKE ? OR first_name LIKE ? OR last_name LIKE ?
+               ORDER BY id DESC LIMIT ?;""",
+            (like, like, like, PAGE_SIZE_LIST),
+        )
+
+    b = InlineKeyboardBuilder()
+    if not rows:
+        text = f"🔎 نتیجه‌ای برای «{query}» پیدا نشد."
+    else:
+        text = f"🔎 نتایج جستجو برای «{query}»:"
+        for u in rows:
+            label = u["first_name"] or u["username"] or str(u["telegram_id"])
+            b.row(InlineKeyboardButton(text=f"👤 {label}", callback_data=f"adminuserview:{u['id']}"))
+    kb_add_back(b, "adminusers")
+    await message.answer(text, reply_markup=b.as_markup())
+
+
+@router.callback_query(F.data.startswith("adminuserlist:"))
+async def handle_admin_user_list(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    if not _is_admin(callback):
+        await callback.answer("⛔️ این بخش فقط برای ادمین در دسترس است.", show_alert=True)
+        return
+    page = parse_int(callback.data.split(":")[1])
+    if page is None:
+        await callback.answer("⚠️ درخواست نامعتبر است.", show_alert=True)
+        return
+
+    all_users = await db.fetchall("SELECT * FROM users ORDER BY id DESC;")
+    offset = page * PAGE_SIZE_LIST
+    page_users = all_users[offset: offset + PAGE_SIZE_LIST]
+    has_next = offset + PAGE_SIZE_LIST < len(all_users)
+
+    b = InlineKeyboardBuilder()
+    if not all_users:
+        text = "📋 هنوز کاربری ثبت نشده."
+    else:
+        text = f"📋 <b>همه کاربران</b> ({len(all_users)} نفر)"
+        for u in page_users:
+            label = u["first_name"] or u["username"] or str(u["telegram_id"])
+            b.row(InlineKeyboardButton(text=f"👤 {label}", callback_data=f"adminuserview:{u['id']}"))
+        kb_pagination_row(b, "adminuserlist", page, has_next)
+    kb_add_back(b, "adminusers")
+    await safe_edit(callback, text, b.as_markup())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("adminuserview:"))
+async def handle_admin_user_view(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    if not _is_admin(callback):
+        await callback.answer("⛔️ این بخش فقط برای ادمین در دسترس است.", show_alert=True)
+        return
+    target_user_id = parse_int(callback.data.split(":")[1])
+    if target_user_id is None:
+        await callback.answer("⚠️ شناسه نامعتبر است.", show_alert=True)
+        return
+
+    user = await db.fetchone(
+        """SELECT u.*, c.name AS city_name FROM users u
+           LEFT JOIN cities c ON c.id = u.city_id WHERE u.id = ?;""",
+        (target_user_id,),
+    )
+    if not user:
+        await callback.answer("⚠️ این کاربر یافت نشد.", show_alert=True)
+        return
+
+    owned_sellers = await get_sellers_owned_by_user(target_user_id)
+    mode = await get_active_mode(target_user_id)
+    request_row = await db.fetchone("SELECT COUNT(*) AS c FROM requests WHERE user_id = ?;", (target_user_id,))
+    report_row = await db.fetchone("SELECT COUNT(*) AS c FROM reports WHERE user_id = ?;", (target_user_id,))
+    referral_total = 0
+    for s in owned_sellers:
+        referral_total += await get_referral_count(s["id"])
+
+    name = " ".join(filter(None, [user["first_name"], user["last_name"]])) or "بدون نام"
+    lines = [
+        f"👤 <b>{name}</b>",
+        f"آیدی تلگرام: {user['telegram_id']}",
+    ]
+    if user["username"]:
+        lines.append(f"نام کاربری: @{user['username']}")
+    lines += [
+        f"شهر: {user['city_name'] or 'ثبت نشده'}",
+        f"نقش انتخاب‌شده: {'بله' if user['role_chosen'] else 'خیر'}",
+        f"حالت فعلی: {mode}",
+        f"عضویت از: {user['created_at'][:10]}",
+        "",
+        f"🏪 فروشگاه‌های متعلق به این کاربر: {len(owned_sellers)}",
+    ]
+    for s in owned_sellers:
+        lines.append(f"  • {s['name']}")
+    lines += [
+        f"📋 تعداد درخواست‌های ثبت‌شده: {request_row['c'] if request_row else 0}",
+        f"🚨 تعداد گزارش‌های ثبت‌شده توسط این کاربر: {report_row['c'] if report_row else 0}",
+        f"🎁 مجموع معرفی‌های موفق (از فروشگاه‌هایش): {referral_total}",
+    ]
+
+    b = InlineKeyboardBuilder()
+    kb_add_back(b, "adminuserlist:0")
+    await safe_edit(callback, "\n".join(lines), b.as_markup())
+    await callback.answer()
+
+
 def _is_admin(callback: CallbackQuery) -> bool:
-    return bool(ADMIN_CHAT_ID) and callback.from_user.id == ADMIN_CHAT_ID
+    """Phase 4: the single canonical callback-layer admin check --
+    delegates to is_admin_telegram_id() (same ADMIN_CHAT_ID comparison
+    that function already did inline; consolidated here mechanically,
+    behavior unchanged, so every new admin-gated handler in this phase
+    shares one implementation instead of re-deriving it)."""
+    return is_admin_telegram_id(callback.from_user.id)
 
 
 @router.callback_query(F.data.startswith("adsetprice:"))
@@ -4849,11 +5353,24 @@ async def handle_main_callback(callback: CallbackQuery, state: FSMContext) -> No
     await callback.answer()
 
 
+SELLER_MODE_LANDING_TEXT = (
+    "🏪 خب، حالا حالت فروشندگی فعاله!\n\n"
+    "برای اینکه فروشگاهت روی ارزانکده دیده بشه، باید اول ثبتش کنی -- "
+    "هر وقت آماده بودی، از همینجا شروع کن."
+)
+
+ADMIN_MODE_PLACEHOLDER_TEXT = (
+    "🛡 حالت ادمین فعاله.\n\n"
+    "پنل کامل مدیریت هنوز در حال ساخته شدنه؛ فعلاً می‌تونی از همون امکانات مدیریتی "
+    "موجود (تأیید/رد گزارش‌ها و درخواست‌ها) که از طریق پیام‌های ادمین برات ارسال می‌شه استفاده کنی."
+)
+
+
 @router.callback_query(F.data.startswith("rolepick:"))
 async def handle_role_pick(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     role = callback.data.split(":", 1)[1]
-    if role not in ("buyer", "seller"):
+    if role not in ("buyer", "seller", "admin"):
         await callback.answer("⚠️ گزینه نامعتبر است.", show_alert=True)
         return
     user_id = await ensure_user(callback.from_user)
@@ -4865,19 +5382,33 @@ async def handle_role_pick(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer()
         return
 
-    # "🏪 می‌خوام فروشنده باشم": if they don't have a store yet, the only
-    # meaningful next step is starting registration -- picking "seller"
-    # mode on an empty account would just bounce back to buyer mode (see
-    # get_active_mode()).
-    if await user_has_any_seller(user_id):
-        await set_active_mode(user_id, "seller")
-        await _render_seller_panel(callback, user_id)
+    if role == "admin":
+        # Authorization is config-driven (ADMIN_CHAT_ID), never granted by
+        # tapping a button -- someone who isn't the configured admin gets
+        # refused here even though the button was technically visible to
+        # them (it's only ever SHOWN to the real admin, see
+        # role_pick_keyboard(), but this check is the actual gate).
+        if not is_admin_telegram_id(callback.from_user.id):
+            await callback.answer("⛔️ این گزینه فقط برای ادمین در دسترس است.", show_alert=True)
+            return
+        b = InlineKeyboardBuilder()
+        kb_add_back(b, "main")
+        await safe_edit(callback, ADMIN_MODE_PLACEHOLDER_TEXT, b.as_markup())
         await callback.answer()
-    else:
-        # Don't answer() here -- handle_register_seller_start() answers
-        # this same callback_query itself, and a callback can only be
-        # answered once (a second answer() raises TelegramBadRequest).
-        await handle_register_seller_start(callback, state)
+        return
+
+    # role == "seller": this ONLY records the user's intent/mode. Store
+    # registration is a separate, explicit action the user chooses next
+    # -- picking "🏪 فروشنده باشم" must never itself launch the
+    # registration wizard or ask for a store name. _render_seller_panel
+    # already degrades gracefully when the user has no store yet (every
+    # button on it independently checks ownership and explains what to
+    # do), so there's no need for a separate "no store yet" landing
+    # screen here -- that would just be a second, parallel version of
+    # the same state _render_seller_panel already handles.
+    await set_active_mode(user_id, "seller")
+    await _render_seller_panel(callback, user_id)
+    await callback.answer()
 
 
 @router.callback_query(F.data == "restartmain")
@@ -4909,10 +5440,19 @@ ROLE_PICK_TEXT = (
 )
 
 
-def role_pick_keyboard() -> InlineKeyboardMarkup:
+def is_admin_telegram_id(telegram_id: int) -> bool:
+    """Admin authorization is entirely config-driven (ADMIN_CHAT_ID from
+    .env) -- never a hardcoded id, never a stored "admin" flag anyone
+    could grant themselves via role selection."""
+    return bool(ADMIN_CHAT_ID) and telegram_id == ADMIN_CHAT_ID
+
+
+def role_pick_keyboard(show_admin_option: bool = False) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.row(InlineKeyboardButton(text="🛍️ می‌خوام خرید کنم", callback_data="rolepick:buyer"))
     b.row(InlineKeyboardButton(text="🏪 می‌خوام فروشنده باشم", callback_data="rolepick:seller"))
+    if show_admin_option:
+        b.row(InlineKeyboardButton(text="🛡 ادمین", callback_data="rolepick:admin"))
     return b.as_markup()
 
 
@@ -4925,13 +5465,19 @@ async def _go_to_start(target, user_id: int) -> None:
     first-time users see the role picker exactly once; returning users
     land directly in whichever mode they're already in (buyer's shopping
     menu, or their seller panel if they own a store and were last in
-    seller mode)."""
+    seller mode). This ONLY resets navigation/FSM state -- it never
+    touches the user's account, seller, store, products, orders, or
+    history (see handle_restart_main, which is the only caller that
+    clears FSM state before delegating here)."""
+    from_user_id = target.from_user.id if isinstance(target, (CallbackQuery, Message)) else None
     row = await db.fetchone("SELECT role_chosen FROM users WHERE id = ?;", (user_id,))
     if not row or not row["role_chosen"]:
+        show_admin = is_admin_telegram_id(from_user_id) if from_user_id is not None else False
+        keyboard = role_pick_keyboard(show_admin_option=show_admin)
         if isinstance(target, CallbackQuery):
-            await safe_edit(target, ROLE_PICK_TEXT, role_pick_keyboard())
+            await safe_edit(target, ROLE_PICK_TEXT, keyboard)
         else:
-            await target.answer(ROLE_PICK_TEXT, reply_markup=role_pick_keyboard())
+            await target.answer(ROLE_PICK_TEXT, reply_markup=keyboard)
         return
 
     mode = await get_active_mode(user_id)
@@ -5115,6 +5661,37 @@ async def periodic_ad_expiry_task() -> None:
 # ======================================================================
 # 25. MAIN
 # ======================================================================
+async def handle_global_error(event: ErrorEvent) -> bool:
+    """Global error handler: catches any exception a handler let escape,
+    so an unexpected bug never leaves the user with silent nothing and
+    never crashes the polling loop. Best-effort user notification is
+    itself exception-safe -- a failure to notify must not become a
+    second unhandled exception. Returns True so aiogram treats this
+    update as handled and moves on."""
+    logger.exception(
+        "Unhandled exception while processing update %s: %s", event.update, event.exception
+    )
+    try:
+        update = event.update
+        chat = None
+        bot_obj = None
+        if update.message:
+            chat = update.message.chat
+            bot_obj = update.message.bot
+        elif update.callback_query and update.callback_query.message:
+            chat = update.callback_query.message.chat
+            bot_obj = update.callback_query.bot
+        if chat is not None and bot_obj is not None:
+            await bot_obj.send_message(
+                chat.id, "⚠️ یه مشکل غیرمنتظره پیش اومد. لطفاً دوباره تلاش کن یا از «🏠 شروع از اول» استفاده کن."
+            )
+        if update.callback_query:
+            await update.callback_query.answer()
+    except Exception as exc:  # noqa: BLE001 - a failed notification must never raise again
+        logger.error("Failed to notify user about an unhandled error: %s", exc)
+    return True
+
+
 async def main() -> None:
     if not BOT_TOKEN:
         logger.error(
@@ -5127,6 +5704,7 @@ async def main() -> None:
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
+    dp.errors.register(handle_global_error)
 
     backup_task = asyncio.create_task(periodic_backup_task())
     ad_expiry_task = asyncio.create_task(periodic_ad_expiry_task())
