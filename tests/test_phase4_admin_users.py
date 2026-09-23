@@ -228,6 +228,18 @@ class AdminUsersAuthorizationSourceTests(unittest.TestCase):
         for forbidden in ("ban", "warning_point", "negative_score", "reputation"):
             self.assertNotIn(forbidden, body.lower())
 
+    def test_admin_role_selection_activates_admin_mode_and_opens_panel(self):
+        body = self._get_function_body("handle_role_pick")
+
+        self.assertIn('await set_active_mode(user_id, "admin")', body)
+        self.assertIn("await _render_admin_home(callback)", body)
+
+        admin_pos = body.index('if role == "admin":')
+        admin_branch = body[admin_pos:]
+
+        self.assertIn('await set_active_mode(user_id, "admin")', admin_branch)
+        self.assertIn("await _render_admin_home(callback)", admin_branch)
+        self.assertNotIn("ADMIN_MODE_PLACEHOLDER_TEXT", admin_branch)
 
 if __name__ == "__main__":
     unittest.main()
