@@ -5391,9 +5391,8 @@ async def handle_role_pick(callback: CallbackQuery, state: FSMContext) -> None:
         if not is_admin_telegram_id(callback.from_user.id):
             await callback.answer("⛔️ این گزینه فقط برای ادمین در دسترس است.", show_alert=True)
             return
-        b = InlineKeyboardBuilder()
-        kb_add_back(b, "main")
-        await safe_edit(callback, ADMIN_MODE_PLACEHOLDER_TEXT, b.as_markup())
+                await set_active_mode(user_id, "admin")
+        await _render_admin_home(callback)
         await callback.answer()
         return
 
