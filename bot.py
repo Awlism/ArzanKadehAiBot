@@ -456,19 +456,46 @@ COLUMN_MIGRATIONS = [
 
 
 async def ensure_column(table: str, column: str, sql_type_and_default: str) -> None:
-    """Add `column` to `table` if it doesn't already exist. Idempotent and
-    safe to run on every startup, on a brand-new database or an existing
-    one with real data."""
-    cur = await db.conn.execute(f"PRAGMA table_info({table});")
+    """Add `column` to `table` if it doesn't already exist.
+
+    Table/column identifiers come from the fixed COLUMN_MIGRATIONS list,
+    but are still validated before being interpolated into identifier SQL.
+    """
+    identifier_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+    if not identifier_re.fullmatch(table):
+        raise ValueError(f"Invalid table identifier: {table!r}")
+
+    if not identifier_re.fullmatch(column):
+        raise ValueError(f"Invalid column identifier: {column!r}")
+
+    if ";" in sql_type_and_default or "--" in sql_type_and_default or "/*" in sql_type_and_default:
+        raise ValueError("Invalid SQL type/default fragment.")
+
+    quoted_table = '"' + table.replace('"', '""') + '"'
+    quoted_column = '"' + column.replace('"', '""') + '"'
+
+    cur = await db.conn.execute(
+        "SELECT name FROM pragma_table_info(?)",
+        (table,),
+    )
     rows = await cur.fetchall()
     await cur.close()
-    existing_columns = {row[1] for row in rows}  # row[1] = column name
+
+    existing_columns = {row[0] for row in rows}
+
     if column in existing_columns:
         return
-    await db.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {sql_type_and_default};")
+
+    await db.conn.execute(
+        "ALTER TABLE " + quoted_table
+        + " ADD COLUMN " + quoted_column
+        + " " + sql_type_and_default
+        + ";"
+    )
+
     logger.info("Migrated: added column %s.%s", table, column)
-
-
+    
 async def run_column_migrations() -> None:
     for table, column, sql_type_and_default in COLUMN_MIGRATIONS:
         await ensure_column(table, column, sql_type_and_default)
