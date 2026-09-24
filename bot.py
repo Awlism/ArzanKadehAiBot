@@ -784,45 +784,48 @@ def telegram_url(username: Optional[str]) -> Optional[str]:
     return f"https://t.me/{clean}" if clean else None
 
 
-_UNSAFE_URL_CHARS = set(' \t\n\r<>"\'\\()[]{}')
-_DANGEROUS_URL_SCHEME_PREFIXES = ("javascript:", "data:", "vbscript:", "file:", "about:")
-
-
 def website_url(url: Optional[str]) -> Optional[str]:
-    """Builds/validates a website link. Any string that already worked
-    before this validation was added still works identically (adding
-    "https://" when no scheme is given, keeping http/https as-is). What's
-    new: a URL that Telegram would reject as a button (BUTTON_URL_INVALID)
-    -- empty host, embedded whitespace, characters that have no business
-    in a URL, or a non-http(s) scheme (e.g. "ftp://x.com", "javascript:...",
-    "data:...") -- now returns None instead of silently producing a
-    broken or dangerous button. Notably: the old code only checked the
-    raw string didn't start with "http(s)://" and then unconditionally
-    prepended "https://", which for "ftp://x.com" produced the malformed
-    "https://ftp://x.com" -- always broken, never validated."""
+    """Builds/validates a website link safely and independently."""
+    from urllib.parse import urlparse
+
+    unsafe_url_chars = set(' \t\n\r<>"\'\\()[]{}')
+    dangerous_scheme_prefixes = (
+        "javascript:",
+        "data:",
+        "vbscript:",
+        "file:",
+        "about:",
+    )
+
     if not url:
         return None
+
     clean = url.strip()
-    if not clean or any(ch in clean for ch in _UNSAFE_URL_CHARS):
+
+    if not clean or any(ch in clean for ch in unsafe_url_chars):
         return None
-    if clean.lower().startswith(_DANGEROUS_URL_SCHEME_PREFIXES):
+
+    if clean.lower().startswith(dangerous_scheme_prefixes):
         return None
+
     if clean.startswith("http://") or clean.startswith("https://"):
         pass
     elif "://" in clean:
-        # A different scheme was smuggled in (ftp://, tg://, custom://,
-        # ...) -- never coerce this into an https:// URL.
         return None
     else:
         clean = "https://" + clean
+
     try:
         parsed = urlparse(clean)
     except ValueError:
         return None
+
     if parsed.scheme not in ("http", "https"):
         return None
-    if not parsed.netloc or any(ch in parsed.netloc for ch in _UNSAFE_URL_CHARS):
+
+    if not parsed.netloc or any(ch in parsed.netloc for ch in unsafe_url_chars):
         return None
+
     return clean
 
 
