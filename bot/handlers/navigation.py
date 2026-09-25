@@ -22,6 +22,7 @@ from ..repositories import (
     get_active_mode,
     set_active_mode,
 )
+from ..services.notifications import notify_user
 from ..services.referrals import (
     REFERRAL_DEEP_LINK_RE,
     record_referral_if_new,
@@ -30,7 +31,6 @@ from ..utils import (
     ensure_user,
     is_admin_telegram_id,
     now_iso,
-    notify_user,
     safe_edit,
     send_main_menu,
 )
