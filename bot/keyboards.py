@@ -4,7 +4,7 @@ ArzanKadeh AI
 Keyboard builders
 """
 
-from aiogram.types import InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from .constants import (
@@ -18,7 +18,6 @@ from .constants import (
     EMOJI_MAIN_MENU,
     EMOJI_NEAR_ME,
     EMOJI_NEW_TODAY,
-    EMOJI_NOTIFICATIONS,
     EMOJI_PICKS,
     EMOJI_REGISTER_SELLER,
     EMOJI_SEARCH,
@@ -27,11 +26,59 @@ from .constants import (
 )
 
 
+def restart_button() -> InlineKeyboardButton:
+    return InlineKeyboardButton(
+        text="🔄 شروع دوباره",
+        callback_data="restart_button",
+    )
+
+
+def kb_add_back(
+    builder: InlineKeyboardBuilder,
+    callback_data: str,
+    text: str = f"{EMOJI_BACK} بازگشت",
+) -> None:
+    builder.row(
+        InlineKeyboardButton(
+            text=text,
+            callback_data=callback_data,
+        )
+    )
+
+
+def kb_pagination_row(
+    builder: InlineKeyboardBuilder,
+    base_callback: str,
+    page: int,
+    has_next: bool,
+) -> None:
+    row = []
+
+    if page > 0:
+        row.append(
+            InlineKeyboardButton(
+                text="◀️ قبلی",
+                callback_data=f"{base_callback}:{page - 1}",
+            )
+        )
+
+    if has_next:
+        row.append(
+            InlineKeyboardButton(
+                text="بعدی ▶️",
+                callback_data=f"{base_callback}:{page + 1}",
+            )
+        )
+
+    if row:
+        builder.row(*row)
+
+
 def main_menu_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     builder.button(
-        text=f"{EMOJI_SEARCH} جستجو",
+        text=f"{EMOJI_SEARCH} جستجوی محصول",
         callback_data="search",
     )
     builder.button(
@@ -51,7 +98,7 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
         callback_data="newtoday",
     )
     builder.button(
-        text=f"{EMOJI_PICKS} پیشنهادها",
+        text=f"{EMOJI_PICKS} انتخاب ارزانکده",
         callback_data="picks",
     )
     builder.button(
@@ -59,7 +106,7 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
         callback_data="nearme",
     )
     builder.button(
-        text=f"{EMOJI_TOP_SELLERS} برترین فروشگاه‌ها",
+        text=f"{EMOJI_TOP_SELLERS} فروشندگان برتر",
         callback_data="topsellers",
     )
     builder.button(
@@ -71,100 +118,19 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
         callback_data="comparelist",
     )
     builder.button(
-        text=f"{EMOJI_REGISTER_SELLER} ثبت فروشگاه",
+        text=f"{EMOJI_REGISTER_SELLER} ثبت فروشگاه من",
         callback_data="registerseller",
     )
     builder.button(
-        text=f"{EMOJI_ADS} تبلیغات",
+        text="📢 تبلیغ در ارزانکده",
         callback_data="publicads",
     )
     builder.button(
         text=f"{EMOJI_ACCOUNT} حساب کاربری",
         callback_data="account",
     )
-    builder.button(
-        text=f"{EMOJI_NOTIFICATIONS} اعلان‌ها",
-        callback_data="notifications",
-    )
-    builder.button(
-        text=f"{EMOJI_MAIN_MENU} منوی اصلی",
-        callback_data="main_menu",
-    )
 
     builder.adjust(2)
-
-    return builder.as_markup()
-
-
-def back_keyboard(
-    callback_data: str = "main_menu",
-    text: str = "🔙 بازگشت",
-) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-
-    builder.button(
-        text=text,
-        callback_data=callback_data,
-    )
-
-    return builder.as_markup()
-
-
-def pagination_keyboard(
-    previous_callback: str | None = None,
-    next_callback: str | None = None,
-    back_callback: str = "main_menu",
-) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-
-    if previous_callback:
-        builder.button(
-            text="⬅️ قبلی",
-            callback_data=previous_callback,
-        )
-
-    if next_callback:
-        builder.button(
-            text="بعدی ➡️",
-            callback_data=next_callback,
-        )
-
-    builder.button(
-        text="🔙 بازگشت",
-        callback_data=back_callback,
-    )
-
-    builder.adjust(2)
-
-    return builder.as_markup()
-
-
-def confirm_keyboard(
-    confirm_callback: str,
-    cancel_callback: str = "main_menu",
-) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-
-    builder.button(
-        text="✅ تأیید",
-        callback_data=confirm_callback,
-    )
-    builder.button(
-        text="❌ لغو",
-        callback_data=cancel_callback,
-    )
-
-    builder.adjust(2)
-
-    return builder.as_markup()
-
-
-def restart_keyboard() -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-
-    builder.button(
-        text="🔄 شروع دوباره",
-        callback_data="restart_button",
-    )
+    builder.row(restart_button())
 
     return builder.as_markup()
