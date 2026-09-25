@@ -11,7 +11,11 @@ from urllib.parse import urlparse
 
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    Message,
+)
 
 from .config import ADMIN_CHAT_ID
 from .database import db
@@ -58,11 +62,15 @@ def status_badge(status: str) -> str:
     return badges.get(status, "⚪")
 
 
-def _normalize_url(value: Optional[str], scheme: str = "https") -> Optional[str]:
+def _normalize_url(
+    value: Optional[str],
+    scheme: str = "https",
+) -> Optional[str]:
     if not value:
         return None
 
     value = value.strip()
+
     if not value:
         return None
 
@@ -77,12 +85,20 @@ def _normalize_url(value: Optional[str], scheme: str = "https") -> Optional[str]
     return value
 
 
-def instagram_url(username: Optional[str]) -> Optional[str]:
+def instagram_url(
+    username: Optional[str],
+) -> Optional[str]:
     if not username:
         return None
 
     username = username.strip()
-    username = re.sub(r"^https?://(www\.)?instagram\.com/", "", username)
+
+    username = re.sub(
+        r"^https?://(www\.)?instagram\.com/",
+        "",
+        username,
+    )
+
     username = username.strip("/").lstrip("@")
 
     if not username:
@@ -91,12 +107,20 @@ def instagram_url(username: Optional[str]) -> Optional[str]:
     return f"https://instagram.com/{username}"
 
 
-def telegram_url(username: Optional[str]) -> Optional[str]:
+def telegram_url(
+    username: Optional[str],
+) -> Optional[str]:
     if not username:
         return None
 
     username = username.strip()
-    username = re.sub(r"^https?://(www\.)?t\.me/", "", username)
+
+    username = re.sub(
+        r"^https?://(www\.)?t\.me/",
+        "",
+        username,
+    )
+
     username = username.strip("/").lstrip("@")
 
     if not username:
@@ -105,11 +129,15 @@ def telegram_url(username: Optional[str]) -> Optional[str]:
     return f"https://t.me/{username}"
 
 
-def website_url(value: Optional[str]) -> Optional[str]:
+def website_url(
+    value: Optional[str],
+) -> Optional[str]:
     return _normalize_url(value)
 
 
-def whatsapp_url(value: Optional[str]) -> Optional[str]:
+def whatsapp_url(
+    value: Optional[str],
+) -> Optional[str]:
     if not value:
         return None
 
@@ -119,6 +147,9 @@ def whatsapp_url(value: Optional[str]) -> Optional[str]:
         return value
 
     digits = re.sub(r"\D", "", value)
+
+    if digits.startswith("00"):
+        digits = digits[2:]
 
     if not digits:
         return None
@@ -137,20 +168,49 @@ async def safe_edit(
             reply_markup=reply_markup,
         )
         return True
+
     except TelegramBadRequest as exc:
         if "message is not modified" in str(exc).lower():
             return False
-        raise
+
+        try:
+            await callback.message.answer(
+                text,
+                reply_markup=reply_markup,
+            )
+            return True
+        except Exception:
+            raise
 
 
 async def ensure_user(user) -> int:
-    user_id = user.id
-    username = getattr(user, "username", None)
-    first_name = getattr(user, "first_name", None)
+    telegram_id = user.id
+
+    username = getattr(
+        user,
+        "username",
+        None,
+    )
+
+    first_name = getattr(
+        user,
+        "first_name",
+        None,
+    )
+
+    last_name = getattr(
+        user,
+        "last_name",
+        None,
+    )
 
     existing = await db.fetchone(
-        "SELECT id FROM users WHERE id = ?;",
-        (user_id,),
+        """
+        SELECT id
+        FROM users
+        WHERE telegram_id = ?;
+        """,
+        (telegram_id,),
     )
 
     if existing:
@@ -159,44 +219,55 @@ async def ensure_user(user) -> int:
             UPDATE users
             SET username = ?,
                 first_name = ?,
+                last_name = ?,
                 updated_at = ?
-            WHERE id = ?;
+            WHERE telegram_id = ?;
             """,
             (
                 username,
                 first_name,
+                last_name,
                 now_iso(),
-                user_id,
+                telegram_id,
             ),
         )
-        return user_id
+
+        return existing["id"]
 
     now = now_iso()
 
     await db.execute(
         """
         INSERT INTO users (
-            id,
+            telegram_id,
             username,
             first_name,
-            active_mode,
-            has_seen_compare_intro,
-            role_chosen,
+            last_name,
             created_at,
             updated_at
         )
-        VALUES (?, ?, ?, 'buyer', 0, 0, ?, ?);
+        VALUES (?, ?, ?, ?, ?, ?);
         """,
         (
-            user_id,
+            telegram_id,
             username,
             first_name,
+            last_name,
             now,
             now,
         ),
     )
 
-    return user_id
+    created = await db.fetchone(
+        """
+        SELECT id
+        FROM users
+        WHERE telegram_id = ?;
+        """,
+        (telegram_id,),
+    )
+
+    return created["id"]
 
 
 async def log_event(
@@ -204,60 +275,55 @@ async def log_event(
     event_type: str,
     entity_type: Optional[str] = None,
     entity_id: Optional[int] = None,
-    metadata: Optional[str] = None,
 ) -> None:
-    await db.execute(
-        """
-        INSERT INTO events (
-            user_id,
-            event_type,
-            entity_type,
-            entity_id,
-            metadata,
-            created_at
+    try:
+        await db.execute(
+            """
+            INSERT INTO events (
+                user_id,
+                event_type,
+                entity_type,
+                entity_id,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?);
+            """,
+            (
+                user_id,
+                event_type,
+                entity_type,
+                entity_id,
+                now_iso(),
+            ),
         )
-        VALUES (?, ?, ?, ?, ?, ?);
-        """,
-        (
-            user_id,
-            event_type,
-            entity_type,
-            entity_id,
-            metadata,
-            now_iso(),
-        ),
-    )
+    except Exception:
+        return
 
 
 async def notify_user(
     user_id: int,
-    text: str,
-    bot=None,
-    reply_markup: Optional[InlineKeyboardMarkup] = None,
+    title: str,
+    message: str,
+    notification_type: str = "info",
 ) -> bool:
-    if bot is None:
-        return False
-
     try:
-        await bot.send_message(
-            user_id,
-            text,
-            reply_markup=reply_markup,
-        )
-
         await db.execute(
             """
             INSERT INTO notifications (
                 user_id,
+                title,
                 message,
+                notification_type,
                 is_read,
                 created_at
             )
-            VALUES (?, ?, 0, ?);
+            VALUES (?, ?, ?, ?, 0, ?);
             """,
             (
                 user_id,
-                text,
+                title,
+                message,
+                notification_type,
                 now_iso(),
             ),
         )
@@ -275,26 +341,39 @@ async def log_audit(
     entity_id: Optional[int] = None,
     details: Optional[str] = None,
 ) -> None:
-    await db.execute(
-        """
-        INSERT INTO audit_log (
-            actor_user_id,
-            action,
-            entity_type,
-            entity_id,
-            details,
-            created_at
+    try:
+        await db.execute(
+            """
+            INSERT INTO audit_log (
+                actor_user_id,
+                action,
+                entity_type,
+                entity_id,
+                details,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?);
+            """,
+            (
+                actor_user_id,
+                action,
+                entity_type,
+                entity_id,
+                details,
+                now_iso(),
+            ),
         )
-        VALUES (?, ?, ?, ?, ?, ?);
-        """,
-        (
-            actor_user_id,
-            action,
-            entity_type,
-            entity_id,
-            details,
-            now_iso(),
-        ),
+    except Exception:
+        return
+
+
+def is_admin_telegram_id(
+    telegram_id: Optional[int],
+) -> bool:
+    return bool(
+        ADMIN_CHAT_ID
+        and telegram_id
+        and telegram_id == ADMIN_CHAT_ID
     )
 
 
@@ -321,19 +400,23 @@ async def restart_requested(
     message: Message,
     state: FSMContext,
 ) -> bool:
-    if (message.text or "").strip() == "/start":
-        await state.clear()
-        await ensure_user(message.from_user)
+    if (message.text or "").strip() != "/start":
+        return False
 
-        from .keyboards import main_menu_keyboard
+    await state.clear()
 
-        await message.answer(
-            "🛍️ <b>به ارزانکده خوش اومدی!</b>\n\n"
-            "یک محل ساده برای پیدا کردن فروشگاه‌ها، محصولات و خدمات ایرانی.\n\n"
-            "یکی از گزینه‌های زیر رو انتخاب کن 👇",
-            reply_markup=main_menu_keyboard(),
-        )
+    await ensure_user(
+        message.from_user
+    )
 
-        return True
+    from .keyboards import main_menu_keyboard
 
-    return False
+    await message.answer(
+        "🛍️ <b>به ارزانکده خوش اومدی!</b>\n\n"
+        "یک محل ساده برای پیدا کردن فروشگاه‌ها، "
+        "محصولات و خدمات ایرانی.\n\n"
+        "یکی از گزینه‌های زیر رو انتخاب کن 👇",
+        reply_markup=main_menu_keyboard(),
+    )
+
+    return True
