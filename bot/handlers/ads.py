@@ -8,7 +8,7 @@ from typing import Optional
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import StateFilter
+from aiogram.filters import StateFilter
 from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
