@@ -18,6 +18,10 @@ from aiogram.types import (
 )
 
 from .config import ADMIN_CHAT_ID
+from .constants import (
+    _DANGEROUS_URL_SCHEME_PREFIXES,
+    _UNSAFE_URL_CHARS,
+)
 from .database import db
 
 
@@ -66,6 +70,13 @@ def _normalize_url(
     value: Optional[str],
     scheme: str = "https",
 ) -> Optional[str]:
+    """
+    Normalize and validate an HTTP/HTTPS URL.
+
+    Only http and https URLs are accepted.
+    Unsafe control characters, whitespace, dangerous schemes,
+    malformed hosts, credentials, and invalid ports are rejected.
+    """
     if not value:
         return None
 
@@ -74,12 +85,58 @@ def _normalize_url(
     if not value:
         return None
 
+    if any(
+        unsafe_char in value
+        for unsafe_char in _UNSAFE_URL_CHARS
+    ):
+        return None
+
+    lowered = value.lower()
+
+    if any(
+        lowered.startswith(prefix)
+        for prefix in _DANGEROUS_URL_SCHEME_PREFIXES
+    ):
+        return None
+
     if "://" not in value:
         value = f"{scheme}://{value}"
 
     parsed = urlparse(value)
 
+    if parsed.scheme.lower() not in (
+        "http",
+        "https",
+    ):
+        return None
+
     if not parsed.netloc:
+        return None
+
+    if parsed.username is not None:
+        return None
+
+    if parsed.password is not None:
+        return None
+
+    try:
+        hostname = parsed.hostname
+        parsed.port
+    except ValueError:
+        return None
+
+    if not hostname:
+        return None
+
+    hostname = hostname.strip().lower()
+
+    if not hostname:
+        return None
+
+    if hostname.startswith(".") or hostname.endswith("."):
+        return None
+
+    if ".." in hostname:
         return None
 
     return value
@@ -104,6 +161,18 @@ def instagram_url(
     if not username:
         return None
 
+    if any(
+        unsafe_char in username
+        for unsafe_char in _UNSAFE_URL_CHARS
+    ):
+        return None
+
+    if not re.fullmatch(
+        r"[A-Za-z0-9._]+",
+        username,
+    ):
+        return None
+
     return f"https://instagram.com/{username}"
 
 
@@ -126,6 +195,18 @@ def telegram_url(
     if not username:
         return None
 
+    if any(
+        unsafe_char in username
+        for unsafe_char in _UNSAFE_URL_CHARS
+    ):
+        return None
+
+    if not re.fullmatch(
+        r"[A-Za-z0-9_]+",
+        username,
+    ):
+        return None
+
     return f"https://t.me/{username}"
 
 
@@ -143,15 +224,37 @@ def whatsapp_url(
 
     value = value.strip()
 
-    if value.startswith("http://") or value.startswith("https://"):
-        return value
+    if not value:
+        return None
 
-    digits = re.sub(r"\D", "", value)
+    if value.startswith(
+        "http://"
+    ) or value.startswith(
+        "https://"
+    ):
+        return _normalize_url(
+            value
+        )
+
+    if any(
+        unsafe_char in value
+        for unsafe_char in _UNSAFE_URL_CHARS
+    ):
+        return None
+
+    digits = re.sub(
+        r"\D",
+        "",
+        value,
+    )
 
     if digits.startswith("00"):
         digits = digits[2:]
 
     if not digits:
+        return None
+
+    if len(digits) < 7 or len(digits) > 15:
         return None
 
     return f"https://wa.me/{digits}"
@@ -298,40 +401,6 @@ async def log_event(
         )
     except Exception:
         return
-
-
-async def notify_user(
-    user_id: int,
-    title: str,
-    message: str,
-    notification_type: str = "info",
-) -> bool:
-    try:
-        await db.execute(
-            """
-            INSERT INTO notifications (
-                user_id,
-                title,
-                message,
-                notification_type,
-                is_read,
-                created_at
-            )
-            VALUES (?, ?, ?, ?, 0, ?);
-            """,
-            (
-                user_id,
-                title,
-                message,
-                notification_type,
-                now_iso(),
-            ),
-        )
-
-        return True
-
-    except Exception:
-        return False
 
 
 async def log_audit(
