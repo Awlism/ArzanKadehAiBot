@@ -17,10 +17,11 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from ..config import ADMIN_CHAT_ID
 from ..database import db
-from ..keyboards import kb_add_back
-from ..repositories import get_active_mode, set_active_mode
+from ..repositories import (
+    get_active_mode,
+    set_active_mode,
+)
 from ..services.referrals import (
     REFERRAL_DEEP_LINK_RE,
     record_referral_if_new,
@@ -39,7 +40,9 @@ from .admin import _render_admin_home
 
 logger = logging.getLogger(__name__)
 
-router = Router(name="navigation")
+router = Router(
+    name="navigation"
+)
 
 
 # ======================================================================
@@ -66,8 +69,15 @@ async def handle_main_callback(
     state: FSMContext,
 ) -> None:
     await state.clear()
-    await ensure_user(callback.from_user)
-    await send_main_menu(callback)
+
+    await ensure_user(
+        callback.from_user
+    )
+
+    await send_main_menu(
+        callback
+    )
+
     await callback.answer()
 
 
@@ -116,23 +126,34 @@ def restart_button() -> InlineKeyboardButton:
     )
 
 
-@router.callback_query(F.data.startswith("rolepick:"))
+@router.callback_query(
+    F.data.startswith("rolepick:")
+)
 async def handle_role_pick(
     callback: CallbackQuery,
     state: FSMContext,
 ) -> None:
     await state.clear()
 
-    role = callback.data.split(":", 1)[1]
+    role = callback.data.split(
+        ":",
+        1,
+    )[1]
 
-    if role not in ("buyer", "seller", "admin"):
+    if role not in (
+        "buyer",
+        "seller",
+        "admin",
+    ):
         await callback.answer(
             "⚠️ گزینه نامعتبر است.",
             show_alert=True,
         )
         return
 
-    user_id = await ensure_user(callback.from_user)
+    user_id = await ensure_user(
+        callback.from_user
+    )
 
     await db.execute(
         """
@@ -153,7 +174,10 @@ async def handle_role_pick(
             "buyer",
         )
 
-        await send_main_menu(callback)
+        await send_main_menu(
+            callback
+        )
+
         await callback.answer()
         return
 
@@ -172,14 +196,15 @@ async def handle_role_pick(
             "admin",
         )
 
-        await _render_admin_home(callback)
+        await _render_admin_home(
+            callback
+        )
+
         await callback.answer()
         return
 
     # role == "seller"
-    #
-    # انتخاب فروشنده بودن فقط mode را تغییر می‌دهد.
-    # ثبت فروشگاه باید جداگانه و با انتخاب خود کاربر انجام شود.
+
     await set_active_mode(
         user_id,
         "seller",
@@ -193,7 +218,16 @@ async def handle_role_pick(
     await callback.answer()
 
 
-@router.callback_query(F.data == "restartmain")
+# ======================================================================
+# RESTART
+# ======================================================================
+
+@router.callback_query(
+    F.data == "restart_button"
+)
+@router.callback_query(
+    F.data == "restartmain"
+)
 async def handle_restart_main(
     callback: CallbackQuery,
     state: FSMContext,
@@ -249,7 +283,9 @@ async def _go_to_start(
 
     if not row or not row["role_chosen"]:
         show_admin = (
-            is_admin_telegram_id(from_user_id)
+            is_admin_telegram_id(
+                from_user_id
+            )
             if from_user_id is not None
             else False
         )
@@ -289,9 +325,6 @@ async def _go_to_start(
                 user_id,
             )
         else:
-            # _render_seller_panel works by editing an existing
-            # callback message. For a fresh /start message,
-            # use the main menu.
             await send_main_menu(
                 target
             )
@@ -315,7 +348,9 @@ async def _go_to_start(
         )
 
 
-@router.message(CommandStart())
+@router.message(
+    CommandStart()
+)
 async def handle_start(
     message: Message,
     state: FSMContext,
