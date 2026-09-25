@@ -432,7 +432,7 @@ async def _handle_referral_deep_link(
             seller["owner_user_id"],
             "🎉 معرفی جدید",
             "یک کاربر جدید از طریق لینک اختصاصی فروشگاه شما وارد ارزانکده شد!",
-            ntype="referral",
+            notification_type="referral",
         )
 
 
