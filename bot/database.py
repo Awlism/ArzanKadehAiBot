@@ -1,6 +1,12 @@
 # -*- coding: utf-8 -*-
+"""
+ArzanKadeh AI
+Database layer
+"""
 
 import logging
+import re
+from datetime import datetime, timezone
 from typing import Optional, Sequence
 
 import aiosqlite
@@ -9,6 +15,10 @@ from .config import DATABASE_PATH, SEED_DEMO_DATA
 
 
 logger = logging.getLogger("arzankadeh")
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 class Database:
@@ -27,6 +37,7 @@ class Database:
     async def close(self) -> None:
         if self.conn:
             await self.conn.close()
+            self.conn = None
 
     async def execute(
         self,
@@ -276,7 +287,14 @@ SCHEMA_STATEMENTS = [
         quantity INTEGER NOT NULL DEFAULT 1,
         total_price INTEGER,
         status TEXT NOT NULL DEFAULT 'PENDING'
-            CHECK (status IN ('PENDING', 'CONFIRMED', 'COMPLETED', 'CANCELLED')),
+            CHECK (
+                status IN (
+                    'PENDING',
+                    'CONFIRMED',
+                    'COMPLETED',
+                    'CANCELLED'
+                )
+            ),
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         FOREIGN KEY (buyer_user_id) REFERENCES users(id),
@@ -309,6 +327,71 @@ COLUMN_MIGRATIONS = [
 ]
 
 
+async def ensure_column(
+    table: str,
+    column: str,
+    sql_type_and_default: str,
+) -> None:
+    """Add a column if it does not already exist."""
+
+    identifier_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+    if not identifier_re.fullmatch(table):
+        raise ValueError(f"Invalid table identifier: {table!r}")
+
+    if not identifier_re.fullmatch(column):
+        raise ValueError(f"Invalid column identifier: {column!r}")
+
+    if (
+        ";" in sql_type_and_default
+        or "--" in sql_type_and_default
+        or "/*" in sql_type_and_default
+    ):
+        raise ValueError("Invalid SQL type/default fragment.")
+
+    quoted_table = '"' + table.replace('"', '""') + '"'
+    quoted_column = '"' + column.replace('"', '""') + '"'
+
+    cur = await db.conn.execute(
+        "SELECT name FROM pragma_table_info(?)",
+        (table,),
+    )
+    rows = await cur.fetchall()
+    await cur.close()
+
+    existing_columns = {row[0] for row in rows}
+
+    if column in existing_columns:
+        return
+
+    await db.conn.execute(
+        "ALTER TABLE "
+        + quoted_table
+        + " ADD COLUMN "
+        + quoted_column
+        + " "
+        + sql_type_and_default
+        + ";"
+    )
+
+    logger.info(
+        "Migrated: added column %s.%s",
+        table,
+        column,
+    )
+
+
+async def run_column_migrations() -> None:
+    for table, column, sql_type_and_default in COLUMN_MIGRATIONS:
+        await ensure_column(
+            table,
+            column,
+            sql_type_and_default,
+        )
+
+    await db.conn.commit()
+
+
 INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_categories_parent ON categories(parent_id);",
     "CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id);",
@@ -334,42 +417,6 @@ INDEX_STATEMENTS = [
 ]
 
 
-async def ensure_column(
-    table: str,
-    column: str,
-    sql_type_and_default: str,
-) -> None:
-    cur = await db.conn.execute(f"PRAGMA table_info({table});")
-    rows = await cur.fetchall()
-    await cur.close()
-
-    existing_columns = {row[1] for row in rows}
-
-    if column in existing_columns:
-        return
-
-    await db.conn.execute(
-        f"ALTER TABLE {table} ADD COLUMN {column} {sql_type_and_default};"
-    )
-
-    logger.info(
-        "Migrated: added column %s.%s",
-        table,
-        column,
-    )
-
-
-async def run_column_migrations() -> None:
-    for table, column, sql_type_and_default in COLUMN_MIGRATIONS:
-        await ensure_column(
-            table,
-            column,
-            sql_type_and_default,
-        )
-
-    await db.conn.commit()
-
-
 async def init_schema() -> None:
     for stmt in SCHEMA_STATEMENTS:
         await db.conn.execute(stmt)
@@ -378,6 +425,7 @@ async def init_schema() -> None:
         await db.conn.execute(stmt)
 
     await db.conn.commit()
+
     await run_column_migrations()
 
 
@@ -411,190 +459,260 @@ CITY_NAMES = [
 
 
 CATEGORY_TREE = [
-    ("👗", "مد و پوشاک", [
-        ("👩", "زنانه"),
-        ("👨", "مردانه"),
-        ("🧒", "بچگانه"),
-        ("👟", "کفش"),
-        ("👜", "کیف"),
-        ("🩲", "لباس زیر"),
-        ("👚", "لباس خانگی"),
-        ("🏃", "لباس ورزشی"),
-        ("✨", "لباس مجلسی"),
-        ("☀️", "لباس تابستانی"),
-        ("🧥", "لباس زمستانی"),
-        ("🧣", "شال و روسری"),
-        ("💍", "اکسسوری و زیورآلات"),
-    ]),
-    ("💄", "زیبایی و آرایشی", [
-        ("💄", "آرایشی"),
-        ("🧴", "مراقبت پوست"),
-        ("💇", "مراقبت مو"),
-        ("🌸", "عطر و ادکلن"),
-        ("🧼", "محصولات بهداشتی"),
-        ("💅", "ناخن"),
-        ("🪞", "ابزار زیبایی"),
-    ]),
-    ("💇", "سالن و خدمات زیبایی", [
-        ("💇", "آرایشگاه"),
-        ("💅", "ناخن"),
-        ("👁️", "مژه و ابرو"),
-        ("💇‍♀️", "مو"),
-        ("💄", "میکاپ"),
-        ("💆", "ماساژ"),
-        ("🧖", "اسپا"),
-        ("✨", "خدمات زیبایی تخصصی"),
-    ]),
-    ("💎", "طلا و جواهر", [
-        ("🥇", "طلا"),
-        ("🥈", "نقره"),
-        ("💎", "جواهر"),
-        ("📿", "بدلیجات"),
-        ("⌚", "ساعت"),
-        ("💠", "سنگ‌های قیمتی"),
-    ]),
-    ("📱", "موبایل و دیجیتال", [
-        ("📱", "موبایل"),
-        ("🔌", "لوازم جانبی"),
-        ("💻", "لپ‌تاپ"),
-        ("🖥️", "کامپیوتر"),
-        ("🎮", "کنسول و بازی"),
-        ("🎧", "صوتی و تصویری"),
-        ("📷", "دوربین"),
-        ("⌚", "لوازم هوشمند"),
-    ]),
-    ("🏠", "خانه و آشپزخانه", [
-        ("🪴", "دکوراسیون"),
-        ("🍳", "آشپزخانه"),
-        ("⚡", "لوازم برقی"),
-        ("🛏️", "کالای خواب"),
-        ("🛋️", "مبلمان"),
-        ("🌱", "گل و گیاه"),
-        ("🏠", "لوازم خانه"),
-        ("🧹", "نظافت و شست‌وشو"),
-    ]),
-    ("🧸", "کودک و نوزاد", [
-        ("👕", "لباس کودک"),
-        ("🧸", "اسباب‌بازی"),
-        ("🍼", "لوازم نوزاد"),
-        ("🛒", "کالسکه و صندلی"),
-        ("🧼", "مراقبت کودک"),
-        ("🎀", "سیسمونی"),
-    ]),
-    ("🥗", "خوراکی و نوشیدنی", [
-        ("☕", "قهوه"),
-        ("🍵", "چای"),
-        ("🍫", "شکلات"),
-        ("🍰", "شیرینی"),
-        ("🎂", "کیک"),
-        ("🥜", "خشکبار"),
-        ("🌶️", "ادویه"),
-        ("🥤", "نوشیدنی"),
-        ("🥫", "محصولات خانگی"),
-        ("🍱", "غذاهای آماده"),
-    ]),
-    ("🎨", "صنایع دستی و هنری", [
-        ("🧶", "صنایع دستی"),
-        ("🖌️", "نقاشی"),
-        ("🧵", "بافتنی"),
-        ("🖼️", "محصولات هنری"),
-        ("🏺", "سفال و سرامیک"),
-        ("🪵", "چوب و رزین"),
-        ("📿", "زیورآلات دست‌ساز"),
-    ]),
-    ("🎁", "هدیه", [
-        ("🎉", "هدایای مناسبتی"),
-        ("🎂", "هدیه تولد"),
-        ("❤️", "هدیه عاشقانه"),
-        ("🏢", "هدیه سازمانی"),
-        ("🎁", "باکس هدیه"),
-        ("🧶", "هدایای دست‌ساز"),
-    ]),
-    ("🌱", "گل و گیاه", [
-        ("🌹", "گل طبیعی"),
-        ("🌸", "گل مصنوعی"),
-        ("🪴", "گیاه آپارتمانی"),
-        ("🏺", "گلدان"),
-        ("💐", "باکس گل"),
-        ("🌿", "تراریوم"),
-    ]),
-    ("🏋️", "ورزش", [
-        ("👕", "پوشاک ورزشی"),
-        ("👟", "کفش ورزشی"),
-        ("🏋️", "تجهیزات ورزشی"),
-        ("💪", "بدنسازی"),
-        ("🧘", "یوگا و فیتنس"),
-        ("⚽", "ورزش‌های توپی"),
-        ("🏕️", "کمپینگ"),
-    ]),
-    ("🚗", "خودرو و موتور", [
-        ("🚗", "لوازم خودرو"),
-        ("🏍️", "لوازم موتور"),
-        ("⚙️", "قطعات"),
-        ("🔧", "لوازم جانبی"),
-        ("🛠️", "خدمات خودرو"),
-        ("🏍️", "خدمات موتور"),
-        ("🛞", "تایر و رینگ"),
-    ]),
-    ("📚", "کتاب و آموزش", [
-        ("📖", "کتاب"),
-        ("🎓", "دوره آموزشی"),
-        ("✏️", "لوازم تحریر"),
-        ("🌐", "آموزش زبان"),
-        ("🧠", "آموزش مهارت"),
-        ("🎸", "آموزش موسیقی"),
-        ("📚", "آموزش کنکور و مدرسه"),
-    ]),
-    ("🛠️", "خدمات", [
-        ("🔧", "خدمات فنی"),
-        ("💻", "خدمات آنلاین"),
-        ("🎓", "خدمات آموزشی"),
-        ("💬", "مشاوره"),
-        ("📷", "عکاسی"),
-        ("🎬", "تولید محتوا"),
-        ("📱", "مدیریت شبکه‌های اجتماعی"),
-        ("📢", "تبلیغات"),
-        ("🏠", "خدمات منزل"),
-        ("🛠️", "تعمیرات"),
-        ("🎉", "برگزاری مراسم"),
-        ("🚚", "حمل‌ونقل"),
-        ("🧰", "سایر خدمات"),
-    ]),
-    ("🐾", "حیوانات خانگی", [
-        ("🥩", "غذا"),
-        ("🐾", "لوازم حیوانات"),
-        ("🐕", "پوشاک حیوانات"),
-        ("🧼", "بهداشت حیوانات"),
-        ("🩺", "خدمات حیوانات"),
-        ("🏠", "لوازم نگهداری"),
-    ]),
-    ("📦", "محصولات وارداتی", [
-        ("👗", "پوشاک وارداتی"),
-        ("💄", "آرایشی وارداتی"),
-        ("🍫", "خوراکی وارداتی"),
-        ("📱", "دیجیتال وارداتی"),
-        ("🏠", "لوازم خانه وارداتی"),
-        ("📦", "سایر محصولات وارداتی"),
-    ]),
-    ("🏡", "املاک", [
-        ("🏠", "فروش مسکونی"),
-        ("🔑", "اجاره مسکونی"),
-        ("🏢", "فروش تجاری"),
-        ("🏬", "اجاره تجاری"),
-        ("🌳", "زمین"),
-        ("🏡", "ویلا"),
-        ("🏢", "دفتر کار"),
-        ("📦", "سایر املاک"),
-    ]),
+    (
+        "👗",
+        "مد و پوشاک",
+        [
+            ("👩", "زنانه"),
+            ("👨", "مردانه"),
+            ("🧒", "بچگانه"),
+            ("👟", "کفش"),
+            ("👜", "کیف"),
+            ("🩲", "لباس زیر"),
+            ("👚", "لباس خانگی"),
+            ("🏃", "لباس ورزشی"),
+            ("✨", "لباس مجلسی"),
+            ("☀️", "لباس تابستانی"),
+            ("🧥", "لباس زمستانی"),
+            ("🧣", "شال و روسری"),
+            ("💍", "اکسسوری و زیورآلات"),
+        ],
+    ),
+    (
+        "💄",
+        "زیبایی و آرایشی",
+        [
+            ("💄", "آرایشی"),
+            ("🧴", "مراقبت پوست"),
+            ("💇", "مراقبت مو"),
+            ("🌸", "عطر و ادکلن"),
+            ("🧼", "محصولات بهداشتی"),
+            ("💅", "ناخن"),
+            ("🪞", "ابزار زیبایی"),
+        ],
+    ),
+    (
+        "💇",
+        "سالن و خدمات زیبایی",
+        [
+            ("💇", "آرایشگاه"),
+            ("💅", "ناخن"),
+            ("👁️", "مژه و ابرو"),
+            ("💇‍♀️", "مو"),
+            ("💄", "میکاپ"),
+            ("💆", "ماساژ"),
+            ("🧖", "اسپا"),
+            ("✨", "خدمات زیبایی تخصصی"),
+        ],
+    ),
+    (
+        "💎",
+        "طلا و جواهر",
+        [
+            ("🥇", "طلا"),
+            ("🥈", "نقره"),
+            ("💎", "جواهر"),
+            ("📿", "بدلیجات"),
+            ("⌚", "ساعت"),
+            ("💠", "سنگ‌های قیمتی"),
+        ],
+    ),
+    (
+        "📱",
+        "موبایل و دیجیتال",
+        [
+            ("📱", "موبایل"),
+            ("🔌", "لوازم جانبی"),
+            ("💻", "لپ‌تاپ"),
+            ("🖥️", "کامپیوتر"),
+            ("🎮", "کنسول و بازی"),
+            ("🎧", "صوتی و تصویری"),
+            ("📷", "دوربین"),
+            ("⌚", "لوازم هوشمند"),
+        ],
+    ),
+    (
+        "🏠",
+        "خانه و آشپزخانه",
+        [
+            ("🪴", "دکوراسیون"),
+            ("🍳", "آشپزخانه"),
+            ("⚡", "لوازم برقی"),
+            ("🛏️", "کالای خواب"),
+            ("🛋️", "مبلمان"),
+            ("🌱", "گل و گیاه"),
+            ("🏠", "لوازم خانه"),
+            ("🧹", "نظافت و شست‌وشو"),
+        ],
+    ),
+    (
+        "🧸",
+        "کودک و نوزاد",
+        [
+            ("👕", "لباس کودک"),
+            ("🧸", "اسباب‌بازی"),
+            ("🍼", "لوازم نوزاد"),
+            ("🛒", "کالسکه و صندلی"),
+            ("🧼", "مراقبت کودک"),
+            ("🎀", "سیسمونی"),
+        ],
+    ),
+    (
+        "🥗",
+        "خوراکی و نوشیدنی",
+        [
+            ("☕", "قهوه"),
+            ("🍵", "چای"),
+            ("🍫", "شکلات"),
+            ("🍰", "شیرینی"),
+            ("🎂", "کیک"),
+            ("🥜", "خشکبار"),
+            ("🌶️", "ادویه"),
+            ("🥤", "نوشیدنی"),
+            ("🥫", "محصولات خانگی"),
+            ("🍱", "غذاهای آماده"),
+        ],
+    ),
+    (
+        "🎨",
+        "صنایع دستی و هنری",
+        [
+            ("🧶", "صنایع دستی"),
+            ("🖌️", "نقاشی"),
+            ("🧵", "بافتنی"),
+            ("🖼️", "محصولات هنری"),
+            ("🏺", "سفال و سرامیک"),
+            ("🪵", "چوب و رزین"),
+            ("📿", "زیورآلات دست‌ساز"),
+        ],
+    ),
+    (
+        "🎁",
+        "هدیه",
+        [
+            ("🎉", "هدایای مناسبتی"),
+            ("🎂", "هدیه تولد"),
+            ("❤️", "هدیه عاشقانه"),
+            ("🏢", "هدیه سازمانی"),
+            ("🎁", "باکس هدیه"),
+            ("🧶", "هدایای دست‌ساز"),
+        ],
+    ),
+    (
+        "🌱",
+        "گل و گیاه",
+        [
+            ("🌹", "گل طبیعی"),
+            ("🌸", "گل مصنوعی"),
+            ("🪴", "گیاه آپارتمانی"),
+            ("🏺", "گلدان"),
+            ("💐", "باکس گل"),
+            ("🌿", "تراریوم"),
+        ],
+    ),
+    (
+        "🏋️",
+        "ورزش",
+        [
+            ("👕", "پوشاک ورزشی"),
+            ("👟", "کفش ورزشی"),
+            ("🏋️", "تجهیزات ورزشی"),
+            ("💪", "بدنسازی"),
+            ("🧘", "یوگا و فیتنس"),
+            ("⚽", "ورزش‌های توپی"),
+            ("🏕️", "کمپینگ"),
+        ],
+    ),
+    (
+        "🚗",
+        "خودرو و موتور",
+        [
+            ("🚗", "لوازم خودرو"),
+            ("🏍️", "لوازم موتور"),
+            ("⚙️", "قطعات"),
+            ("🔧", "لوازم جانبی"),
+            ("🛠️", "خدمات خودرو"),
+            ("🏍️", "خدمات موتور"),
+            ("🛞", "تایر و رینگ"),
+        ],
+    ),
+    (
+        "📚",
+        "کتاب و آموزش",
+        [
+            ("📖", "کتاب"),
+            ("🎓", "دوره آموزشی"),
+            ("✏️", "لوازم تحریر"),
+            ("🌐", "آموزش زبان"),
+            ("🧠", "آموزش مهارت"),
+            ("🎸", "آموزش موسیقی"),
+            ("📚", "آموزش کنکور و مدرسه"),
+        ],
+    ),
+    (
+        "🛠️",
+        "خدمات",
+        [
+            ("🔧", "خدمات فنی"),
+            ("💻", "خدمات آنلاین"),
+            ("🎓", "خدمات آموزشی"),
+            ("💬", "مشاوره"),
+            ("📷", "عکاسی"),
+            ("🎬", "تولید محتوا"),
+            ("📱", "مدیریت شبکه‌های اجتماعی"),
+            ("📢", "تبلیغات"),
+            ("🏠", "خدمات منزل"),
+            ("🛠️", "تعمیرات"),
+            ("🎉", "برگزاری مراسم"),
+            ("🚚", "حمل‌ونقل"),
+            ("🧰", "سایر خدمات"),
+        ],
+    ),
+    (
+        "🐾",
+        "حیوانات خانگی",
+        [
+            ("🥩", "غذا"),
+            ("🐾", "لوازم حیوانات"),
+            ("🐕", "پوشاک حیوانات"),
+            ("🧼", "بهداشت حیوانات"),
+            ("🩺", "خدمات حیوانات"),
+            ("🏠", "لوازم نگهداری"),
+        ],
+    ),
+    (
+        "📦",
+        "محصولات وارداتی",
+        [
+            ("👗", "پوشاک وارداتی"),
+            ("💄", "آرایشی وارداتی"),
+            ("🍫", "خوراکی وارداتی"),
+            ("📱", "دیجیتال وارداتی"),
+            ("🏠", "لوازم خانه وارداتی"),
+            ("📦", "سایر محصولات وارداتی"),
+        ],
+    ),
+    (
+        "🏡",
+        "املاک",
+        [
+            ("🏠", "فروش مسکونی"),
+            ("🔑", "اجاره مسکونی"),
+            ("🏢", "فروش تجاری"),
+            ("🏬", "اجاره تجاری"),
+            ("🌳", "زمین"),
+            ("🏡", "ویلا"),
+            ("🏢", "دفتر کار"),
+            ("📦", "سایر املاک"),
+        ],
+    ),
 ]
 
 
-DEMO_SELLER_NAME = "DEMO - فروشگاه نمونه"
-DEMO_PRODUCT_NAME = "DEMO - محصول نمونه"
-
-
 async def seed_cities() -> None:
-    row = await db.fetchone("SELECT COUNT(*) AS c FROM cities;")
+    row = await db.fetchone(
+        "SELECT COUNT(*) AS c FROM cities;"
+    )
 
     if row["c"] > 0:
         return
@@ -606,11 +724,17 @@ async def seed_cities() -> None:
         )
 
     await db.conn.commit()
-    logger.info("Seeded %d cities.", len(CITY_NAMES))
+
+    logger.info(
+        "Seeded %d cities.",
+        len(CITY_NAMES),
+    )
 
 
 async def seed_categories() -> None:
-    row = await db.fetchone("SELECT COUNT(*) AS c FROM categories;")
+    row = await db.fetchone(
+        "SELECT COUNT(*) AS c FROM categories;"
+    )
 
     if row["c"] > 0:
         return
@@ -618,7 +742,8 @@ async def seed_categories() -> None:
     for main_emoji, main_name, subs in CATEGORY_TREE:
         cur = await db.conn.execute(
             """
-            INSERT INTO categories (name, emoji, parent_id)
+            INSERT INTO categories
+                (name, emoji, parent_id)
             VALUES (?, ?, NULL);
             """,
             (main_name, main_emoji),
@@ -629,21 +754,40 @@ async def seed_categories() -> None:
         for sub_emoji, sub_name in subs:
             await db.conn.execute(
                 """
-                INSERT INTO categories (name, emoji, parent_id)
+                INSERT INTO categories
+                    (name, emoji, parent_id)
                 VALUES (?, ?, ?);
                 """,
-                (sub_name, sub_emoji, parent_id),
+                (
+                    sub_name,
+                    sub_emoji,
+                    parent_id,
+                ),
             )
 
     await db.conn.commit()
+
     logger.info(
         "Seeded categories tree (%d main categories).",
         len(CATEGORY_TREE),
     )
 
 
+DEMO_SELLER_NAME = "DEMO - فروشگاه نمونه"
+DEMO_PRODUCT_NAME = "DEMO - محصول نمونه"
+
+
 async def seed_demo_data() -> None:
-    """Optional demo data, disabled unless SEED_DEMO_DATA=true."""
+    """
+    Optional demo data.
+
+    Disabled by default.
+    Enable with:
+
+        SEED_DEMO_DATA=true
+
+    Demo rows are clearly labeled and inserted only once.
+    """
 
     if not SEED_DEMO_DATA:
         return
@@ -685,7 +829,17 @@ async def seed_demo_data() -> None:
             created_at,
             updated_at
         )
-        VALUES (?, ?, ?, 'UNCLAIMED', 0, 0, 0, ?, ?);
+        VALUES (
+            ?,
+            ?,
+            ?,
+            'UNCLAIMED',
+            0,
+            0,
+            0,
+            ?,
+            ?
+        );
         """,
         (
             DEMO_SELLER_NAME,
@@ -713,7 +867,19 @@ async def seed_demo_data() -> None:
             created_at,
             updated_at
         )
-        VALUES (?, ?, ?, ?, ?, 'AVAILABLE', 0, 0, 0, ?, ?);
+        VALUES (
+            ?,
+            ?,
+            ?,
+            ?,
+            ?,
+            'AVAILABLE',
+            0,
+            0,
+            0,
+            ?,
+            ?
+        );
         """,
         (
             demo_seller_id,
@@ -731,9 +897,3 @@ async def seed_demo_data() -> None:
     logger.info(
         "Seeded DEMO data (clearly labeled, SEED_DEMO_DATA=true)."
     )
-
-
-def _now_iso() -> str:
-    from datetime import datetime, timezone
-
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
