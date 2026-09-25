@@ -17,7 +17,7 @@ async def notify_user(
     user_id: int,
     title: str,
     message: Optional[str],
-    ntype: str = "info",
+    notification_type: str = "info",
 ) -> bool:
     """
     Store an in-app notification for a user.
@@ -42,7 +42,7 @@ async def notify_user(
                 user_id,
                 title,
                 message,
-                ntype,
+                notification_type,
                 now_iso(),
             ),
         )
@@ -125,7 +125,7 @@ async def mark_all_notifications_read(
 
     except Exception as exc:
         logger.error(
-            "Failed to mark all notifications as read for user %s: %s",
+            "Failed to mark all notifications as read for user %s",
             user_id,
             exc,
         )
