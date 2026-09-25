@@ -6,7 +6,6 @@ Main application entry point
 
 import asyncio
 import logging
-import sys
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -33,7 +32,6 @@ from bot.handlers import (
     referrals,
     search,
     seller,
-    start,
     support,
 )
 from bot.services.tasks import (
@@ -183,12 +181,6 @@ def create_dispatcher() -> Dispatcher:
     )
 
     # --------------------------------------------------------------
-    # Core / navigation
-    # --------------------------------------------------------------
-
-    dp.include_router(start.router)
-
-    # --------------------------------------------------------------
     # Buyer functionality
     # --------------------------------------------------------------
 
@@ -231,10 +223,12 @@ def create_dispatcher() -> Dispatcher:
     dp.include_router(admin.router)
 
     # --------------------------------------------------------------
-    # Navigation / fallback
+    # Navigation / start / fallback
     #
     # IMPORTANT:
-    # navigation contains generic callback/message fallbacks.
+    # navigation contains /start, role selection, restart handling,
+    # and generic fallback handlers.
+    #
     # It must remain at the end.
     # --------------------------------------------------------------
 
@@ -300,14 +294,12 @@ async def main() -> None:
         logger.info(
             "Bot polling cancelled."
         )
-
         raise
 
     except Exception:
         logger.exception(
             "Bot polling stopped because of an unexpected error."
         )
-
         raise
 
     finally:
@@ -316,7 +308,6 @@ async def main() -> None:
         )
 
         backup_task.cancel()
-
         ad_expiry_task.cancel()
 
         await asyncio.gather(
