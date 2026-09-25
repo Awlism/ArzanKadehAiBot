@@ -1,0 +1,1 @@
+# ArzanKadeh AI utility functions
