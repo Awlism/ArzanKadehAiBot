@@ -6,15 +6,13 @@ Support and request handlers
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import StateFilter
+from aiogram.filters import StateFilter
 from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from ..config import ADMIN_CHAT_ID
-from ..database import db
 from ..keyboards import kb_add_back
 from ..repositories import (
-    REQUEST_STATUS_LABELS,
     create_request,
     has_open_request,
     list_my_requests,
@@ -23,9 +21,7 @@ from ..states import SupportStates
 from ..utils import (
     ensure_user,
     log_audit,
-    log_event,
     now_iso,
-    parse_int,
     restart_requested,
     safe_edit,
     send_admin_dm,
@@ -50,14 +46,6 @@ SUPPORT_TOPICS_SELLER = {
     "tech": "⚙️ مشکل فنی ارزانکده",
     "other": "📝 سایر موارد ضروری",
 }
-
-
-def _is_admin(callback: CallbackQuery) -> bool:
-    return bool(
-        ADMIN_CHAT_ID
-        and callback.from_user
-        and callback.from_user.id == ADMIN_CHAT_ID
-    )
 
 
 @router.callback_query(F.data == "myrequests")
@@ -248,6 +236,7 @@ async def handle_support_text(
     )
 
     data = await state.get_data()
+
     topic = data.get(
         "support_topic"
     )
@@ -308,16 +297,17 @@ async def handle_support_text(
         ),
     )
 
-    await send_admin_dm(
-        message.bot,
-        (
-            "🛟 درخواست پشتیبانی جدید\n"
-            f"موضوع: {topic}\n"
-            f"پیام: {text}\n"
-            f"(کاربر داخلی #{user_id})"
-        ),
-        reply_markup=builder.as_markup(),
-    )
+    if ADMIN_CHAT_ID:
+        await send_admin_dm(
+            message.bot,
+            (
+                "🛟 درخواست پشتیبانی جدید\n"
+                f"موضوع: {topic}\n"
+                f"پیام: {text}\n"
+                f"(کاربر داخلی #{user_id})"
+            ),
+            reply_markup=builder.as_markup(),
+        )
 
     await message.answer(
         "✅ درخواستت برای تیم پشتیبانی "
@@ -326,169 +316,3 @@ async def handle_support_text(
         "باز نمی‌شود؛ بعد از تأیید، ادامه‌ی "
         "گفت‌وگو فعال می‌شود."
     )
-
-
-@router.callback_query(
-    F.data.startswith("adminreq:")
-)
-async def handle_admin_request_decision(
-    callback: CallbackQuery,
-) -> None:
-    parts = callback.data.split(":")
-
-    if len(parts) != 3:
-        await callback.answer(
-            "⚠️ درخواست نامعتبر است.",
-            show_alert=True,
-        )
-        return
-
-    _, action, request_id_str = parts
-
-    request_id = parse_int(
-        request_id_str
-    )
-
-    if (
-        request_id is None
-        or action not in (
-            "approve",
-            "reject",
-        )
-    ):
-        await callback.answer(
-            "⚠️ درخواست نامعتبر است.",
-            show_alert=True,
-        )
-        return
-
-    admin_user_id = await ensure_user(
-        callback.from_user
-    )
-
-    if not _is_admin(callback):
-        await callback.answer(
-            "⛔️ این عملیات فقط برای ادمین در دسترس است.",
-            show_alert=True,
-        )
-        return
-
-    request_row = await db.fetchone(
-        """
-        SELECT *
-        FROM requests
-        WHERE id = ?;
-        """,
-        (request_id,),
-    )
-
-    if not request_row:
-        await callback.answer(
-            "⚠️ این درخواست یافت نشد.",
-            show_alert=True,
-        )
-        return
-
-    if action == "reject":
-        new_status = "REJECTED"
-
-        await db.execute(
-            """
-            UPDATE requests
-            SET status = ?,
-                updated_at = ?
-            WHERE id = ?;
-            """,
-            (
-                new_status,
-                now_iso(),
-                request_id,
-            ),
-        )
-
-    else:
-        new_status = "APPROVED"
-
-        await db.execute(
-            """
-            UPDATE requests
-            SET status = ?,
-                updated_at = ?
-            WHERE id = ?;
-            """,
-            (
-                new_status,
-                now_iso(),
-                request_id,
-            ),
-        )
-
-    await log_audit(
-        admin_user_id,
-        f"request_{action}d",
-        "request",
-        request_id,
-    )
-
-    if action == "approve":
-        await log_event(
-            request_row["user_id"],
-            "support_request_approved",
-            "request",
-            request_id,
-        )
-
-        from ..utils import notify_user
-
-        await notify_user(
-            request_row["user_id"],
-            "درخواست پشتیبانی",
-            (
-                "✅ درخواست پشتیبانی‌ات تأیید شد. "
-                "تیم ارزانکده به‌زودی باهات "
-                "در ارتباط خواهد بود."
-            ),
-        )
-
-        response_text = (
-            f"درخواست #{request_id} تأیید شد."
-        )
-
-    else:
-        await log_event(
-            request_row["user_id"],
-            "support_request_rejected",
-            "request",
-            request_id,
-        )
-
-        from ..utils import notify_user
-
-        await notify_user(
-            request_row["user_id"],
-            "درخواست پشتیبانی",
-            (
-                "درخواست پشتیبانی‌ات بررسی شد. "
-                "اگر همچنان مشکل داری، دوباره "
-                "از منو درخواست بده."
-            ),
-        )
-
-        response_text = (
-            f"درخواست #{request_id} رد شد."
-        )
-
-    await callback.answer(
-        response_text
-    )
-
-    try:
-        await callback.message.edit_text(
-            (
-                f"{callback.message.text}\n\n"
-                f"— تصمیم ثبت شد: "
-                f"{REQUEST_STATUS_LABELS[new_status]}"
-            )
-        )
-    except Exception:
-        pass
