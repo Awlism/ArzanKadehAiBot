@@ -2251,9 +2251,16 @@ async def handle_search_page(
 ) -> None:
     await state.clear()
 
-    page = parse_int(
-        callback.data.split(":")[1]
-    )
+    parts = callback.data.split(":", 1)
+
+    if len(parts) != 2:
+        await callback.answer(
+            "⚠️ صفحه نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    page = parse_int(parts[1])
 
     if page is None or page < 0:
         await callback.answer(
