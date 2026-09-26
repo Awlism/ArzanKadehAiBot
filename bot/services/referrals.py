@@ -58,6 +58,27 @@ async def record_referral_if_new(
     referred_user_id: int,
 ) -> bool:
     try:
+        seller = await db.fetchone(
+            """
+            SELECT
+                id,
+                owner_user_id,
+                created_by_user_id
+            FROM sellers
+            WHERE id = ?;
+            """,
+            (seller_id,),
+        )
+
+        if not seller:
+            return False
+
+        if (
+            seller["owner_user_id"] == referred_user_id
+            or seller["created_by_user_id"] == referred_user_id
+        ):
+            return False
+
         existing = await db.fetchone(
             """
             SELECT id
