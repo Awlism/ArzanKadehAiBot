@@ -130,6 +130,38 @@ def _call_name(node: ast.Call) -> str:
     return ".".join(reversed(parts))
 
 
+def _router_registrations(tree: ast.AST):
+    """
+    Return router module names registered through dp.include_router().
+
+    The registrations live inside create_dispatcher(), so this helper
+    intentionally walks the entire AST rather than only module-level
+    statements.
+    """
+    registrations = []
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+
+        if _call_name(node) != "dp.include_router":
+            continue
+
+        if not node.args:
+            continue
+
+        argument = node.args[0]
+
+        if (
+            isinstance(argument, ast.Attribute)
+            and argument.attr == "router"
+            and isinstance(argument.value, ast.Name)
+        ):
+            registrations.append(argument.value.id)
+
+    return registrations
+
+
 class CompileTests(unittest.TestCase):
     """Ensure the application and modular Python files compile."""
 
@@ -464,31 +496,9 @@ class EntryPointArchitectureTests(unittest.TestCase):
         )
 
     def test_bot_py_registers_all_main_routers(self):
-        registrations = []
-
-        for node in self.tree.body:
-            if not isinstance(node, ast.Expr):
-                continue
-
-            call = node.value
-
-            if not isinstance(call, ast.Call):
-                continue
-
-            if _call_name(call) != "dp.include_router":
-                continue
-
-            if not call.args:
-                continue
-
-            argument = call.args[0]
-
-            if (
-                isinstance(argument, ast.Attribute)
-                and argument.attr == "router"
-                and isinstance(argument.value, ast.Name)
-            ):
-                registrations.append(argument.value.id)
+        registrations = _router_registrations(
+            self.tree
+        )
 
         missing = sorted(
             EXPECTED_ROUTER_MODULES - set(registrations)
@@ -503,31 +513,9 @@ class EntryPointArchitectureTests(unittest.TestCase):
         )
 
     def test_bot_py_does_not_register_unknown_routers(self):
-        registrations = []
-
-        for node in self.tree.body:
-            if not isinstance(node, ast.Expr):
-                continue
-
-            call = node.value
-
-            if not isinstance(call, ast.Call):
-                continue
-
-            if _call_name(call) != "dp.include_router":
-                continue
-
-            if not call.args:
-                continue
-
-            argument = call.args[0]
-
-            if (
-                isinstance(argument, ast.Attribute)
-                and argument.attr == "router"
-                and isinstance(argument.value, ast.Name)
-            ):
-                registrations.append(argument.value.id)
+        registrations = _router_registrations(
+            self.tree
+        )
 
         unknown = sorted(
             set(registrations) - EXPECTED_ROUTER_MODULES
@@ -542,31 +530,9 @@ class EntryPointArchitectureTests(unittest.TestCase):
         )
 
     def test_navigation_router_is_registered_last(self):
-        registrations = []
-
-        for node in self.tree.body:
-            if not isinstance(node, ast.Expr):
-                continue
-
-            call = node.value
-
-            if not isinstance(call, ast.Call):
-                continue
-
-            if _call_name(call) != "dp.include_router":
-                continue
-
-            if not call.args:
-                continue
-
-            argument = call.args[0]
-
-            if (
-                isinstance(argument, ast.Attribute)
-                and argument.attr == "router"
-                and isinstance(argument.value, ast.Name)
-            ):
-                registrations.append(argument.value.id)
+        registrations = _router_registrations(
+            self.tree
+        )
 
         self.assertTrue(
             registrations,
@@ -624,7 +590,9 @@ class RouterImportTests(unittest.TestCase):
                             alias.name != "*"
                             and alias.name in EXPECTED_ROUTER_MODULES
                         ):
-                            imported.add(alias.name)
+                            imported.add(
+                                alias.name
+                            )
 
         return imported
 
@@ -1224,25 +1192,36 @@ class CallbackDataCollisionTests(unittest.TestCase):
                 if not isinstance(node.func, ast.Attribute):
                     continue
 
-                # F.data == "value"
-                if (
-                    node.func.attr == "startswith"
-                    and isinstance(node.func.value, ast.Attribute)
-                    and isinstance(node.func.value.value, ast.Name)
-                    and node.func.value.value.id == "F"
-                    and node.func.value.attr == "data"
+                if node.func.attr != "startswith":
+                    continue
+
+                receiver = node.func.value
+
+                if not (
+                    isinstance(receiver, ast.Attribute)
+                    and receiver.attr == "data"
+                    and isinstance(receiver.value, ast.Name)
+                    and receiver.value.id == "F"
                 ):
-                    if (
-                        node.args
-                        and isinstance(node.args[0], ast.Constant)
-                        and isinstance(node.args[0].value, str)
-                    ):
-                        prefixes.append(
-                            (
-                                node.args[0].value,
-                                path,
-                            )
-                        )
+                    continue
+
+                if not node.args:
+                    continue
+
+                argument = node.args[0]
+
+                if not (
+                    isinstance(argument, ast.Constant)
+                    and isinstance(argument.value, str)
+                ):
+                    continue
+
+                prefixes.append(
+                    (
+                        argument.value,
+                        path,
+                    )
+                )
 
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Compare):
