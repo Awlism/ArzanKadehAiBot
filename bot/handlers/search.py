@@ -682,8 +682,9 @@ def _field_match_score(
         score += exact_phrase_score
 
     matched_tokens = 0
-
-    text_tokens = _tokenize(normalized_text)
+    text_tokens = set(
+        _tokenize(normalized_text)
+    )
 
     for token in tokens:
         if token in text_tokens:
@@ -707,13 +708,22 @@ def _keyword_tokens(
     if not structured_query.keyword:
         return []
 
-    return [
-        token
-        for token in _tokenize(
-            structured_query.keyword
-        )
-        if token not in _STOPWORD_TOKENS
-    ]
+    seen = set()
+    tokens = []
+
+    for token in _tokenize(
+        structured_query.keyword
+    ):
+        if token in _STOPWORD_TOKENS:
+            continue
+
+        if token in seen:
+            continue
+
+        seen.add(token)
+        tokens.append(token)
+
+    return tokens
 
 
 def score_search_candidate(
@@ -948,9 +958,6 @@ async def plain_keyword_search(
     if not query_tokens:
         return []
 
-    # Search candidates using each token independently.
-    # This makes multi-word queries useful even when the exact
-    # phrase does not exist in the database.
     conditions = []
     params: list = []
 
@@ -1207,6 +1214,79 @@ class SearchEngine:
             for _score, row in scored[:limit]
         ]
 
+    async def _search_with_fallbacks(
+        self,
+        structured: StructuredQuery,
+    ) -> tuple[list, StructuredQuery, str]:
+        """
+        Run progressively broader searches while preserving the
+        most important semantic filters.
+
+        Fallback order:
+            1. Full structured query.
+            2. Remove price constraints.
+            3. Remove city constraint.
+            4. Keep semantic filters and keyword only.
+        """
+
+        stages = [
+            structured,
+            StructuredQuery(
+                raw_query=structured.raw_query,
+                keyword=structured.keyword,
+                category=structured.category,
+                city=structured.city,
+                color=structured.color,
+                gender=structured.gender,
+            ),
+            StructuredQuery(
+                raw_query=structured.raw_query,
+                keyword=structured.keyword,
+                category=structured.category,
+                color=structured.color,
+                gender=structured.gender,
+            ),
+            StructuredQuery(
+                raw_query=structured.raw_query,
+                keyword=structured.keyword,
+                category=structured.category,
+            ),
+        ]
+
+        seen_signatures = set()
+
+        for candidate in stages:
+            signature = (
+                candidate.keyword,
+                candidate.category,
+                candidate.city,
+                candidate.min_price,
+                candidate.max_price,
+                candidate.color,
+                candidate.gender,
+            )
+
+            if signature in seen_signatures:
+                continue
+
+            seen_signatures.add(signature)
+
+            if not candidate.has_any_extracted_field():
+                continue
+
+            results = await self._structured_search(
+                candidate
+            )
+
+            if results:
+                return (
+                    results,
+                    candidate,
+                    "structured",
+                )
+
+        return [], structured, "structured"
+
     async def search(
         self,
         raw_query: str,
@@ -1216,33 +1296,18 @@ class SearchEngine:
         )
 
         if structured.has_any_extracted_field():
-            results = await self._structured_search(
-                structured
+            results, effective_query, mode = (
+                await self._search_with_fallbacks(
+                    structured
+                )
             )
 
             if results:
                 return (
-                    structured,
+                    effective_query,
                     results,
-                    "structured",
+                    mode,
                 )
-
-            simplified = structured.simplified()
-
-            if (
-                simplified != structured
-                and simplified.has_any_extracted_field()
-            ):
-                results = await self._structured_search(
-                    simplified
-                )
-
-                if results:
-                    return (
-                        simplified,
-                        results,
-                        "structured",
-                    )
 
         plain_results = await plain_keyword_search(
             raw_query
@@ -1306,41 +1371,8 @@ search_engine = SearchEngine(
 
 
 # ======================================================================
-# SEARCH HANDLERS
+# SEARCH CACHE
 # ======================================================================
-
-@router.callback_query(F.data == "search")
-async def handle_search_start(
-    callback: CallbackQuery,
-    state: FSMContext,
-) -> None:
-    await ensure_user(
-        callback.from_user
-    )
-
-    await state.set_state(
-        SearchStates.waiting_query
-    )
-
-    builder = InlineKeyboardBuilder()
-
-    kb_add_back(
-        builder,
-        "main",
-    )
-
-    await safe_edit(
-        callback,
-        (
-            f"{EMOJI_SEARCH} دنبال چه چیزی می‌گردی؟"
-            "\n\n"
-            "متن جستجو را بفرست:"
-        ),
-        builder.as_markup(),
-    )
-
-    await callback.answer()
-
 
 SEARCH_CACHE_TTL_SECONDS = 15 * 60
 SEARCH_CACHE_MAX_USERS = 1000
@@ -1384,6 +1416,43 @@ def _cleanup_search_cache(
             user_id,
             None,
         )
+
+
+# ======================================================================
+# SEARCH HANDLERS
+# ======================================================================
+
+@router.callback_query(F.data == "search")
+async def handle_search_start(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> None:
+    await ensure_user(
+        callback.from_user
+    )
+
+    await state.set_state(
+        SearchStates.waiting_query
+    )
+
+    builder = InlineKeyboardBuilder()
+
+    kb_add_back(
+        builder,
+        "main",
+    )
+
+    await safe_edit(
+        callback,
+        (
+            f"{EMOJI_SEARCH} دنبال چه چیزی می‌گردی؟"
+            "\n\n"
+            "متن جستجو را بفرست:"
+        ),
+        builder.as_markup(),
+    )
+
+    await callback.answer()
 
 
 async def _render_search_results(
