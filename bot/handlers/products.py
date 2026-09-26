@@ -275,7 +275,15 @@ async def handle_favorite_add(
     )
 
     product = await db.fetchone(
-        "SELECT id FROM products WHERE id = ?;",
+        """
+        SELECT
+            p.id
+        FROM products p
+        JOIN sellers s
+            ON s.id = p.seller_id
+        WHERE p.id = ?
+          AND COALESCE(s.is_active, 1) = 1;
+        """,
         (product_id,),
     )
 
@@ -489,6 +497,36 @@ async def handle_review_start(
         )
         return
 
+    if target_type == "seller":
+        target = await db.fetchone(
+            """
+            SELECT id
+            FROM sellers
+            WHERE id = ?
+              AND COALESCE(is_active, 1) = 1;
+            """,
+            (target_id,),
+        )
+    else:
+        target = await db.fetchone(
+            """
+            SELECT p.id
+            FROM products p
+            JOIN sellers s
+                ON s.id = p.seller_id
+            WHERE p.id = ?
+              AND COALESCE(s.is_active, 1) = 1;
+            """,
+            (target_id,),
+        )
+
+    if not target:
+        await callback.answer(
+            "⚠️ این مورد دیگر در دسترس نیست.",
+            show_alert=True,
+        )
+        return
+
     await state.update_data(
         review_target_type=target_type,
         review_target_id=target_id,
@@ -596,6 +634,37 @@ async def handle_review_text(
     ):
         await message.answer(
             "⚠️ فرآیند ثبت نظر منقضی شده. لطفاً دوباره تلاش کن."
+        )
+        return
+
+    if target_type == "seller":
+        target = await db.fetchone(
+            """
+            SELECT id
+            FROM sellers
+            WHERE id = ?
+              AND COALESCE(is_active, 1) = 1;
+            """,
+            (target_id,),
+        )
+    elif target_type == "product":
+        target = await db.fetchone(
+            """
+            SELECT p.id
+            FROM products p
+            JOIN sellers s
+                ON s.id = p.seller_id
+            WHERE p.id = ?
+              AND COALESCE(s.is_active, 1) = 1;
+            """,
+            (target_id,),
+        )
+    else:
+        target = None
+
+    if not target:
+        await message.answer(
+            "⚠️ این مورد دیگر در دسترس نیست و نظر ثبت نشد."
         )
         return
 
