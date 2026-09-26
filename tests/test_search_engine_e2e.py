@@ -12,8 +12,9 @@ Covers:
 - search scoring
 - search summary formatting
 
-All tests run offline against a real SQLite database through tests/_fakedb.py.
-No Telegram runtime, network access, or external API is required.
+All tests run offline against a real SQLite database through
+tests/_fakedb.py. No Telegram runtime, network access, or external API
+is required.
 """
 
 import asyncio
@@ -99,7 +100,11 @@ class SearchEngineEndToEndTests(unittest.TestCase):
         for main_emoji, main_name, subs in self.ns["CATEGORY_TREE"]:
             cur = self.conn.execute(
                 """
-                INSERT INTO categories (name, emoji, parent_id)
+                INSERT INTO categories (
+                    name,
+                    emoji,
+                    parent_id
+                )
                 VALUES (?, ?, NULL);
                 """,
                 (main_name, main_emoji),
@@ -110,7 +115,11 @@ class SearchEngineEndToEndTests(unittest.TestCase):
             for sub_emoji, sub_name in subs:
                 self.conn.execute(
                     """
-                    INSERT INTO categories (name, emoji, parent_id)
+                    INSERT INTO categories (
+                        name,
+                        emoji,
+                        parent_id
+                    )
                     VALUES (?, ?, ?);
                     """,
                     (
@@ -129,15 +138,15 @@ class SearchEngineEndToEndTests(unittest.TestCase):
         )
 
         tehran_id = self.conn.execute(
-            "SELECT id FROM cities WHERE name='تهران';"
+            "SELECT id FROM cities WHERE name = 'تهران';"
         ).fetchone()[0]
 
         shiraz_id = self.conn.execute(
-            "SELECT id FROM cities WHERE name='شیراز';"
+            "SELECT id FROM cities WHERE name = 'شیراز';"
         ).fetchone()[0]
 
         shoe_cat_id = self.conn.execute(
-            "SELECT id FROM categories WHERE name='کفش';"
+            "SELECT id FROM categories WHERE name = 'کفش';"
         ).fetchone()[0]
 
         self.conn.execute(
@@ -289,10 +298,16 @@ class SearchEngineEndToEndTests(unittest.TestCase):
 
         self.assertEqual(mode, "structured")
         self.assertEqual(structured.city, "تهران")
-        self.assertEqual(structured.max_price, 3_000_000)
+        self.assertEqual(
+            structured.max_price,
+            3_000_000,
+        )
         self.assertTrue(results)
 
-        names = [row["name"] for row in results]
+        names = [
+            row["name"]
+            for row in results
+        ]
 
         self.assertIn(
             "کفش سفید مردانه اسپرت",
@@ -305,11 +320,16 @@ class SearchEngineEndToEndTests(unittest.TestCase):
         )
 
     def test_price_filter_excludes_products_outside_range(self):
-        structured, results, mode = run(
-            self.engine.search("کفش زیر 2 میلیون")
+        _, results, mode = run(
+            self.engine.search(
+                "کفش زیر 2 میلیون"
+            )
         )
 
-        self.assertEqual(mode, "structured")
+        self.assertEqual(
+            mode,
+            "structured",
+        )
 
         for row in results:
             self.assertLessEqual(
@@ -317,12 +337,17 @@ class SearchEngineEndToEndTests(unittest.TestCase):
                 2_000_000,
             )
 
-    def test_city_filter_only_returns_that_citys_sellers(self):
-        structured, results, mode = run(
-            self.engine.search("کفش شیراز")
+    def test_city_filter_only_returns_that_city_sellers(self):
+        _, results, mode = run(
+            self.engine.search(
+                "کفش شیراز"
+            )
         )
 
-        self.assertEqual(mode, "structured")
+        self.assertEqual(
+            mode,
+            "structured",
+        )
         self.assertTrue(results)
 
         for row in results:
@@ -331,21 +356,34 @@ class SearchEngineEndToEndTests(unittest.TestCase):
                 2,
             )
 
-    def test_ranking_prefers_higher_rated_matching_product_first(self):
-        structured, results, mode = run(
+    def test_ranking_prefers_better_matching_product(self):
+        _, results, mode = run(
             self.engine.search(
                 "کفش سفید مردانه اسپرت"
             )
         )
 
-        self.assertTrue(results)
         self.assertEqual(
-            results[0]["seller_id"],
+            mode,
+            "structured",
+        )
+        self.assertGreaterEqual(
+            len(results),
+            2,
+        )
+
+        self.assertEqual(
+            results[0]["id"],
             1,
         )
 
-    def test_no_match_falls_back_without_fabricating_products(self):
-        structured, results, mode = run(
+        self.assertGreater(
+            results[0]["rating"],
+            results[1]["rating"],
+        )
+
+    def test_no_match_does_not_fabricate_products(self):
+        _, results, mode = run(
             self.engine.search(
                 "کفش زیر 100 تومان بندرعباس"
             )
@@ -368,7 +406,7 @@ class SearchEngineEndToEndTests(unittest.TestCase):
                 real_names,
             )
 
-    def test_simple_query_with_no_extractable_signal_uses_plain_search(self):
+    def test_simple_query_without_extractable_signal_uses_plain_search(self):
         structured, results, mode = run(
             self.engine.search("چرم")
         )
@@ -390,7 +428,7 @@ class SearchEngineEndToEndTests(unittest.TestCase):
         )
 
     def test_never_fabricates_products_not_in_database(self):
-        structured, results, mode = run(
+        _, results, _ = run(
             self.engine.search(
                 "گوشی آیفون 15 پرو مکس"
             )
@@ -531,14 +569,18 @@ class ScoreCandidateTests(unittest.TestCase):
         )
 
         matched = score_fn(
-            self._row(seller_city_id=7),
+            self._row(
+                seller_city_id=7
+            ),
             structured,
             set(),
             7,
         )
 
         unmatched = score_fn(
-            self._row(seller_city_id=1),
+            self._row(
+                seller_city_id=1
+            ),
             structured,
             set(),
             7,
@@ -615,11 +657,26 @@ class SearchSummaryTests(unittest.TestCase):
             structured
         )
 
-        self.assertIn("کفش", text)
-        self.assertIn("مردانه", text)
-        self.assertIn("سفید", text)
-        self.assertIn("تهران", text)
-        self.assertIn("3,000,000", text)
+        self.assertIn(
+            "کفش",
+            text,
+        )
+        self.assertIn(
+            "مردانه",
+            text,
+        )
+        self.assertIn(
+            "سفید",
+            text,
+        )
+        self.assertIn(
+            "تهران",
+            text,
+        )
+        self.assertIn(
+            "3,000,000",
+            text,
+        )
 
 
 if __name__ == "__main__":
