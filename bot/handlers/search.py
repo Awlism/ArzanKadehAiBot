@@ -1522,7 +1522,7 @@ async def plain_keyword_search(
         "ON s.id = p.seller_id "
         "LEFT JOIN categories c "
         "ON c.id = p.category_id "
-        f"WHERE {where_clause} "
+        f"WHERE COALESCE(s.is_active, 1) = 1 AND ({where_clause}) "
         "ORDER BY p.views DESC "
         "LIMIT ?;"
     )
