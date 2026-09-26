@@ -27,6 +27,7 @@ from ..utils import (
     restart_requested,
     safe_edit,
     send_admin_dm,
+    website_url,
 )
 
 router = Router(name="ads")
@@ -117,10 +118,7 @@ async def handle_ads(
         )
     )
 
-    kb_add_back(
-        builder,
-        "account",
-    )
+    kb_add_back(builder, "account")
 
     await safe_edit(
         callback,
@@ -131,16 +129,11 @@ async def handle_ads(
     await callback.answer()
 
 
-@router.callback_query(
-    F.data.startswith("adtype:")
-)
+@router.callback_query(F.data.startswith("adtype:"))
 async def handle_ad_type_detail(
     callback: CallbackQuery,
 ) -> None:
-    code = callback.data.split(
-        ":",
-        1,
-    )[1]
+    code = callback.data.split(":", 1)[1]
 
     info = AD_TYPES.get(code)
 
@@ -188,16 +181,11 @@ async def handle_ad_type_detail(
     await callback.answer()
 
 
-@router.callback_query(
-    F.data.startswith("adconfirm:")
-)
+@router.callback_query(F.data.startswith("adconfirm:"))
 async def handle_ad_confirm(
     callback: CallbackQuery,
 ) -> None:
-    code = callback.data.split(
-        ":",
-        1,
-    )[1]
+    code = callback.data.split(":", 1)[1]
 
     info = AD_TYPES.get(code)
 
@@ -208,9 +196,7 @@ async def handle_ad_confirm(
         )
         return
 
-    user_id = await ensure_user(
-        callback.from_user
-    )
+    user_id = await ensure_user(callback.from_user)
 
     topic = info["menu_label"]
 
@@ -226,9 +212,7 @@ async def handle_ad_confirm(
         )
         return
 
-    sellers = await get_sellers_owned_by_user(
-        user_id
-    )
+    sellers = await get_sellers_owned_by_user(user_id)
 
     seller_id = (
         sellers[0]["id"]
@@ -256,15 +240,11 @@ async def handle_ad_confirm(
     builder.row(
         InlineKeyboardButton(
             text="🟢 تأیید درخواست",
-            callback_data=(
-                f"adminreq:approve:{request_id}"
-            ),
+            callback_data=f"adminreq:approve:{request_id}",
         ),
         InlineKeyboardButton(
             text="🔴 رد درخواست",
-            callback_data=(
-                f"adminreq:reject:{request_id}"
-            ),
+            callback_data=f"adminreq:reject:{request_id}",
         ),
     )
 
@@ -332,9 +312,7 @@ PUBLIC_AD_MODELS_TEXT = (
 )
 
 
-@router.callback_query(
-    F.data == "publicads"
-)
+@router.callback_query(F.data == "publicads")
 async def handle_public_ads(
     callback: CallbackQuery,
     state: FSMContext,
@@ -389,9 +367,7 @@ async def handle_public_ads(
     await callback.answer()
 
 
-@router.callback_query(
-    F.data == "pubadmodels"
-)
+@router.callback_query(F.data == "pubadmodels")
 async def handle_public_ad_models(
     callback: CallbackQuery,
 ) -> None:
@@ -411,9 +387,7 @@ async def handle_public_ad_models(
     await callback.answer()
 
 
-@router.callback_query(
-    F.data == "pubadstart"
-)
+@router.callback_query(F.data == "pubadstart")
 async def handle_public_ad_start(
     callback: CallbackQuery,
     state: FSMContext,
@@ -445,17 +419,12 @@ async def handle_public_ad_start(
     await callback.answer()
 
 
-@router.callback_query(
-    F.data.startswith("pubadkind:")
-)
+@router.callback_query(F.data.startswith("pubadkind:"))
 async def handle_public_ad_kind(
     callback: CallbackQuery,
     state: FSMContext,
 ) -> None:
-    kind = callback.data.split(
-        ":",
-        1,
-    )[1]
+    kind = callback.data.split(":", 1)[1]
 
     if kind not in AD_KIND_LABELS:
         await callback.answer(
@@ -472,41 +441,38 @@ async def handle_public_ad_kind(
         GeneralAdStates.waiting_title
     )
 
-    builder = InlineKeyboardBuilder()
-
     await safe_edit(
         callback,
         (
             "عنوان تبلیغت چیه؟ "
             "(مثلاً اسم کسب‌وکار/پیج/کانال)"
         ),
-        builder.as_markup(),
+        InlineKeyboardBuilder().as_markup(),
     )
 
     await callback.answer()
 
 
-@router.message(
-    StateFilter(GeneralAdStates.waiting_title)
-)
+@router.message(StateFilter(GeneralAdStates.waiting_title))
 async def handle_public_ad_title(
     message: Message,
     state: FSMContext,
 ) -> None:
-    if await restart_requested(
-        message,
-        state,
-    ):
+    if await restart_requested(message, state):
         return
 
-    title = (
-        message.text or ""
-    ).strip()
+    title = (message.text or "").strip()
 
     if not title:
         await message.answer(
-            "⚠️ عنوان نمی‌تواند خالی باشد. "
-            "دوباره بفرست:"
+            "⚠️ عنوان نمی‌تواند خالی باشد. دوباره بفرست:"
+        )
+        return
+
+    if len(title) > 200:
+        await message.answer(
+            "⚠️ عنوان تبلیغ خیلی طولانیه. "
+            "حداکثر ۲۰۰ کاراکتر بفرست:"
         )
         return
 
@@ -523,9 +489,7 @@ async def handle_public_ad_title(
     builder.row(
         InlineKeyboardButton(
             text="رد کردن",
-            callback_data=(
-                "pubadskip:description"
-            ),
+            callback_data="pubadskip:description",
         )
     )
 
@@ -536,24 +500,25 @@ async def handle_public_ad_title(
     )
 
 
-@router.message(
-    StateFilter(GeneralAdStates.waiting_description)
-)
+@router.message(StateFilter(GeneralAdStates.waiting_description))
 async def handle_public_ad_description(
     message: Message,
     state: FSMContext,
 ) -> None:
-    if await restart_requested(
-        message,
-        state,
-    ):
+    if await restart_requested(message, state):
+        return
+
+    description = (message.text or "").strip()
+
+    if len(description) > 1000:
+        await message.answer(
+            "⚠️ توضیحات خیلی طولانیه. "
+            "حداکثر ۱۰۰۰ کاراکتر بفرست:"
+        )
         return
 
     await state.update_data(
-        pubad_description=(
-            (message.text or "").strip()
-            or None
-        )
+        pubad_description=description or None
     )
 
     await state.set_state(
@@ -565,9 +530,7 @@ async def handle_public_ad_description(
     builder.row(
         InlineKeyboardButton(
             text="رد کردن",
-            callback_data=(
-                "pubadskip:image_url"
-            ),
+            callback_data="pubadskip:image_url",
         )
     )
 
@@ -578,24 +541,35 @@ async def handle_public_ad_description(
     )
 
 
-@router.message(
-    StateFilter(GeneralAdStates.waiting_image_url)
-)
+@router.message(StateFilter(GeneralAdStates.waiting_image_url))
 async def handle_public_ad_image(
     message: Message,
     state: FSMContext,
 ) -> None:
-    if await restart_requested(
-        message,
-        state,
-    ):
+    if await restart_requested(message, state):
+        return
+
+    raw_url = (message.text or "").strip()
+
+    if len(raw_url) > 2048:
+        await message.answer(
+            "⚠️ لینک خیلی طولانیه. "
+            "یک لینک معتبر و کوتاه‌تر بفرست:"
+        )
+        return
+
+    image_url = website_url(raw_url)
+
+    if not image_url:
+        await message.answer(
+            "⚠️ لینک تصویر معتبر نیست.\n"
+            "فقط لینک‌های http یا https رو بفرست، "
+            "یا از دکمه «رد کردن» استفاده کن."
+        )
         return
 
     await state.update_data(
-        pubad_image_url=(
-            (message.text or "").strip()
-            or None
-        )
+        pubad_image_url=image_url
     )
 
     await state.set_state(
@@ -607,9 +581,7 @@ async def handle_public_ad_image(
     builder.row(
         InlineKeyboardButton(
             text="رد کردن",
-            callback_data=(
-                "pubadskip:link"
-            ),
+            callback_data="pubadskip:link",
         )
     )
 
@@ -620,24 +592,35 @@ async def handle_public_ad_image(
     )
 
 
-@router.message(
-    StateFilter(GeneralAdStates.waiting_link)
-)
+@router.message(StateFilter(GeneralAdStates.waiting_link))
 async def handle_public_ad_link(
     message: Message,
     state: FSMContext,
 ) -> None:
-    if await restart_requested(
-        message,
-        state,
-    ):
+    if await restart_requested(message, state):
+        return
+
+    raw_url = (message.text or "").strip()
+
+    if len(raw_url) > 2048:
+        await message.answer(
+            "⚠️ لینک خیلی طولانیه. "
+            "یک لینک معتبر و کوتاه‌تر بفرست:"
+        )
+        return
+
+    link = website_url(raw_url)
+
+    if not link:
+        await message.answer(
+            "⚠️ لینک معتبر نیست.\n"
+            "فقط لینک‌های http یا https رو بفرست، "
+            "یا از دکمه «رد کردن» استفاده کن."
+        )
         return
 
     await state.update_data(
-        pubad_link=(
-            (message.text or "").strip()
-            or None
-        )
+        pubad_link=link
     )
 
     await _finish_public_ad(
@@ -648,89 +631,98 @@ async def handle_public_ad_link(
 
 
 @router.callback_query(
-    F.data.startswith("pubadskip:")
+    StateFilter(GeneralAdStates.waiting_description),
+    F.data == "pubadskip:description",
 )
-async def handle_public_ad_skip(
+async def handle_public_ad_skip_description(
     callback: CallbackQuery,
     state: FSMContext,
 ) -> None:
-    field = callback.data.split(
-        ":",
-        1,
-    )[1]
+    await state.update_data(
+        pubad_description=None
+    )
 
-    if field == "description":
-        await state.update_data(
-            pubad_description=None
+    await state.set_state(
+        GeneralAdStates.waiting_image_url
+    )
+
+    builder = InlineKeyboardBuilder()
+
+    builder.row(
+        InlineKeyboardButton(
+            text="رد کردن",
+            callback_data="pubadskip:image_url",
         )
+    )
 
-        await state.set_state(
-            GeneralAdStates.waiting_image_url
+    await safe_edit(
+        callback,
+        "یه تصویر داری؟ لینکش رو بفرست (اختیاری):",
+        builder.as_markup(),
+    )
+
+    await callback.answer()
+
+
+@router.callback_query(
+    StateFilter(GeneralAdStates.waiting_image_url),
+    F.data == "pubadskip:image_url",
+)
+async def handle_public_ad_skip_image(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> None:
+    await state.update_data(
+        pubad_image_url=None
+    )
+
+    await state.set_state(
+        GeneralAdStates.waiting_link
+    )
+
+    builder = InlineKeyboardBuilder()
+
+    builder.row(
+        InlineKeyboardButton(
+            text="رد کردن",
+            callback_data="pubadskip:link",
         )
+    )
 
-        builder = InlineKeyboardBuilder()
+    await safe_edit(
+        callback,
+        "لینک صفحه/پیج/کانالت رو بفرست (اختیاری):",
+        builder.as_markup(),
+    )
 
-        builder.row(
-            InlineKeyboardButton(
-                text="رد کردن",
-                callback_data=(
-                    "pubadskip:image_url"
-                ),
-            )
-        )
+    await callback.answer()
 
-        await safe_edit(
-            callback,
-            "یه تصویر داری؟ لینکش رو بفرست (اختیاری):",
-            builder.as_markup(),
-        )
 
-        await callback.answer()
-        return
+@router.callback_query(
+    StateFilter(GeneralAdStates.waiting_link),
+    F.data == "pubadskip:link",
+)
+async def handle_public_ad_skip_link(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> None:
+    await state.update_data(
+        pubad_link=None
+    )
 
-    if field == "image_url":
-        await state.update_data(
-            pubad_image_url=None
-        )
+    await _finish_public_ad(
+        callback.from_user,
+        state,
+        callback=callback,
+    )
 
-        await state.set_state(
-            GeneralAdStates.waiting_link
-        )
 
-        builder = InlineKeyboardBuilder()
-
-        builder.row(
-            InlineKeyboardButton(
-                text="رد کردن",
-                callback_data=(
-                    "pubadskip:link"
-                ),
-            )
-        )
-
-        await safe_edit(
-            callback,
-            "لینک صفحه/پیج/کانالت رو بفرست (اختیاری):",
-            builder.as_markup(),
-        )
-
-        await callback.answer()
-        return
-
-    if field == "link":
-        await state.update_data(
-            pubad_link=None
-        )
-
-        await _finish_public_ad(
-            callback.from_user,
-            state,
-            callback=callback,
-        )
-        return
-
+@router.callback_query(F.data.startswith("pubadskip:"))
+async def handle_public_ad_skip_invalid(
+    callback: CallbackQuery,
+) -> None:
     await callback.answer(
-        "⚠️ درخواست نامعتبر است.",
+        "⚠️ این مرحله از فرم دیگه فعال نیست.",
         show_alert=True,
     )
 
@@ -741,9 +733,7 @@ async def _finish_public_ad(
     callback: Optional[CallbackQuery] = None,
     message: Optional[Message] = None,
 ) -> None:
-    user_id = await ensure_user(
-        tg_user
-    )
+    user_id = await ensure_user(tg_user)
 
     data = await state.get_data()
 
@@ -752,7 +742,7 @@ async def _finish_public_ad(
     kind = data.get("pubad_kind")
     title = data.get("pubad_title")
 
-    if not kind or not title:
+    if not kind or not title or kind not in AD_KIND_LABELS:
         text = (
             "⚠️ اطلاعات تبلیغ ناقص است. "
             "لطفاً دوباره از "
@@ -854,15 +844,11 @@ async def _finish_public_ad(
     builder.row(
         InlineKeyboardButton(
             text="🟢 تأیید تبلیغ",
-            callback_data=(
-                f"adminreq:approve:{request_id}"
-            ),
+            callback_data=f"adminreq:approve:{request_id}",
         ),
         InlineKeyboardButton(
             text="🔴 رد تبلیغ",
-            callback_data=(
-                f"adminreq:reject:{request_id}"
-            ),
+            callback_data=f"adminreq:reject:{request_id}",
         ),
     )
 
@@ -870,10 +856,8 @@ async def _finish_public_ad(
         "📢 تبلیغ عمومی جدید\n"
         f"نوع: {AD_KIND_LABELS[kind]}\n"
         f"عنوان: {title}\n"
-        f"توضیح: "
-        f"{data.get('pubad_description') or '—'}\n"
-        f"لینک: "
-        f"{data.get('pubad_link') or '—'}\n"
+        f"توضیح: {data.get('pubad_description') or '—'}\n"
+        f"لینک: {data.get('pubad_link') or '—'}\n"
         f"(کاربر داخلی #{user_id}, "
         f"درخواست #{request_id})"
     )
