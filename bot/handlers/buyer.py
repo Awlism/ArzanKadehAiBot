@@ -23,21 +23,12 @@ from ..constants import (
 )
 from ..database import db
 from ..keyboards import kb_add_back, kb_pagination_row
-from ..repositories import get_compare_selection
 from ..utils import (
     ensure_user,
     format_price,
     log_event,
     parse_int,
     safe_edit,
-)
-from ..constants import COMPARE_MAX_ITEMS, COMPARE_INTRO_TEXT
-from ..repositories import (
-    clear_compare_selection,
-    has_seen_compare_intro,
-    mark_compare_intro_seen,
-    set_compare_selection,
-    compare_add,
 )
 
 
@@ -53,7 +44,10 @@ async def handle_category(callback: CallbackQuery, state) -> None:
     page = parse_int(parts[2]) if len(parts) > 2 else 0
 
     if cat_id is None or page is None:
-        await callback.answer("⚠️ درخواست نامعتبر است.", show_alert=True)
+        await callback.answer(
+            "⚠️ درخواست نامعتبر است.",
+            show_alert=True,
+        )
         return
 
     user_id = await ensure_user(callback.from_user)
@@ -69,8 +63,13 @@ async def handle_category(callback: CallbackQuery, state) -> None:
         )
 
         offset = page * PAGE_SIZE_CATEGORIES
-        page_rows = rows[offset:offset + PAGE_SIZE_CATEGORIES]
-        has_next = offset + PAGE_SIZE_CATEGORIES < len(rows)
+        page_rows = rows[
+            offset:offset + PAGE_SIZE_CATEGORIES
+        ]
+        has_next = (
+            offset + PAGE_SIZE_CATEGORIES
+            < len(rows)
+        )
 
         builder = InlineKeyboardBuilder()
 
@@ -92,8 +91,11 @@ async def handle_category(callback: CallbackQuery, state) -> None:
 
         await safe_edit(
             callback,
-            f"{EMOJI_CATEGORIES} <b>دسته‌بندی‌ها</b>\n\n"
-            "یک دسته را انتخاب کن:",
+            (
+                f"{EMOJI_CATEGORIES} "
+                "<b>دسته‌بندی‌ها</b>\n\n"
+                "یک دسته را انتخاب کن:"
+            ),
             builder.as_markup(),
         )
         await callback.answer()
@@ -136,8 +138,13 @@ async def handle_category(callback: CallbackQuery, state) -> None:
 
     if children:
         offset = page * PAGE_SIZE_CATEGORIES
-        page_rows = children[offset:offset + PAGE_SIZE_CATEGORIES]
-        has_next = offset + PAGE_SIZE_CATEGORIES < len(children)
+        page_rows = children[
+            offset:offset + PAGE_SIZE_CATEGORIES
+        ]
+        has_next = (
+            offset + PAGE_SIZE_CATEGORIES
+            < len(children)
+        )
 
         builder = InlineKeyboardBuilder()
 
@@ -155,12 +162,18 @@ async def handle_category(callback: CallbackQuery, state) -> None:
             page,
             has_next,
         )
-        kb_add_back(builder, back_target)
+        kb_add_back(
+            builder,
+            back_target,
+        )
 
         await safe_edit(
             callback,
-            f"{category['emoji']} <b>{category['name']}</b>\n\n"
-            "یک زیردسته را انتخاب کن:",
+            (
+                f"{category['emoji']} "
+                f"<b>{category['name']}</b>\n\n"
+                "یک زیردسته را انتخاب کن:"
+            ),
             builder.as_markup(),
         )
         await callback.answer()
@@ -170,8 +183,10 @@ async def handle_category(callback: CallbackQuery, state) -> None:
         """
         SELECT p.*, s.name AS seller_name
         FROM products p
-        JOIN sellers s ON s.id = p.seller_id
+        JOIN sellers s
+          ON s.id = p.seller_id
         WHERE p.category_id = ?
+          AND COALESCE(s.is_active, 1) = 1
         ORDER BY p.views DESC, p.id DESC;
         """,
         (cat_id,),
@@ -179,20 +194,31 @@ async def handle_category(callback: CallbackQuery, state) -> None:
 
     if not products:
         builder = InlineKeyboardBuilder()
-        kb_add_back(builder, back_target)
+        kb_add_back(
+            builder,
+            back_target,
+        )
 
         await safe_edit(
             callback,
-            f"{category['emoji']} <b>{category['name']}</b>\n\n"
-            "📦 فعلاً محصولی در این دسته ثبت نشده.",
+            (
+                f"{category['emoji']} "
+                f"<b>{category['name']}</b>\n\n"
+                "📦 فعلاً محصولی در این دسته ثبت نشده."
+            ),
             builder.as_markup(),
         )
         await callback.answer()
         return
 
     offset = page * PAGE_SIZE_LIST
-    page_rows = products[offset:offset + PAGE_SIZE_LIST]
-    has_next = offset + PAGE_SIZE_LIST < len(products)
+    page_rows = products[
+        offset:offset + PAGE_SIZE_LIST
+    ]
+    has_next = (
+        offset + PAGE_SIZE_LIST
+        < len(products)
+    )
 
     builder = InlineKeyboardBuilder()
 
@@ -200,7 +226,8 @@ async def handle_category(callback: CallbackQuery, state) -> None:
         builder.row(
             InlineKeyboardButton(
                 text=(
-                    f"{EMOJI_PRODUCT} {product['name']} - "
+                    f"{EMOJI_PRODUCT} "
+                    f"{product['name']} - "
                     f"{format_price(product['price'])}"
                 ),
                 callback_data=f"product:{product['id']}",
@@ -213,22 +240,33 @@ async def handle_category(callback: CallbackQuery, state) -> None:
         page,
         has_next,
     )
-    kb_add_back(builder, back_target)
+    kb_add_back(
+        builder,
+        back_target,
+    )
 
     await safe_edit(
         callback,
-        f"{category['emoji']} <b>{category['name']}</b>\n\n"
-        "محصولات این دسته:",
+        (
+            f"{category['emoji']} "
+            f"<b>{category['name']}</b>\n\n"
+            "محصولات این دسته:"
+        ),
         builder.as_markup(),
     )
     await callback.answer()
 
 
 @router.callback_query(F.data == "nearme")
-async def handle_near_me(callback: CallbackQuery, state) -> None:
+async def handle_near_me(
+    callback: CallbackQuery,
+    state,
+) -> None:
     await state.clear()
 
-    user_id = await ensure_user(callback.from_user)
+    user_id = await ensure_user(
+        callback.from_user
+    )
 
     user = await db.fetchone(
         "SELECT city_id FROM users WHERE id = ?;",
@@ -243,7 +281,10 @@ async def handle_near_me(callback: CallbackQuery, state) -> None:
                 callback_data="setcity",
             )
         )
-        kb_add_back(builder, "main")
+        kb_add_back(
+            builder,
+            "main",
+        )
 
         await safe_edit(
             callback,
@@ -263,6 +304,7 @@ async def handle_near_me(callback: CallbackQuery, state) -> None:
         SELECT id, name, status
         FROM sellers
         WHERE city_id = ?
+          AND COALESCE(is_active, 1) = 1
         ORDER BY rating DESC
         LIMIT 10;
         """,
@@ -273,12 +315,14 @@ async def handle_near_me(callback: CallbackQuery, state) -> None:
 
     if not sellers:
         text = (
-            f"{EMOJI_NEAR_ME} شهر انتخاب‌شده: {city['name']}\n\n"
+            f"{EMOJI_NEAR_ME} "
+            f"شهر انتخاب‌شده: {city['name']}\n\n"
             "فعلاً فروشگاهی در این شهر ثبت نشده."
         )
     else:
         text = (
-            f"{EMOJI_NEAR_ME} شهر انتخاب‌شده: {city['name']}\n\n"
+            f"{EMOJI_NEAR_ME} "
+            f"شهر انتخاب‌شده: {city['name']}\n\n"
             "فروشگاه‌های این شهر:"
         )
 
@@ -296,11 +340,16 @@ async def handle_near_me(callback: CallbackQuery, state) -> None:
                         f"{badge} "
                         f"{seller['name']}"
                     ),
-                    callback_data=f"seller:{seller['id']}",
+                    callback_data=(
+                        f"seller:{seller['id']}"
+                    ),
                 )
             )
 
-    kb_add_back(builder, "main")
+    kb_add_back(
+        builder,
+        "main",
+    )
 
     await safe_edit(
         callback,
@@ -311,15 +360,23 @@ async def handle_near_me(callback: CallbackQuery, state) -> None:
 
 
 @router.callback_query(F.data == "hot")
-async def handle_hot(callback: CallbackQuery, state) -> None:
+async def handle_hot(
+    callback: CallbackQuery,
+    state,
+) -> None:
     await state.clear()
-    await ensure_user(callback.from_user)
+    await ensure_user(
+        callback.from_user
+    )
 
     products = await db.fetchall(
         """
-        SELECT *
-        FROM products
-        ORDER BY views DESC, rating DESC
+        SELECT p.*
+        FROM products p
+        JOIN sellers s
+          ON s.id = p.seller_id
+        WHERE COALESCE(s.is_active, 1) = 1
+        ORDER BY p.views DESC, p.rating DESC
         LIMIT ?;
         """,
         (TOP_LIST_LIMIT,),
@@ -328,19 +385,30 @@ async def handle_hot(callback: CallbackQuery, state) -> None:
     builder = InlineKeyboardBuilder()
 
     if not products:
-        text = f"{EMOJI_HOT} هنوز محصولی برای نمایش وجود ندارد."
+        text = (
+            f"{EMOJI_HOT} "
+            "هنوز محصولی برای نمایش وجود ندارد."
+        )
     else:
         text = f"{EMOJI_HOT} <b>داغ‌ترین‌ها</b>"
 
         for product in products:
             builder.row(
                 InlineKeyboardButton(
-                    text=f"{EMOJI_PRODUCT} {product['name']}",
-                    callback_data=f"product:{product['id']}",
+                    text=(
+                        f"{EMOJI_PRODUCT} "
+                        f"{product['name']}"
+                    ),
+                    callback_data=(
+                        f"product:{product['id']}"
+                    ),
                 )
             )
 
-    kb_add_back(builder, "main")
+    kb_add_back(
+        builder,
+        "main",
+    )
 
     await safe_edit(
         callback,
@@ -351,16 +419,24 @@ async def handle_hot(callback: CallbackQuery, state) -> None:
 
 
 @router.callback_query(F.data == "newtoday")
-async def handle_new_today(callback: CallbackQuery, state) -> None:
+async def handle_new_today(
+    callback: CallbackQuery,
+    state,
+) -> None:
     await state.clear()
-    await ensure_user(callback.from_user)
+    await ensure_user(
+        callback.from_user
+    )
 
     products = await db.fetchall(
         """
-        SELECT *
-        FROM products
-        WHERE date(created_at) = date('now')
-        ORDER BY created_at DESC
+        SELECT p.*
+        FROM products p
+        JOIN sellers s
+          ON s.id = p.seller_id
+        WHERE date(p.created_at) = date('now')
+          AND COALESCE(s.is_active, 1) = 1
+        ORDER BY p.created_at DESC
         LIMIT ?;
         """,
         (TOP_LIST_LIMIT,),
@@ -374,17 +450,28 @@ async def handle_new_today(callback: CallbackQuery, state) -> None:
             "امروز محصول جدیدی ثبت نشده."
         )
     else:
-        text = f"{EMOJI_NEW_TODAY} <b>جدیدهای امروز</b>"
+        text = (
+            f"{EMOJI_NEW_TODAY} "
+            "<b>جدیدهای امروز</b>"
+        )
 
         for product in products:
             builder.row(
                 InlineKeyboardButton(
-                    text=f"{EMOJI_PRODUCT} {product['name']}",
-                    callback_data=f"product:{product['id']}",
+                    text=(
+                        f"{EMOJI_PRODUCT} "
+                        f"{product['name']}"
+                    ),
+                    callback_data=(
+                        f"product:{product['id']}"
+                    ),
                 )
             )
 
-    kb_add_back(builder, "main")
+    kb_add_back(
+        builder,
+        "main",
+    )
 
     await safe_edit(
         callback,
@@ -395,17 +482,25 @@ async def handle_new_today(callback: CallbackQuery, state) -> None:
 
 
 @router.callback_query(F.data == "picks")
-async def handle_picks(callback: CallbackQuery, state) -> None:
+async def handle_picks(
+    callback: CallbackQuery,
+    state,
+) -> None:
     await state.clear()
-    await ensure_user(callback.from_user)
+    await ensure_user(
+        callback.from_user
+    )
 
     products = await db.fetchall(
         """
-        SELECT *
-        FROM products
-        ORDER BY rating DESC,
-                 review_count DESC,
-                 views DESC
+        SELECT p.*
+        FROM products p
+        JOIN sellers s
+          ON s.id = p.seller_id
+        WHERE COALESCE(s.is_active, 1) = 1
+        ORDER BY p.rating DESC,
+                 p.review_count DESC,
+                 p.views DESC
         LIMIT ?;
         """,
         (TOP_LIST_LIMIT,),
@@ -419,17 +514,28 @@ async def handle_picks(callback: CallbackQuery, state) -> None:
             "فعلاً پیشنهادی برای نمایش وجود ندارد."
         )
     else:
-        text = f"{EMOJI_PICKS} <b>انتخاب ارزانکده</b>"
+        text = (
+            f"{EMOJI_PICKS} "
+            "<b>انتخاب ارزانکده</b>"
+        )
 
         for product in products:
             builder.row(
                 InlineKeyboardButton(
-                    text=f"{EMOJI_PRODUCT} {product['name']}",
-                    callback_data=f"product:{product['id']}",
+                    text=(
+                        f"{EMOJI_PRODUCT} "
+                        f"{product['name']}"
+                    ),
+                    callback_data=(
+                        f"product:{product['id']}"
+                    ),
                 )
             )
 
-    kb_add_back(builder, "main")
+    kb_add_back(
+        builder,
+        "main",
+    )
 
     await safe_edit(
         callback,
@@ -440,14 +546,20 @@ async def handle_picks(callback: CallbackQuery, state) -> None:
 
 
 @router.callback_query(F.data == "topsellers")
-async def handle_top_sellers(callback: CallbackQuery, state) -> None:
+async def handle_top_sellers(
+    callback: CallbackQuery,
+    state,
+) -> None:
     await state.clear()
-    await ensure_user(callback.from_user)
+    await ensure_user(
+        callback.from_user
+    )
 
     sellers = await db.fetchall(
         """
         SELECT *
         FROM sellers
+        WHERE COALESCE(is_active, 1) = 1
         ORDER BY rating DESC,
                  review_count DESC,
                  views DESC
@@ -464,7 +576,10 @@ async def handle_top_sellers(callback: CallbackQuery, state) -> None:
             "فعلاً فروشنده‌ای برای نمایش وجود ندارد."
         )
     else:
-        text = f"{EMOJI_TOP_SELLERS} <b>فروشندگان برتر</b>"
+        text = (
+            f"{EMOJI_TOP_SELLERS} "
+            "<b>فروشندگان برتر</b>"
+        )
 
         for seller in sellers:
             builder.row(
@@ -473,11 +588,16 @@ async def handle_top_sellers(callback: CallbackQuery, state) -> None:
                         f"{EMOJI_SELLERS} "
                         f"{seller['name']}"
                     ),
-                    callback_data=f"seller:{seller['id']}",
+                    callback_data=(
+                        f"seller:{seller['id']}"
+                    ),
                 )
             )
 
-    kb_add_back(builder, "main")
+    kb_add_back(
+        builder,
+        "main",
+    )
 
     await safe_edit(
         callback,
