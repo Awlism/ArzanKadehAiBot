@@ -68,14 +68,27 @@ EXPECTED_MAIN_CATEGORIES = [
 
 
 EXPECTED_INDEXES = {
-    "idx_users_telegram_id",
-    "idx_products_seller_id",
-    "idx_products_category_id",
-    "idx_favorites_user_id",
-    "idx_favorites_product_id",
-    "idx_sellers_city_id",
-    "idx_reviews_product_id",
+    "idx_categories_parent",
+    "idx_products_category",
+    "idx_products_seller",
+    "idx_favorites_user",
+    "idx_sellers_city",
+    "idx_events_user",
+    "idx_reviews_seller",
+    "idx_reviews_product",
+    "idx_claims_seller",
+    "idx_notifications_user",
+    "idx_referrals_seller",
+    "idx_referral_rewards_seller",
+    "idx_seller_favorites_user",
+    "idx_seller_favorites_seller",
+    "idx_requests_user",
+    "idx_requests_status",
+    "idx_audit_log_entity",
+    "idx_orders_buyer",
+    "idx_orders_seller",
     "idx_orders_product",
+    "idx_orders_status",
 }
 
 
