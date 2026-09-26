@@ -72,6 +72,35 @@ router = Router(name="seller")
 
 
 # ============================================================================
+# CALLBACK PARSING HELPERS
+# ============================================================================
+
+
+def _parse_non_negative_page(data: str) -> int | None:
+    parts = data.split(":", 1)
+    if len(parts) != 2:
+        return None
+
+    page = parse_int(parts[1])
+    if page is None or page < 0:
+        return None
+
+    return page
+
+
+def _parse_positive_callback_id(data: str) -> int | None:
+    parts = data.split(":", 1)
+    if len(parts) != 2:
+        return None
+
+    value = parse_int(parts[1])
+    if value is None or value < 1:
+        return None
+
+    return value
+
+
+# ============================================================================
 # SELLER BROWSING
 # ============================================================================
 
@@ -83,7 +112,15 @@ async def handle_sellers_list(
 ) -> None:
     await state.clear()
 
-    page = parse_int(callback.data.split(":")[1]) or 0
+    page = _parse_non_negative_page(callback.data)
+
+    if page is None:
+        await callback.answer(
+            "⚠️ صفحه نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
     await ensure_user(callback.from_user)
 
     sellers = await db.fetchall(
@@ -153,8 +190,8 @@ async def handle_seller_detail(
 ) -> None:
     await state.clear()
 
-    seller_id = parse_int(
-        callback.data.split(":")[1]
+    seller_id = _parse_positive_callback_id(
+        callback.data
     )
 
     if seller_id is None:
@@ -173,6 +210,7 @@ async def handle_seller_detail(
 async def _render_seller_detail(
     callback: CallbackQuery,
     seller_id: int,
+    answer_text: str | None = None,
 ) -> None:
     user_id = await ensure_user(
         callback.from_user
@@ -393,7 +431,13 @@ async def _render_seller_detail(
         builder.as_markup(),
     )
 
-    await callback.answer()
+    if answer_text:
+        await callback.answer(
+            answer_text,
+            show_alert=True,
+        )
+    else:
+        await callback.answer()
 
 
 # ============================================================================
@@ -405,8 +449,8 @@ async def _render_seller_detail(
 async def handle_seller_favorite_add(
     callback: CallbackQuery,
 ) -> None:
-    seller_id = parse_int(
-        callback.data.split(":")[1]
+    seller_id = _parse_positive_callback_id(
+        callback.data
     )
 
     if seller_id is None:
@@ -444,15 +488,13 @@ async def handle_seller_favorite_add(
         seller_id,
     )
 
-    await callback.answer(
-        "❤️ ذخیره شد! هر وقت خواستی از بخش "
-        "علاقه‌مندی‌ها پیداش می‌کنی.",
-        show_alert=True,
-    )
-
     await _render_seller_detail(
         callback,
         seller_id,
+        answer_text=(
+            "❤️ ذخیره شد! هر وقت خواستی از بخش "
+            "علاقه‌مندی‌ها پیداش می‌کنی."
+        ),
     )
 
 
@@ -460,8 +502,8 @@ async def handle_seller_favorite_add(
 async def handle_seller_favorite_remove(
     callback: CallbackQuery,
 ) -> None:
-    seller_id = parse_int(
-        callback.data.split(":")[1]
+    seller_id = _parse_positive_callback_id(
+        callback.data
     )
 
     if seller_id is None:
@@ -475,18 +517,27 @@ async def handle_seller_favorite_remove(
         callback.from_user
     )
 
+    seller = await db.fetchone(
+        "SELECT id FROM sellers WHERE id = ?;",
+        (seller_id,),
+    )
+
+    if not seller:
+        await callback.answer(
+            "⚠️ این فروشگاه یافت نشد.",
+            show_alert=True,
+        )
+        return
+
     await toggle_seller_favorite(
         user_id,
         seller_id,
     )
 
-    await callback.answer(
-        "از علاقه‌مندی‌ها حذف شد 💔"
-    )
-
     await _render_seller_detail(
         callback,
         seller_id,
+        answer_text="از علاقه‌مندی‌ها حذف شد 💔",
     )
 
 
@@ -499,9 +550,16 @@ async def handle_seller_favorite_remove(
 async def handle_instagram_click(
     callback: CallbackQuery,
 ) -> None:
-    seller_id = parse_int(
-        callback.data.split(":")[1]
+    seller_id = _parse_positive_callback_id(
+        callback.data
     )
+
+    if seller_id is None:
+        await callback.answer(
+            "⚠️ شناسه نامعتبر است.",
+            show_alert=True,
+        )
+        return
 
     user_id = await ensure_user(
         callback.from_user
@@ -539,9 +597,16 @@ async def handle_instagram_click(
 async def handle_telegram_click(
     callback: CallbackQuery,
 ) -> None:
-    seller_id = parse_int(
-        callback.data.split(":")[1]
+    seller_id = _parse_positive_callback_id(
+        callback.data
     )
+
+    if seller_id is None:
+        await callback.answer(
+            "⚠️ شناسه نامعتبر است.",
+            show_alert=True,
+        )
+        return
 
     user_id = await ensure_user(
         callback.from_user
@@ -579,9 +644,16 @@ async def handle_telegram_click(
 async def handle_whatsapp_click(
     callback: CallbackQuery,
 ) -> None:
-    seller_id = parse_int(
-        callback.data.split(":")[1]
+    seller_id = _parse_positive_callback_id(
+        callback.data
     )
+
+    if seller_id is None:
+        await callback.answer(
+            "⚠️ شناسه نامعتبر است.",
+            show_alert=True,
+        )
+        return
 
     user_id = await ensure_user(
         callback.from_user
@@ -625,8 +697,8 @@ async def handle_whatsapp_edit_start(
     callback: CallbackQuery,
     state: FSMContext,
 ) -> None:
-    seller_id = parse_int(
-        callback.data.split(":")[1]
+    seller_id = _parse_positive_callback_id(
+        callback.data
     )
 
     if seller_id is None:
@@ -785,8 +857,8 @@ async def handle_whatsapp_edit_value(
 async def handle_claim(
     callback: CallbackQuery,
 ) -> None:
-    seller_id = parse_int(
-        callback.data.split(":")[1]
+    seller_id = _parse_positive_callback_id(
+        callback.data
     )
 
     if seller_id is None:
@@ -802,7 +874,12 @@ async def handle_claim(
 
     seller = await db.fetchone(
         """
-        SELECT id, status
+        SELECT
+            id,
+            name,
+            status,
+            owner_user_id,
+            created_by_user_id
         FROM sellers
         WHERE id = ?;
         """,
@@ -818,7 +895,18 @@ async def handle_claim(
 
     if seller["status"] != "UNCLAIMED":
         await callback.answer(
-            "⚠️ این فروشگاه دیگر قابل درخواست مالکیت نیست.",
+            "⚠️ این فروشگاه قبلاً مالک دارد.",
+            show_alert=True,
+        )
+        return
+
+    if user_id in (
+        seller["owner_user_id"],
+        seller["created_by_user_id"],
+    ):
+        await callback.answer(
+            "ℹ️ این فروشگاه همین حالا به حساب شما "
+            "متصل است.",
             show_alert=True,
         )
         return
@@ -829,7 +917,8 @@ async def handle_claim(
         FROM seller_claims
         WHERE seller_id = ?
           AND user_id = ?
-          AND status = 'PENDING';
+          AND status = 'PENDING'
+        LIMIT 1;
         """,
         (
             seller_id,
@@ -839,12 +928,11 @@ async def handle_claim(
 
     if existing:
         await callback.answer(
-            "شما قبلاً برای این فروشگاه درخواست داده‌اید.",
+            "⏳ درخواست مالکیت شما قبلاً ثبت شده و "
+            "در انتظار بررسی است.",
             show_alert=True,
         )
         return
-
-    now = now_iso()
 
     await db.execute(
         """
@@ -852,32 +940,44 @@ async def handle_claim(
             seller_id,
             user_id,
             status,
-            created_at,
-            updated_at
+            created_at
         )
-        VALUES (?, ?, 'PENDING', ?, ?);
+        VALUES (?, ?, 'PENDING', ?);
         """,
         (
             seller_id,
             user_id,
-            now,
-            now,
+            now_iso(),
         ),
     )
 
-    await log_event(
+    await log_audit(
         user_id,
-        "claim_request",
+        "seller_claim_requested",
         "seller",
         seller_id,
     )
 
+    if ADMIN_CHAT_ID:
+        try:
+            bot: Bot = callback.bot
+            await bot.send_message(
+                ADMIN_CHAT_ID,
+                (
+                    "📩 <b>درخواست مالکیت جدید</b>\n\n"
+                    f"🏪 فروشگاه: {seller['name']}\n"
+                    f"🆔 Seller ID: {seller_id}\n"
+                    f"👤 User ID: {user_id}"
+                ),
+            )
+        except Exception:
+            pass
+
     await callback.answer(
-        "درخواست مالکیت شما ثبت شد و در انتظار بررسی است.",
+        "✅ درخواست مالکیت ثبت شد. "
+        "بعد از بررسی بهت خبر می‌دیم.",
         show_alert=True,
     )
-
-
 # ============================================================================
 # COMMON SELLER HELPERS
 # ============================================================================
@@ -978,8 +1078,8 @@ async def handle_store_status(
 async def handle_store_status_picked(
     callback: CallbackQuery,
 ) -> None:
-    seller_id = parse_int(
-        callback.data.split(":")[1]
+    seller_id = _parse_positive_callback_id(
+        callback.data
     )
 
     if seller_id is None:
@@ -1012,6 +1112,7 @@ async def handle_store_status_picked(
 async def _render_store_status(
     callback: CallbackQuery,
     seller_id: int,
+    answer_text: str | None = None,
 ) -> None:
     seller = await get_seller_by_id(seller_id)
 
@@ -1060,15 +1161,21 @@ async def _render_store_status(
         builder.as_markup(),
     )
 
-    await callback.answer()
+    if answer_text:
+        await callback.answer(
+            answer_text,
+            show_alert=True,
+        )
+    else:
+        await callback.answer()
 
 
 @router.callback_query(F.data.startswith("storetoggle:"))
 async def handle_store_toggle_active(
     callback: CallbackQuery,
 ) -> None:
-    seller_id = parse_int(
-        callback.data.split(":")[1]
+    seller_id = _parse_positive_callback_id(
+        callback.data
     )
 
     if seller_id is None:
@@ -1119,16 +1226,14 @@ async def handle_store_toggle_active(
         seller_id,
     )
 
-    await callback.answer(
-        "فروشگاه غیرفعال شد 🔴"
-        if current
-        else "فروشگاه فعال شد 🟢",
-        show_alert=True,
-    )
-
     await _render_store_status(
         callback,
         seller_id,
+        answer_text=(
+            "فروشگاه غیرفعال شد 🔴"
+            if current
+            else "فروشگاه فعال شد 🟢"
+        ),
     )
 
 
@@ -1163,8 +1268,8 @@ async def handle_my_shop(
 async def handle_shop_view_picked(
     callback: CallbackQuery,
 ) -> None:
-    seller_id = parse_int(
-        callback.data.split(":")[1]
+    seller_id = _parse_positive_callback_id(
+        callback.data
     )
 
     if seller_id is None:
@@ -1197,6 +1302,7 @@ async def handle_shop_view_picked(
 async def _render_shop_view(
     callback: CallbackQuery,
     seller_id: int,
+    answer_text: str | None = None,
 ) -> None:
     seller = await get_seller_by_id(seller_id)
 
@@ -1261,7 +1367,13 @@ async def _render_shop_view(
         builder.as_markup(),
     )
 
-    await callback.answer()
+    if answer_text:
+        await callback.answer(
+            answer_text,
+            show_alert=True,
+        )
+    else:
+        await callback.answer()
 
 
 # ============================================================================
@@ -1274,8 +1386,8 @@ async def handle_shop_edit_menu(
     callback: CallbackQuery,
     state: FSMContext,
 ) -> None:
-    seller_id = parse_int(
-        callback.data.split(":")[1]
+    seller_id = _parse_positive_callback_id(
+        callback.data
     )
 
     if seller_id is None:
@@ -1350,7 +1462,11 @@ async def handle_shop_edit_start(
     seller_id = parse_int(parts[1])
     field = parts[2]
 
-    if seller_id is None or field not in SHOP_EDITABLE_FIELDS:
+    if (
+        seller_id is None
+        or seller_id < 1
+        or field not in SHOP_EDITABLE_FIELDS
+    ):
         await callback.answer(
             "⚠️ گزینه نامعتبر است.",
             show_alert=True,
@@ -1407,8 +1523,8 @@ async def handle_shop_city_start(
     callback: CallbackQuery,
     state: FSMContext,
 ) -> None:
-    seller_id = parse_int(
-        callback.data.split(":")[1]
+    seller_id = _parse_positive_callback_id(
+        callback.data
     )
 
     if seller_id is None:
@@ -1468,7 +1584,7 @@ async def handle_shop_city_start(
 async def handle_shop_edit_city_pick(
     callback: CallbackQuery,
 ) -> None:
-    parts = callback.data.split(":")
+    parts = callback.data.split(":", 2)
 
     if len(parts) != 3:
         await callback.answer(
@@ -1480,7 +1596,12 @@ async def handle_shop_edit_city_pick(
     seller_id = parse_int(parts[1])
     city_id = parse_int(parts[2])
 
-    if seller_id is None or city_id is None:
+    if (
+        seller_id is None
+        or seller_id < 1
+        or city_id is None
+        or city_id < 1
+    ):
         await callback.answer(
             "⚠️ اطلاعات نامعتبر است.",
             show_alert=True,
@@ -1534,14 +1655,10 @@ async def handle_shop_edit_city_pick(
         seller_id,
     )
 
-    await callback.answer(
-        "شهر فروشگاه تغییر کرد ✅",
-        show_alert=True,
-    )
-
     await _render_shop_view(
         callback,
         seller_id,
+        answer_text="شهر فروشگاه تغییر کرد ✅",
     )
 
 
@@ -1628,6 +1745,39 @@ async def handle_shop_edit_value(
     )
 
     await message.answer(
+        f"✅ {SHOP_EDITABLE_FIELDS[field]} با موفقیت "
+        "به‌روزرسانی شد.",
+        reply_markup=builder.as_markup(),
+    )
+    if not query:
+        await message.answer(
+            "⚠️ این فیلد قابل ویرایش نیست."
+        )
+        return
+
+    await db.execute(
+        query,
+        (
+            value,
+            now_iso(),
+            seller_id,
+        ),
+    )
+
+    await log_audit(
+        user_id,
+        "seller_field_updated",
+        "seller",
+        seller_id,
+    )
+
+    builder = InlineKeyboardBuilder()
+    kb_add_back(
+        builder,
+        f"shopview:{seller_id}",
+    )
+
+    await message.answer(
         f"✅ {SHOP_EDITABLE_FIELDS[field]} فروشگاه "
         "با موفقیت تغییر کرد.",
         reply_markup=builder.as_markup(),
@@ -1643,8 +1793,8 @@ async def handle_shop_edit_value(
 async def handle_my_products(
     callback: CallbackQuery,
 ) -> None:
-    seller_id = parse_int(
-        callback.data.split(":")[1]
+    seller_id = _parse_positive_callback_id(
+        callback.data
     )
 
     if seller_id is None:
@@ -1678,8 +1828,8 @@ async def handle_my_products(
 async def handle_product_list_picked(
     callback: CallbackQuery,
 ) -> None:
-    seller_id = parse_int(
-        callback.data.split(":")[1]
+    seller_id = _parse_positive_callback_id(
+        callback.data
     )
 
     if seller_id is None:
@@ -1712,6 +1862,7 @@ async def handle_product_list_picked(
 async def _render_product_list(
     callback: CallbackQuery,
     seller_id: int,
+    answer_text: str | None = None,
 ) -> None:
     seller = await get_seller_by_id(seller_id)
 
@@ -1776,7 +1927,13 @@ async def _render_product_list(
         builder.as_markup(),
     )
 
-    await callback.answer()
+    if answer_text:
+        await callback.answer(
+            answer_text,
+            show_alert=True,
+        )
+    else:
+        await callback.answer()
 
 
 # ============================================================================
@@ -1789,8 +1946,8 @@ async def handle_product_add_start(
     callback: CallbackQuery,
     state: FSMContext,
 ) -> None:
-    seller_id = parse_int(
-        callback.data.split(":")[1]
+    seller_id = _parse_positive_callback_id(
+        callback.data
     )
 
     if seller_id is None:
@@ -2091,8 +2248,8 @@ async def _finish_product_add(
 async def handle_product_edit_menu(
     callback: CallbackQuery,
 ) -> None:
-    product_id = parse_int(
-        callback.data.split(":")[1]
+    product_id = _parse_positive_callback_id(
+        callback.data
     )
 
     if product_id is None:
@@ -2184,7 +2341,11 @@ async def handle_product_field_edit_start(
     product_id = parse_int(parts[1])
     field = parts[2]
 
-    if product_id is None or field not in PRODUCT_EDITABLE_FIELDS:
+    if (
+        product_id is None
+        or product_id < 1
+        or field not in PRODUCT_EDITABLE_FIELDS
+    ):
         await callback.answer(
             "⚠️ گزینه نامعتبر است.",
             show_alert=True,
@@ -2359,8 +2520,8 @@ async def handle_product_field_edit_value(
 async def handle_product_stock_menu(
     callback: CallbackQuery,
 ) -> None:
-    product_id = parse_int(
-        callback.data.split(":")[1]
+    product_id = _parse_positive_callback_id(
+        callback.data
     )
 
     if product_id is None:
@@ -2398,7 +2559,14 @@ async def handle_product_stock_menu(
     builder.row(
         InlineKeyboardButton(
             text="🟢 موجود",
-            callback_data=f"stockset:{product_id}:AVAILABLE",
+            callback_data=f"stockset:{product_id}:IN_STOCK",
+        )
+    )
+
+    builder.row(
+        InlineKeyboardButton(
+            text="🟡 کمبود موجودی",
+            callback_data=f"stockset:{product_id}:LOW_STOCK",
         )
     )
 
@@ -2417,7 +2585,8 @@ async def handle_product_stock_menu(
     await safe_edit(
         callback,
         (
-            f"📦 وضعیت موجودی «{product['name']}»\n\n"
+            f"📦 <b>وضعیت موجودی</b>\n\n"
+            f"محصول: {product['name']}\n"
             f"وضعیت فعلی: {product['stock_status']}"
         ),
         builder.as_markup(),
@@ -2430,7 +2599,7 @@ async def handle_product_stock_menu(
 async def handle_product_stock_set(
     callback: CallbackQuery,
 ) -> None:
-    parts = callback.data.split(":")
+    parts = callback.data.split(":", 2)
 
     if len(parts) != 3:
         await callback.answer(
@@ -2442,9 +2611,16 @@ async def handle_product_stock_set(
     product_id = parse_int(parts[1])
     stock_status = parts[2]
 
-    if product_id is None or stock_status not in (
-        "AVAILABLE",
+    allowed_statuses = {
+        "IN_STOCK",
+        "LOW_STOCK",
         "OUT_OF_STOCK",
+    }
+
+    if (
+        product_id is None
+        or product_id < 1
+        or stock_status not in allowed_statuses
     ):
         await callback.answer(
             "⚠️ وضعیت نامعتبر است.",
@@ -2496,13 +2672,248 @@ async def handle_product_stock_set(
         product_id,
     )
 
+    status_labels = {
+        "IN_STOCK": "🟢 موجود",
+        "LOW_STOCK": "🟡 کمبود موجودی",
+        "OUT_OF_STOCK": "🔴 ناموجود",
+    }
+
     await callback.answer(
-        "وضعیت موجودی تغییر کرد ✅",
+        f"وضعیت موجودی تغییر کرد: "
+        f"{status_labels[stock_status]}",
         show_alert=True,
     )
 
     await handle_product_edit_menu(
-        callback
+        callback,
+    )
+
+
+@router.callback_query(F.data.startswith("productdelete:"))
+async def handle_product_delete_start(
+    callback: CallbackQuery,
+) -> None:
+    product_id = _parse_positive_callback_id(
+        callback.data
+    )
+
+    if product_id is None:
+        await callback.answer(
+            "⚠️ شناسه نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    user_id = await ensure_user(callback.from_user)
+
+    product = await get_product_by_id(product_id)
+
+    if not product:
+        await callback.answer(
+            "⚠️ محصول پیدا نشد.",
+            show_alert=True,
+        )
+        return
+
+    seller = await _check_seller_ownership(
+        user_id,
+        product["seller_id"],
+    )
+
+    if not seller:
+        await callback.answer(
+            "⚠️ دسترسی مجاز نیست.",
+            show_alert=True,
+        )
+        return
+
+    builder = InlineKeyboardBuilder()
+
+    builder.row(
+        InlineKeyboardButton(
+            text="❌ بله، حذف شود",
+            callback_data=f"productdeleteconfirm:{product_id}",
+        )
+    )
+
+    builder.row(
+        InlineKeyboardButton(
+            text="↩️ انصراف",
+            callback_data=f"productedit:{product_id}",
+        )
+    )
+
+    await safe_edit(
+        callback,
+        (
+            f"🗑 <b>حذف محصول</b>\n\n"
+            f"مطمئنی می‌خوای «{product['name']}» "
+            "رو حذف کنی؟\n\n"
+            "این عملیات قابل بازگشت نیست."
+        ),
+        builder.as_markup(),
+    )
+
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("productdeleteconfirm:"))
+async def handle_product_delete_confirmed(
+    callback: CallbackQuery,
+) -> None:
+    product_id = _parse_positive_callback_id(
+        callback.data
+    )
+
+    if product_id is None:
+        await callback.answer(
+            "⚠️ شناسه نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    user_id = await ensure_user(callback.from_user)
+
+    product = await get_product_by_id(product_id)
+
+    if not product:
+        await callback.answer(
+            "⚠️ محصول پیدا نشد.",
+            show_alert=True,
+        )
+        return
+
+    seller = await _check_seller_ownership(
+        user_id,
+        product["seller_id"],
+    )
+
+    if not seller:
+        await callback.answer(
+            "⚠️ دسترسی مجاز نیست.",
+            show_alert=True,
+        )
+        return
+
+    seller_id = product["seller_id"]
+
+    await delete_product_record(
+        product_id,
+    )
+
+    await log_audit(
+        user_id,
+        "product_deleted",
+        "product",
+        product_id,
+    )
+
+    await _render_product_list(
+        callback,
+        seller_id,
+        answer_text="محصول با موفقیت حذف شد 🗑️",
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="🔴 ناموجود",
+            callback_data=f"stockset:{product_id}:OUT_OF_STOCK",
+        )
+    )
+
+    kb_add_back(
+        builder,
+        f"productedit:{product_id}",
+    )
+
+    await safe_edit(
+        callback,
+        (
+            f"📦 وضعیت موجودی «{product['name']}»\n\n"
+            f"وضعیت فعلی: {product['stock_status']}"
+        ),
+        builder.as_markup(),
+    )
+
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("stockset:"))
+async def handle_product_stock_set(
+    callback: CallbackQuery,
+) -> None:
+    parts = callback.data.split(":")
+
+    if len(parts) != 3:
+        await callback.answer(
+            "⚠️ اطلاعات نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    product_id = parse_int(parts[1])
+    stock_status = parts[2]
+
+    if (
+        product_id is None
+        or product_id < 1
+        or stock_status not in (
+            "AVAILABLE",
+            "OUT_OF_STOCK",
+        )
+    ):
+        await callback.answer(
+            "⚠️ وضعیت نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    user_id = await ensure_user(callback.from_user)
+
+    product = await get_product_by_id(product_id)
+
+    if not product:
+        await callback.answer(
+            "⚠️ محصول پیدا نشد.",
+            show_alert=True,
+        )
+        return
+
+    seller = await _check_seller_ownership(
+        user_id,
+        product["seller_id"],
+    )
+
+    if not seller:
+        await callback.answer(
+            "⚠️ دسترسی مجاز نیست.",
+            show_alert=True,
+        )
+        return
+
+    await db.execute(
+        """
+        UPDATE products
+        SET stock_status = ?,
+            updated_at = ?
+        WHERE id = ?;
+        """,
+        (
+            stock_status,
+            now_iso(),
+            product_id,
+        ),
+    )
+
+    await log_audit(
+        user_id,
+        "product_stock_updated",
+        "product",
+        product_id,
+    )
+
+    await handle_product_edit_menu(
+        callback,
+        answer_text="وضعیت موجودی تغییر کرد ✅",
     )
 
 
@@ -2515,8 +2926,8 @@ async def handle_product_stock_set(
 async def handle_product_delete_confirm_screen(
     callback: CallbackQuery,
 ) -> None:
-    product_id = parse_int(
-        callback.data.split(":")[1]
+    product_id = _parse_positive_callback_id(
+        callback.data
     )
 
     if product_id is None:
@@ -2582,12 +2993,15 @@ async def handle_product_delete_confirm_screen(
 async def handle_product_delete_cancel(
     callback: CallbackQuery,
 ) -> None:
-    product_id = parse_int(
-        callback.data.split(":")[1]
+    product_id = _parse_positive_callback_id(
+        callback.data
     )
 
     if product_id is None:
-        await callback.answer()
+        await callback.answer(
+            "⚠️ شناسه نامعتبر است.",
+            show_alert=True,
+        )
         return
 
     await handle_product_edit_menu(
@@ -2599,8 +3013,8 @@ async def handle_product_delete_cancel(
 async def handle_product_delete_confirmed(
     callback: CallbackQuery,
 ) -> None:
-    product_id = parse_int(
-        callback.data.split(":")[1]
+    product_id = _parse_positive_callback_id(
+        callback.data
     )
 
     if product_id is None:
@@ -2642,14 +3056,10 @@ async def handle_product_delete_confirmed(
         product_id,
     )
 
-    await callback.answer(
-        "محصول حذف شد 🗑️",
-        show_alert=True,
-    )
-
     await _render_product_list(
         callback,
         product["seller_id"],
+        answer_text="محصول حذف شد 🗑️",
     )
 
 
@@ -2662,8 +3072,8 @@ async def handle_product_delete_confirmed(
 async def handle_my_stats(
     callback: CallbackQuery,
 ) -> None:
-    seller_id = parse_int(
-        callback.data.split(":")[1]
+    seller_id = _parse_positive_callback_id(
+        callback.data
     )
 
     if seller_id is None:
@@ -2697,8 +3107,8 @@ async def handle_my_stats(
 async def handle_stats_home_picked(
     callback: CallbackQuery,
 ) -> None:
-    seller_id = parse_int(
-        callback.data.split(":")[1]
+    seller_id = _parse_positive_callback_id(
+        callback.data
     )
 
     if seller_id is None:
@@ -2786,8 +3196,8 @@ async def _render_stats_home(
 async def handle_stats_product(
     callback: CallbackQuery,
 ) -> None:
-    product_id = parse_int(
-        callback.data.split(":")[1]
+    product_id = _parse_positive_callback_id(
+        callback.data
     )
 
     if product_id is None:
@@ -2959,8 +3369,8 @@ async def handle_pick_city(
     callback: CallbackQuery,
     state: FSMContext,
 ) -> None:
-    city_id = parse_int(
-        callback.data.split(":")[1]
+    city_id = _parse_positive_callback_id(
+        callback.data
     )
 
     if city_id is None:
@@ -3102,7 +3512,16 @@ async def handle_register_skip(
     callback: CallbackQuery,
     state: FSMContext,
 ) -> None:
-    field = callback.data.split(":")[1]
+    parts = callback.data.split(":", 1)
+
+    if len(parts) != 2:
+        await callback.answer(
+            "⚠️ گزینه نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    field = parts[1]
 
     if field == "instagram":
         await state.update_data(
