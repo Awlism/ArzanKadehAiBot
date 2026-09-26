@@ -52,6 +52,7 @@ async def handle_compare_legacy_redirect(
 async def handle_compare_list(
     callback: CallbackQuery,
     state: FSMContext,
+    answer_text: str | None = None,
 ) -> None:
     await state.clear()
 
@@ -74,7 +75,9 @@ async def handle_compare_list(
             builder.as_markup(),
         )
 
-        await callback.answer()
+        await callback.answer(
+            answer_text or ""
+        )
         return
 
     selection = get_compare_selection(
@@ -99,7 +102,9 @@ async def handle_compare_list(
             builder.as_markup(),
         )
 
-        await callback.answer()
+        await callback.answer(
+            answer_text or ""
+        )
         return
 
     products = []
@@ -152,7 +157,9 @@ async def handle_compare_list(
             builder.as_markup(),
         )
 
-        await callback.answer()
+        await callback.answer(
+            answer_text or ""
+        )
         return
 
     if len(products) < COMPARE_MAX_ITEMS:
@@ -198,7 +205,9 @@ async def handle_compare_list(
             builder.as_markup(),
         )
 
-        await callback.answer()
+        await callback.answer(
+            answer_text or ""
+        )
         return
 
     builder = InlineKeyboardBuilder()
@@ -259,7 +268,9 @@ async def handle_compare_list(
         builder.as_markup(),
     )
 
-    await callback.answer()
+    await callback.answer(
+        answer_text or ""
+    )
 
 
 @router.callback_query(
@@ -303,16 +314,13 @@ async def handle_compare_start(
         callback.from_user
     )
 
-    if not await has_seen_compare_intro(
+    first_compare = not await has_seen_compare_intro(
         user_id
-    ):
+    )
+
+    if first_compare:
         await mark_compare_intro_seen(
             user_id
-        )
-
-        await callback.answer(
-            COMPARE_INTRO_TEXT,
-            show_alert=True,
         )
 
     selection = get_compare_selection(
@@ -411,11 +419,10 @@ async def handle_compare_drop(
             selection,
         )
 
-    await callback.answer()
-
     await handle_compare_list(
         callback,
         state,
+        answer_text="حذف شد.",
     )
 
 
@@ -434,11 +441,8 @@ async def handle_compare_reset(
         user_id
     )
 
-    await callback.answer(
-        "مقایسه پاک شد."
-    )
-
     await handle_compare_list(
         callback,
         state,
+        answer_text="مقایسه پاک شد.",
     )
