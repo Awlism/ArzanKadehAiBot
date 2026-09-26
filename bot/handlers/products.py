@@ -90,11 +90,14 @@ async def handle_product_detail(
 async def _render_product_detail(
     callback: CallbackQuery,
 ) -> None:
-    product_id = parse_int(
-        callback.data.split(":")[1]
+    parts = callback.data.split(":", 1)
+    product_id = (
+        parse_int(parts[1])
+        if len(parts) > 1
+        else None
     )
 
-    if product_id is None:
+    if product_id is None or product_id < 1:
         await callback.answer(
             "⚠️ شناسه نامعتبر است.",
             show_alert=True,
@@ -259,11 +262,14 @@ async def _render_product_detail(
 async def handle_favorite_add(
     callback: CallbackQuery,
 ) -> None:
-    product_id = parse_int(
-        callback.data.split(":")[1]
+    parts = callback.data.split(":", 1)
+    product_id = (
+        parse_int(parts[1])
+        if len(parts) > 1
+        else None
     )
 
-    if product_id is None:
+    if product_id is None or product_id < 1:
         await callback.answer(
             "⚠️ شناسه نامعتبر است.",
             show_alert=True,
@@ -332,11 +338,14 @@ async def handle_favorite_add(
 async def handle_favorite_remove(
     callback: CallbackQuery,
 ) -> None:
-    product_id = parse_int(
-        callback.data.split(":")[1]
+    parts = callback.data.split(":", 1)
+    product_id = (
+        parse_int(parts[1])
+        if len(parts) > 1
+        else None
     )
 
-    if product_id is None:
+    if product_id is None or product_id < 1:
         await callback.answer(
             "⚠️ شناسه نامعتبر است.",
             show_alert=True,
@@ -373,12 +382,19 @@ async def handle_favorites_list(
 ) -> None:
     await state.clear()
 
+    parts = callback.data.split(":", 1)
     page = (
-        parse_int(
-            callback.data.split(":")[1]
-        )
-        or 0
+        parse_int(parts[1])
+        if len(parts) > 1
+        else 0
     )
+
+    if page is None or page < 0:
+        await callback.answer(
+            "⚠️ صفحه نامعتبر است.",
+            show_alert=True,
+        )
+        return
 
     user_id = await ensure_user(
         callback.from_user
@@ -489,6 +505,7 @@ async def handle_review_start(
 
     if (
         target_id is None
+        or target_id < 1
         or target_type not in ("seller", "product")
     ):
         await callback.answer(
@@ -568,8 +585,11 @@ async def handle_review_rate(
     callback: CallbackQuery,
     state: FSMContext,
 ) -> None:
-    rating = parse_int(
-        callback.data.split(":")[1]
+    parts = callback.data.split(":", 1)
+    rating = (
+        parse_int(parts[1])
+        if len(parts) > 1
+        else None
     )
 
     if rating is None or not 1 <= rating <= 5:
@@ -819,6 +839,7 @@ async def handle_report_start(
 
     if (
         target_id is None
+        or target_id < 1
         or target_type not in ("seller", "product")
     ):
         await callback.answer(
@@ -940,6 +961,7 @@ async def handle_report_reason(
 
     if (
         target_id is None
+        or target_id < 1
         or target_type not in ("seller", "product")
         or reason_code not in REPORT_REASONS
     ):
@@ -1251,6 +1273,7 @@ async def handle_admin_report_decision(
 
     if (
         report_id is None
+        or report_id < 1
         or action not in ("approve", "reject")
     ):
         await callback.answer(
@@ -1271,13 +1294,18 @@ async def handle_admin_report_decision(
         return
 
     report = await db.fetchone(
-        "SELECT * FROM reports WHERE id = ?;",
+        """
+        SELECT *
+        FROM reports
+        WHERE id = ?
+          AND status = 'PENDING';
+        """,
         (report_id,),
     )
 
     if not report:
         await callback.answer(
-            "⚠️ این گزارش یافت نشد.",
+            "⚠️ این گزارش وجود ندارد یا قبلاً تعیین تکلیف شده است.",
             show_alert=True,
         )
         return
@@ -1292,7 +1320,8 @@ async def handle_admin_report_decision(
         """
         UPDATE reports
         SET status = ?
-        WHERE id = ?;
+        WHERE id = ?
+          AND status = 'PENDING';
         """,
         (
             new_status,
