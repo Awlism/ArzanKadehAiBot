@@ -1031,7 +1031,7 @@ async def _fuzzy_keyword_search(
         "ON s.id = p.seller_id "
         "LEFT JOIN categories c "
         "ON c.id = p.category_id "
-        f"WHERE {where_clause} "
+        f"WHERE COALESCE(s.is_active, 1) = 1 AND ({where_clause}) "
         "LIMIT ?;",
         params,
     )
@@ -1357,7 +1357,7 @@ async def search_sellers(
         "FROM sellers s "
         "LEFT JOIN cities c "
         "ON c.id = s.city_id "
-        f"WHERE {where_clause} "
+        f"WHERE COALESCE(s.is_active, 1) = 1 AND ({where_clause}) "
         "LIMIT ?;",
         params,
     )
@@ -1695,7 +1695,7 @@ class SearchEngine:
             "ON s.id = p.seller_id "
             "LEFT JOIN categories c "
             "ON c.id = p.category_id "
-            f"WHERE {where_clause} "
+            f"WHERE COALESCE(s.is_active, 1) = 1 AND ({where_clause}) "
             "LIMIT ?;"
         )
 
