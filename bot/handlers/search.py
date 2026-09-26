@@ -5,6 +5,7 @@ Local search engine and search handlers
 """
 
 import re
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -934,6 +935,50 @@ async def handle_search_start(
     await callback.answer()
 
 
+def _cleanup_search_cache(
+    now: Optional[float] = None,
+) -> None:
+    if now is None:
+        now = time.monotonic()
+
+    expired_users = [
+        user_id
+        for user_id, entry in _search_result_cache.items()
+        if now - entry["created_at"] > SEARCH_CACHE_TTL_SECONDS
+    ]
+
+    for user_id in expired_users:
+        _search_result_cache.pop(
+            user_id,
+            None,
+        )
+
+    if len(_search_result_cache) <= SEARCH_CACHE_MAX_USERS:
+        return
+
+    overflow = (
+        len(_search_result_cache)
+        - SEARCH_CACHE_MAX_USERS
+    )
+
+    oldest_users = sorted(
+        _search_result_cache.items(),
+        key=lambda item: item[1]["created_at"],
+    )[:overflow]
+
+    for user_id, _entry in oldest_users:
+        _search_result_cache.pop(
+            user_id,
+            None,
+        )
+
+
+SEARCH_CACHE_TTL_SECONDS = 15 * 60
+SEARCH_CACHE_MAX_USERS = 1000
+
+_search_result_cache: dict[int, dict] = {}
+
+
 async def _render_search_results(
     target,
     header: str,
@@ -1010,9 +1055,6 @@ async def _render_no_results(
     )
 
 
-_search_result_cache: dict = {}
-
-
 @router.message(
     StateFilter(SearchStates.waiting_query)
 )
@@ -1078,10 +1120,21 @@ async def handle_search_query(
             f"«{query}»:"
         )
 
+    now = time.monotonic()
+
+    _cleanup_search_cache(
+        now
+    )
+
     _search_result_cache[user_id] = {
         "header": header,
         "products": products,
+        "created_at": now,
     }
+
+    _cleanup_search_cache(
+        now
+    )
 
     await _render_search_results(
         message,
@@ -1104,15 +1157,21 @@ async def handle_search_page(
         callback.data.split(":")[1]
     )
 
-    if page is None:
+    if page is None or page < 0:
         await callback.answer(
-            "⚠️ درخواست نامعتبر است.",
+            "⚠️ صفحه نامعتبر است.",
             show_alert=True,
         )
         return
 
     user_id = await ensure_user(
         callback.from_user
+    )
+
+    now = time.monotonic()
+
+    _cleanup_search_cache(
+        now
     )
 
     cached = _search_result_cache.get(
@@ -1123,6 +1182,26 @@ async def handle_search_page(
         await callback.answer(
             "⚠️ نتایج جستجو منقضی شده. "
             "دوباره جستجو کن.",
+            show_alert=True,
+        )
+        return
+
+    if now - cached["created_at"] > SEARCH_CACHE_TTL_SECONDS:
+        _search_result_cache.pop(
+            user_id,
+            None,
+        )
+
+        await callback.answer(
+            "⚠️ نتایج جستجو منقضی شده. "
+            "دوباره جستجو کن.",
+            show_alert=True,
+        )
+        return
+
+    if page * PAGE_SIZE_LIST >= len(cached["products"]):
+        await callback.answer(
+            "⚠️ این صفحه وجود ندارد.",
             show_alert=True,
         )
         return
