@@ -125,13 +125,19 @@ async def handle_notification_read(
         )
         return
 
+    user_id = await ensure_user(callback.from_user)
+
     await db.execute(
         """
         UPDATE notifications
         SET is_read = 1
-        WHERE id = ?;
+        WHERE id = ?
+          AND user_id = ?;
         """,
-        (notif_id,),
+        (
+            notif_id,
+            user_id,
+        ),
     )
 
     await callback.answer(
