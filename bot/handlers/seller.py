@@ -2247,6 +2247,7 @@ async def _finish_product_add(
 @router.callback_query(F.data.startswith("productedit:"))
 async def handle_product_edit_menu(
     callback: CallbackQuery,
+    answer_text: str | None = None,
 ) -> None:
     product_id = _parse_positive_callback_id(
         callback.data
@@ -2254,6 +2255,80 @@ async def handle_product_edit_menu(
 
     if product_id is None:
         await callback.answer(
+            "⚠️ شناسه نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    user_id = await ensure_user(callback.from_user)
+
+    product = await get_product_by_id(product_id)
+
+    if not product:
+        await callback.answer(
+            "⚠️ محصول پیدا نشد.",
+            show_alert=True,
+        )
+        return
+
+    seller = await _check_seller_ownership(
+        user_id,
+        product["seller_id"],
+    )
+
+    if not seller:
+        await callback.answer(
+            "⚠️ دسترسی مجاز نیست.",
+            show_alert=True,
+        )
+        return
+
+    builder = InlineKeyboardBuilder()
+
+    for field, title in PRODUCT_EDITABLE_FIELDS.items():
+        builder.row(
+            InlineKeyboardButton(
+                text=f"✏️ {title}",
+                callback_data=f"productfield:{product_id}:{field}",
+            )
+        )
+
+    builder.row(
+        InlineKeyboardButton(
+            text="📦 وضعیت موجودی",
+            callback_data=f"productstock:{product_id}",
+        )
+    )
+
+    builder.row(
+        InlineKeyboardButton(
+            text="🗑 حذف محصول",
+            callback_data=f"productdelete:{product_id}",
+        )
+    )
+
+    kb_add_back(
+        builder,
+        f"products:{product['seller_id']}",
+    )
+
+    await safe_edit(
+        callback,
+        (
+            f"📦 <b>{product['name']}</b>\n\n"
+            f"قیمت: {format_price(product['price'])}\n"
+            f"وضعیت: {product['stock_status']}"
+        ),
+        builder.as_markup(),
+    )
+
+    if answer_text:
+        await callback.answer(
+            answer_text,
+            show_alert=True,
+        )
+    else:
+        await callback.answer()
             "⚠️ شناسه نامعتبر است.",
             show_alert=True,
         )
