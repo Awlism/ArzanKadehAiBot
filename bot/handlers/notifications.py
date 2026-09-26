@@ -32,8 +32,11 @@ async def handle_notifications(
 
 async def _render_notifications(
     callback: CallbackQuery,
+    answer_text: str | None = None,
 ) -> None:
-    user_id = await ensure_user(callback.from_user)
+    user_id = await ensure_user(
+        callback.from_user
+    )
 
     rows = await db.fetchall(
         """
@@ -60,7 +63,11 @@ async def _render_notifications(
             builder.as_markup(),
         )
 
-        await callback.answer()
+        if answer_text:
+            await callback.answer(answer_text)
+        else:
+            await callback.answer()
+
         return
 
     builder = InlineKeyboardBuilder()
@@ -105,7 +112,10 @@ async def _render_notifications(
         builder.as_markup(),
     )
 
-    await callback.answer()
+    if answer_text:
+        await callback.answer(answer_text)
+    else:
+        await callback.answer()
 
 
 @router.callback_query(
@@ -125,7 +135,9 @@ async def handle_notification_read(
         )
         return
 
-    user_id = await ensure_user(callback.from_user)
+    user_id = await ensure_user(
+        callback.from_user
+    )
 
     await db.execute(
         """
@@ -140,8 +152,7 @@ async def handle_notification_read(
         ),
     )
 
-    await callback.answer(
-        "علامت خوانده شد ✅"
+    await _render_notifications(
+        callback,
+        answer_text="علامت خوانده شد ✅",
     )
-
-    await _render_notifications(callback)
