@@ -893,6 +893,103 @@ COMPARE_INTRO_TEXT = (
 )
 
 
+_compare_sessions: dict[int, list[int]] = {}
+
+
+def get_compare_selection(
+    user_id: int,
+) -> list[int]:
+    return list(
+        _compare_sessions.get(
+            user_id,
+            [],
+        )
+    )
+
+
+def set_compare_selection(
+    user_id: int,
+    selection: list[int],
+) -> None:
+    normalized: list[int] = []
+
+    for product_id in selection:
+        if product_id in normalized:
+            continue
+
+        normalized.append(product_id)
+
+        if len(normalized) >= COMPARE_MAX_ITEMS:
+            break
+
+    if normalized:
+        _compare_sessions[user_id] = normalized
+    else:
+        _compare_sessions.pop(
+            user_id,
+            None,
+        )
+
+
+def clear_compare_selection(
+    user_id: int,
+) -> None:
+    _compare_sessions.pop(
+        user_id,
+        None,
+    )
+
+
+def compare_add(
+    selection: list[int],
+    product_id: int,
+) -> tuple[list[int], str]:
+    current = list(selection)
+
+    if product_id in current:
+        return current, "already_in_selection"
+
+    if len(current) >= COMPARE_MAX_ITEMS:
+        return current, "already_full"
+
+    current.append(product_id)
+
+    if len(current) >= COMPARE_MAX_ITEMS:
+        return current, "added_ready"
+
+    return current, "added_need_one_more"
+
+
+async def has_seen_compare_intro(
+    user_id: int,
+) -> bool:
+    row = await db.fetchone(
+        """
+        SELECT has_seen_compare_intro
+        FROM users
+        WHERE id = ?;
+        """,
+        (user_id,),
+    )
+
+    return bool(
+        row and row["has_seen_compare_intro"]
+    )
+
+
+async def mark_compare_intro_seen(
+    user_id: int,
+) -> None:
+    await db.execute(
+        """
+        UPDATE users
+        SET has_seen_compare_intro = 1
+        WHERE id = ?;
+        """,
+        (user_id,),
+    )
+
+
 async def get_compare_products(
     product_ids: list[int],
 ) -> list[dict[str, Any]]:
