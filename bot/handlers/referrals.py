@@ -96,7 +96,7 @@ async def handle_referral_stats(
 
     seller_id = parse_int(parts[1])
 
-    if seller_id is None:
+    if seller_id is None or seller_id < 1:
         await callback.answer(
             "⚠️ شناسه نامعتبر است.",
             show_alert=True,
