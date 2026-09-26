@@ -67,6 +67,18 @@ EXPECTED_MAIN_CATEGORIES = [
 ]
 
 
+EXPECTED_INDEXES = {
+    "idx_users_telegram_id",
+    "idx_products_seller_id",
+    "idx_products_category_id",
+    "idx_favorites_user_id",
+    "idx_favorites_product_id",
+    "idx_sellers_city_id",
+    "idx_reviews_product_id",
+    "idx_orders_product_id",
+}
+
+
 class SchemaAndSeedTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -89,7 +101,11 @@ class SchemaAndSeedTests(unittest.TestCase):
         conn = self._new_conn()
 
         rows = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table';"
+            """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table';
+            """
         ).fetchall()
 
         table_names = {row[0] for row in rows}
@@ -102,7 +118,7 @@ class SchemaAndSeedTests(unittest.TestCase):
 
         conn.close()
 
-    def test_indexes_are_created_without_error(self):
+    def test_required_indexes_are_created(self):
         conn = self._new_conn()
 
         rows = conn.execute(
@@ -114,9 +130,12 @@ class SchemaAndSeedTests(unittest.TestCase):
             """
         ).fetchall()
 
-        self.assertGreaterEqual(
-            len(rows),
-            8,
+        index_names = {row[0] for row in rows}
+        missing = EXPECTED_INDEXES - index_names
+
+        self.assertFalse(
+            missing,
+            f"Missing indexes: {missing}",
         )
 
         conn.close()
@@ -147,11 +166,46 @@ class SchemaAndSeedTests(unittest.TestCase):
 
         conn.close()
 
-    def test_ids_are_integer_autoincrement_primary_keys(self):
+    def test_core_entity_tables_have_integer_autoincrement_ids(self):
+        entity_tables = {
+            "users",
+            "cities",
+            "categories",
+            "sellers",
+            "products",
+            "seller_claims",
+            "reviews",
+            "reports",
+            "events",
+            "notifications",
+            "referrals",
+            "referral_rewards",
+            "requests",
+            "audit_log",
+            "orders",
+        }
+
         for stmt in self.ns["SCHEMA_STATEMENTS"]:
+            normalized = " ".join(stmt.split()).lower()
+
+            if "create table" not in normalized:
+                continue
+
+            table_name = None
+
+            for name in entity_tables:
+                marker = f"create table if not exists {name}"
+                if marker in normalized:
+                    table_name = name
+                    break
+
+            if table_name is None:
+                continue
+
             self.assertIn(
-                "id INTEGER PRIMARY KEY AUTOINCREMENT",
-                stmt,
+                "id integer primary key autoincrement",
+                normalized,
+                f"{table_name} must use an integer autoincrement primary key",
             )
 
     def test_city_seed_count(self):
@@ -159,6 +213,7 @@ class SchemaAndSeedTests(unittest.TestCase):
             len(self.ns["CITY_NAMES"]),
             25,
         )
+
         self.assertIn(
             "تهران",
             self.ns["CITY_NAMES"],
@@ -610,6 +665,7 @@ class SchemaAndSeedTests(unittest.TestCase):
             rating,
             3.0,
         )
+
         self.assertEqual(
             count,
             2,
@@ -621,6 +677,7 @@ class SchemaAndSeedTests(unittest.TestCase):
         self.assertTrue(
             self.ns["DEMO_SELLER_NAME"].startswith("DEMO -")
         )
+
         self.assertTrue(
             self.ns["DEMO_PRODUCT_NAME"].startswith("DEMO -")
         )
