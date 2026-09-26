@@ -392,6 +392,53 @@ async def run_column_migrations() -> None:
     await db.conn.commit()
 
 
+async def run_seller_claim_migration() -> None:
+    """
+    Make seller claims unique per seller/user pair.
+
+    Existing databases may already contain duplicate claims because
+    older versions did not enforce this constraint. Before creating the
+    unique index, keep only the newest row (highest id) for each
+    seller_id/user_id pair.
+    """
+
+    duplicate_rows = await db.fetchall(
+        """
+        SELECT seller_id, user_id, COUNT(*) AS claim_count
+        FROM seller_claims
+        GROUP BY seller_id, user_id
+        HAVING COUNT(*) > 1;
+        """
+    )
+
+    if duplicate_rows:
+        await db.conn.execute(
+            """
+            DELETE FROM seller_claims
+            WHERE id NOT IN (
+                SELECT MAX(id)
+                FROM seller_claims
+                GROUP BY seller_id, user_id
+            );
+            """
+        )
+
+        logger.warning(
+            "Deduplicated %d seller claim groups.",
+            len(duplicate_rows),
+        )
+
+    await db.conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS
+            idx_claims_seller_user_unique
+        ON seller_claims(seller_id, user_id);
+        """
+    )
+
+    await db.conn.commit()
+
+
 INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_categories_parent ON categories(parent_id);",
     "CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id);",
@@ -421,12 +468,15 @@ async def init_schema() -> None:
     for stmt in SCHEMA_STATEMENTS:
         await db.conn.execute(stmt)
 
+    await db.conn.commit()
+
+    await run_column_migrations()
+    await run_seller_claim_migration()
+
     for stmt in INDEX_STATEMENTS:
         await db.conn.execute(stmt)
 
     await db.conn.commit()
-
-    await run_column_migrations()
 
 
 CITY_NAMES = [
