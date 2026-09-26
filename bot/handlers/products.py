@@ -29,6 +29,7 @@ from ..constants import (
 from ..database import db
 from ..keyboards import kb_add_back, kb_pagination_row
 from ..repositories import has_open_report
+from ..services.notifications import notify_user
 from ..states import ReportStates, ReviewStates
 from ..utils import (
     ensure_user,
@@ -36,7 +37,6 @@ from ..utils import (
     is_admin_telegram_id,
     log_audit,
     log_event,
-    notify_user,
     now_iso,
     parse_int,
     restart_requested,
