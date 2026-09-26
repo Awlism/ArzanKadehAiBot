@@ -39,17 +39,13 @@ MODULE_PATHS = {
     "favorites": PROJECT_ROOT / "bot" / "handlers" / "favorites.py",
     "compare": PROJECT_ROOT / "bot" / "handlers" / "compare.py",
     "orders": PROJECT_ROOT / "bot" / "handlers" / "orders.py",
-    "notifications": (
-        PROJECT_ROOT
-        / "bot"
-        / "services"
-        / "notifications.py"
-    ),
+    "notifications": PROJECT_ROOT / "bot" / "services" / "notifications.py",
+    "referrals": PROJECT_ROOT / "bot" / "services" / "referrals.py",
+    "admin": PROJECT_ROOT / "bot" / "handlers" / "admin.py",
+    "account": PROJECT_ROOT / "bot" / "handlers" / "account.py",
 }
 
 
-# Names that belong to the standard library and are safe to expose to
-# extracted functions/classes.
 SAFE_GLOBALS = {
     "datetime": datetime.datetime,
     "timezone": timezone,
@@ -62,14 +58,10 @@ SAFE_GLOBALS = {
 }
 
 
-# Explicit cross-module ownership for names that are commonly referenced
-# by functions/classes in the modular source tree.
-#
-# This is deliberately explicit instead of importing the application
-# modules themselves. That keeps these tests independent from aiogram,
-# aiosqlite and runtime Telegram objects.
 NAME_MODULES = {
-    # Shared constants
+    # ------------------------------------------------------------------
+    # constants
+    # ------------------------------------------------------------------
     "ROLE_BUYER": "constants",
     "ROLE_SELLER": "constants",
     "ROLE_ADMIN": "constants",
@@ -127,7 +119,9 @@ NAME_MODULES = {
     "_UNSAFE_URL_CHARS": "constants",
     "_DANGEROUS_URL_SCHEME_PREFIXES": "constants",
 
-    # Database
+    # ------------------------------------------------------------------
+    # database
+    # ------------------------------------------------------------------
     "Database": "database",
     "db": "database",
     "SCHEMA_STATEMENTS": "database",
@@ -140,18 +134,24 @@ NAME_MODULES = {
     "ensure_column": "database",
     "run_column_migrations": "database",
 
-    # Repository layer
+    # ------------------------------------------------------------------
+    # repositories
+    # ------------------------------------------------------------------
     "ORDER_STATUSES": "repositories",
 
-    # Local search
+    # ------------------------------------------------------------------
+    # search
+    # ------------------------------------------------------------------
     "StructuredQuery": "search",
     "QueryParser": "search",
     "LocalQueryParser": "search",
+    "SearchEngine": "search",
     "normalize_persian_text": "search",
     "build_search_summary": "search",
     "_extract_price": "search",
     "_convert_number_unit": "search",
     "_remove_stopwords": "search",
+    "plain_keyword_search": "search",
     "ALT_CITY_SPELLINGS": "search",
     "CATEGORY_SYNONYMS": "search",
     "REFERRAL_DEEP_LINK_RE": "search",
@@ -175,7 +175,9 @@ NAME_MODULES = {
     "_PRICE_MAX_RE": "search",
     "_PRICE_MIN_RE": "search",
 
-    # Utilities
+    # ------------------------------------------------------------------
+    # utils
+    # ------------------------------------------------------------------
     "now_iso": "utils",
     "parse_int": "utils",
     "format_price": "utils",
@@ -192,6 +194,17 @@ NAME_MODULES = {
     "is_admin_telegram_id": "utils",
     "send_admin_dm": "utils",
     "restart_requested": "utils",
+
+    # ------------------------------------------------------------------
+    # notifications
+    # ------------------------------------------------------------------
+    "notify_user": "notifications",
+
+    # ------------------------------------------------------------------
+    # referrals
+    # ------------------------------------------------------------------
+    "get_referral_count": "referrals",
+    "get_sellers_owned_by_user": "referrals",
 }
 
 
@@ -199,26 +212,20 @@ def _parse_module(module_name: str) -> ast.Module:
     path = MODULE_PATHS.get(module_name)
 
     if path is None:
-        raise AssertionError(
-            f"Unknown source module: {module_name}"
-        )
+        raise AssertionError(f"Unknown source module: {module_name}")
 
     if not path.exists():
-        raise AssertionError(
-            f"Source module does not exist: {path}"
-        )
-
-    source = path.read_text(encoding="utf-8")
+        raise AssertionError(f"Source module does not exist: {path}")
 
     return ast.parse(
-        source,
+        path.read_text(encoding="utf-8"),
         filename=str(path),
     )
 
 
 def _top_level_nodes(module_name: str) -> dict[str, ast.AST]:
     tree = _parse_module(module_name)
-    result = {}
+    result: dict[str, ast.AST] = {}
 
     for node in tree.body:
         if isinstance(node, ast.Assign):
@@ -258,43 +265,59 @@ def _find_owner(name: str) -> str | None:
 
 def _module_imports(module_name: str) -> dict[str, tuple[str, str]]:
     """
-    Return local imported-name -> (module_name, original_name).
-
-    Only project-local imports are resolved here. External runtime imports
-    such as aiogram are intentionally ignored.
+    Resolve project-local imports used by extracted nodes.
     """
     tree = _parse_module(module_name)
-    result = {}
+    result: dict[str, tuple[str, str]] = {}
 
     for node in tree.body:
-        if isinstance(node, ast.ImportFrom):
-            module = node.module or ""
+        if not isinstance(node, ast.ImportFrom):
+            continue
 
-            if "constants" in module:
-                source_module = "constants"
-            elif "database" in module:
-                source_module = "database"
-            elif "repositories" in module:
-                source_module = "repositories"
-            elif module.endswith(".utils") or module == "utils":
-                source_module = "utils"
-            elif module.endswith(".search") or module == "search":
-                source_module = "search"
-            elif module.endswith(".notifications"):
-                source_module = "notifications"
-            else:
+        module = node.module or ""
+
+        if "constants" in module:
+            source_module = "constants"
+        elif "database" in module:
+            source_module = "database"
+        elif "repositories" in module:
+            source_module = "repositories"
+        elif module.endswith(".utils") or module == "utils":
+            source_module = "utils"
+        elif module.endswith(".search") or module == "search":
+            source_module = "search"
+        elif module.endswith(".notifications"):
+            source_module = "notifications"
+        elif module.endswith(".referrals"):
+            source_module = "referrals"
+        elif module.endswith(".admin"):
+            source_module = "admin"
+        elif module.endswith(".account"):
+            source_module = "account"
+        elif module.endswith(".navigation"):
+            source_module = "navigation"
+        elif module.endswith(".products"):
+            source_module = "products"
+        elif module.endswith(".sellers"):
+            source_module = "sellers"
+        elif module.endswith(".favorites"):
+            source_module = "favorites"
+        elif module.endswith(".compare"):
+            source_module = "compare"
+        elif module.endswith(".orders"):
+            source_module = "orders"
+        else:
+            continue
+
+        for alias in node.names:
+            if alias.name == "*":
                 continue
 
-            for alias in node.names:
-                if alias.name == "*":
-                    continue
-
-                local_name = alias.asname or alias.name
-
-                result[local_name] = (
-                    source_module,
-                    alias.name,
-                )
+            local_name = alias.asname or alias.name
+            result[local_name] = (
+                source_module,
+                alias.name,
+            )
 
     return result
 
@@ -317,10 +340,7 @@ def _compile_node(
         mode="exec",
     )
 
-    exec(
-        code,
-        namespace,
-    )
+    exec(code, namespace)
 
 
 def _extract_from_module(
@@ -344,7 +364,6 @@ def _extract_from_module(
 
     imports = _module_imports(module_name)
 
-    # Resolve project-local imports required by the selected node.
     referenced_names = {
         child.id
         for child in ast.walk(node)
@@ -354,13 +373,10 @@ def _extract_from_module(
     for referenced_name in referenced_names:
         imported = imports.get(referenced_name)
 
-        if imported is None:
+        if imported is None or referenced_name in namespace:
             continue
 
         source_module, source_name = imported
-
-        if referenced_name in namespace:
-            continue
 
         _extract_from_module(
             source_module,
@@ -384,28 +400,11 @@ def _extract_from_module(
 def extract_names(names) -> dict:
     """
     Extract selected names from the modular project.
-
-    Example:
-
-        ns = extract_names(
-            [
-                "PAGE_SIZE_LIST",
-                "website_url",
-                "LocalQueryParser",
-            ]
-        )
-
-    The returned namespace contains the requested names plus the safe
-    standard-library globals required by the extracted code.
-
-    The helper intentionally does not import the Telegram application.
     """
 
     wanted = list(dict.fromkeys(names))
-
     namespace = dict(SAFE_GLOBALS)
 
-    # Compatibility aliases used by older tests.
     namespace.setdefault("datetime", datetime.datetime)
 
     missing = []
@@ -440,16 +439,12 @@ def extract_names(names) -> dict:
 def get_source_text(module_name: str = "utils") -> str:
     """
     Return source text for a real modular source file.
-
-    Kept as a small compatibility helper for static/source-oriented tests.
     """
 
     path = MODULE_PATHS.get(module_name)
 
     if path is None:
-        raise AssertionError(
-            f"Unknown source module: {module_name}"
-        )
+        raise AssertionError(f"Unknown source module: {module_name}")
 
     return path.read_text(encoding="utf-8")
 
@@ -462,8 +457,6 @@ def get_module_path(module_name: str) -> Path:
     path = MODULE_PATHS.get(module_name)
 
     if path is None:
-        raise AssertionError(
-            f"Unknown source module: {module_name}"
-        )
+        raise AssertionError(f"Unknown source module: {module_name}")
 
     return path
