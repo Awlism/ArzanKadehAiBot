@@ -746,6 +746,10 @@ async def handle_admin_ad_set_price_value(
     if await restart_requested(message, state):
         return
 
+    if not is_admin_telegram_id(message.from_user.id):
+        await state.clear()
+        return
+
     data = await state.get_data()
 
     request_id = data.get(
@@ -850,6 +854,10 @@ async def handle_admin_ad_set_duration_value(
     state: FSMContext,
 ) -> None:
     if await restart_requested(message, state):
+        return
+
+    if not is_admin_telegram_id(message.from_user.id):
+        await state.clear()
         return
 
     data = await state.get_data()
@@ -993,6 +1001,10 @@ async def handle_admin_ad_set_placement_value(
     state: FSMContext,
 ) -> None:
     if await restart_requested(message, state):
+        return
+
+    if not is_admin_telegram_id(message.from_user.id):
+        await state.clear()
         return
 
     data = await state.get_data()
