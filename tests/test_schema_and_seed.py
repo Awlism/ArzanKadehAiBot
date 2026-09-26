@@ -75,7 +75,7 @@ EXPECTED_INDEXES = {
     "idx_favorites_product_id",
     "idx_sellers_city_id",
     "idx_reviews_product_id",
-    "idx_orders_product_id",
+    "idx_orders_product",
 }
 
 
