@@ -43,7 +43,12 @@ async def handle_category(callback: CallbackQuery, state) -> None:
     cat_id = parse_int(parts[1]) if len(parts) > 1 else None
     page = parse_int(parts[2]) if len(parts) > 2 else 0
 
-    if cat_id is None or page is None:
+    if (
+        cat_id is None
+        or page is None
+        or cat_id < 0
+        or page < 0
+    ):
         await callback.answer(
             "⚠️ درخواست نامعتبر است.",
             show_alert=True,
@@ -298,6 +303,21 @@ async def handle_near_me(
         "SELECT name FROM cities WHERE id = ?;",
         (user["city_id"],),
     )
+
+    if not city:
+        builder = InlineKeyboardBuilder()
+        kb_add_back(
+            builder,
+            "main",
+        )
+
+        await safe_edit(
+            callback,
+            "⚠️ شهر انتخاب‌شده دیگر معتبر نیست. لطفاً دوباره شهر خودت رو انتخاب کن.",
+            builder.as_markup(),
+        )
+        await callback.answer()
+        return
 
     sellers = await db.fetchall(
         """
