@@ -1,23 +1,24 @@
 # -*- coding: utf-8 -*-
 """
-A minimal async-shaped stand-in for bot.py's `Database` class, backed by
-the stdlib (synchronous) sqlite3 module. fetchone/fetchall/execute cover
-the surface most of bot.py's business-logic functions call directly on
-`db`.
+A minimal async-shaped test database backed by the stdlib sqlite3 module.
 
-`FakeDB.conn` additionally mimics the awaitable subset of aiosqlite's
-Connection API (`await db.conn.execute(...)`, `await cursor.fetchall()`,
-`await cursor.close()`, `await db.conn.commit()`) that a few lower-level
-functions -- currently only ensure_column()/run_column_migrations() --
-call directly instead of going through the fetchone/fetchall/execute
-wrappers. This is additive: FakeDB's existing fetchone/fetchall/execute
-behavior and signatures are unchanged, so every test written before this
-was added keeps working exactly as before.
+FakeDB provides the small async database surface used by the modular
+application code under test:
 
-This lets us exercise real async functions end-to-end (including real
-SQL against a real SQLite engine) without aiosqlite being installed.
-It is NOT a general aiosqlite replacement and is only used in tests.
+- fetchone()
+- fetchall()
+- execute()
+- conn.execute()
+- conn.commit()
+
+The implementation uses a real in-memory SQLite database, allowing tests
+to exercise async application functions against real SQL without requiring
+the production database connection.
+
+This is intentionally a small test double, not a general aiosqlite
+replacement.
 """
+
 import sqlite3
 
 
@@ -42,9 +43,12 @@ class _FakeCursor:
 
 
 class _FakeConn:
-    """Awaitable-shaped wrapper around a plain sqlite3.Connection, used
-    only by code that talks to `db.conn` directly (e.g. ensure_column's
-    `PRAGMA table_info(...)` + `ALTER TABLE ... ADD COLUMN ...`)."""
+    """
+    Awaitable-shaped wrapper around a plain sqlite3.Connection.
+
+    Used by modular database helpers that access ``db.conn`` directly,
+    including schema inspection and column migration helpers.
+    """
 
     def __init__(self, raw_conn: sqlite3.Connection):
         self._raw = raw_conn
@@ -57,6 +61,13 @@ class _FakeConn:
 
 
 class FakeDB:
+    """
+    Minimal async database test double.
+
+    It preserves the database interface used by the modular application
+    code while executing all SQL against an in-memory SQLite connection.
+    """
+
     def __init__(self, conn: sqlite3.Connection):
         self._raw = conn
         self.conn = _FakeConn(conn)
@@ -80,6 +91,7 @@ class FakeDB:
 
 
 def new_conn() -> sqlite3.Connection:
+    """Create a fresh in-memory SQLite connection for tests."""
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
