@@ -19,6 +19,7 @@ from ..constants import (
     EMOJI_CITY,
     EMOJI_PRODUCT,
     EMOJI_SEARCH,
+    EMOJI_SELLERS,
     PAGE_SIZE_LIST,
 )
 from ..database import CATEGORY_TREE, CITY_NAMES, db
@@ -48,6 +49,7 @@ SEARCH_MAX_REPEATED_CHARACTERS = 8
 SEARCH_MAX_CANDIDATES = 200
 SEARCH_RESULT_LIMIT = 30
 PLAIN_SEARCH_LIMIT = 30
+SELLER_SEARCH_LIMIT = 10
 
 # Typo tolerance is intentionally bounded.
 # We only attempt fuzzy matching for short, useful tokens and a
@@ -1232,6 +1234,169 @@ def score_search_candidate(
 
 
 # ======================================================================
+# SELLER SEARCH
+# ======================================================================
+
+def _seller_search_score(
+    row,
+    query_tokens: list[str],
+) -> float:
+    if not query_tokens:
+        return 0.0
+
+    name = normalize_persian_text(
+        row["name"] or ""
+    )
+    description = normalize_persian_text(
+        row["description"] or ""
+    )
+    city_name = normalize_persian_text(
+        row["city_name"] or ""
+    )
+
+    score = 0.0
+
+    score += _field_match_score(
+        query_tokens,
+        name,
+        exact_phrase_score=45,
+        token_score=15,
+        all_tokens_bonus=20,
+        partial_token_score=5,
+    )
+
+    score += _field_match_score(
+        query_tokens,
+        description,
+        exact_phrase_score=8,
+        token_score=4,
+        all_tokens_bonus=6,
+        partial_token_score=2,
+    )
+
+    score += _field_match_score(
+        query_tokens,
+        city_name,
+        exact_phrase_score=12,
+        token_score=6,
+        all_tokens_bonus=8,
+        partial_token_score=2,
+    )
+
+    rating = float(row["rating"] or 0)
+    review_count = int(row["review_count"] or 0)
+    views = int(row["views"] or 0)
+
+    score += min(max(rating, 0), 5) * 2
+    score += min(review_count, 50) * 0.1
+    score += min(views, 500) * 0.01
+
+    return score
+
+
+async def search_sellers(
+    query: str,
+    limit: int = SELLER_SEARCH_LIMIT,
+) -> list:
+    """
+    Search public sellers independently from product search.
+
+    Search is intentionally broad and parameterized. Ranking is
+    performed in Python so multi-word matching remains consistent
+    with product search.
+    """
+    normalized_query = normalize_persian_text(
+        query
+    )
+
+    query_tokens = [
+        token
+        for token in _tokenize(normalized_query)
+        if token not in _STOPWORD_TOKENS
+    ]
+
+    if not query_tokens:
+        return []
+
+    conditions = []
+    params: list = []
+
+    for token in query_tokens:
+        like = f"%{token}%"
+
+        conditions.append(
+            """
+            (
+                s.name LIKE ?
+                OR s.description LIKE ?
+                OR c.name LIKE ?
+            )
+            """
+        )
+
+        params.extend(
+            [
+                like,
+                like,
+                like,
+            ]
+        )
+
+    where_clause = (
+        " OR ".join(conditions)
+    )
+
+    params.append(
+        SEARCH_MAX_CANDIDATES
+    )
+
+    rows = await db.fetchall(
+        "SELECT "
+        "s.*, "
+        "c.name AS city_name "
+        "FROM sellers s "
+        "LEFT JOIN cities c "
+        "ON c.id = s.city_id "
+        f"WHERE {where_clause} "
+        "LIMIT ?;",
+        params,
+    )
+
+    scored = []
+
+    for row in rows:
+        score = _seller_search_score(
+            row,
+            query_tokens,
+        )
+
+        if score <= 0:
+            continue
+
+        scored.append(
+            (
+                score,
+                row,
+            )
+        )
+
+    scored.sort(
+        key=lambda pair: (
+            pair[0],
+            float(pair[1]["rating"] or 0),
+            int(pair[1]["views"] or 0),
+            int(pair[1]["id"] or 0),
+        ),
+        reverse=True,
+    )
+
+    return [
+        row
+        for _score, row in scored[:limit]
+    ]
+
+
+# ======================================================================
 # DATABASE SEARCH
 # ======================================================================
 
@@ -1837,8 +2002,11 @@ async def _render_search_results(
     target,
     header: str,
     products: list,
+    sellers: Optional[list] = None,
     page: int = 0,
 ) -> None:
+    sellers = sellers or []
+
     offset = page * PAGE_SIZE_LIST
 
     page_products = products[
@@ -1851,6 +2019,58 @@ async def _render_search_results(
     )
 
     builder = InlineKeyboardBuilder()
+
+    # Seller results are shown on the first page.
+    if page == 0 and sellers:
+        builder.row(
+            InlineKeyboardButton(
+                text=(
+                    f"{EMOJI_SELLERS} "
+                    f"فروشگاه‌های مرتبط"
+                ),
+                callback_data="main",
+            )
+        )
+
+        for seller in sellers:
+            badge = (
+                "🟢"
+                if seller["status"] == "CLAIMED"
+                else "⚪"
+            )
+
+            city_name = (
+                seller["city_name"]
+                or ""
+            ).strip()
+
+            suffix = (
+                f" • {city_name}"
+                if city_name
+                else ""
+            )
+
+            builder.row(
+                InlineKeyboardButton(
+                    text=(
+                        f"{EMOJI_SELLERS} "
+                        f"{badge} "
+                        f"{seller['name']}"
+                        f"{suffix}"
+                    ),
+                    callback_data=(
+                        f"seller:{seller['id']}"
+                    ),
+                )
+            )
+
+        if products:
+            builder.row(
+                InlineKeyboardButton(
+                    text="📦 محصولات مرتبط",
+                    callback_data="main",
+                )
+            )
 
     for product in page_products:
         builder.row(
@@ -1947,6 +2167,11 @@ async def handle_search_query(
         await search_engine.search(query)
     )
 
+    sellers = await search_sellers(
+        query,
+        limit=SELLER_SEARCH_LIMIT,
+    )
+
     await log_event(
         user_id,
         "search",
@@ -1958,7 +2183,7 @@ async def handle_search_query(
         None,
     )
 
-    if not products:
+    if not products and not sellers:
         await _render_no_results(
             message,
             (
@@ -1984,6 +2209,13 @@ async def handle_search_query(
             f"«{query}»:"
         )
 
+    if sellers and not products:
+        header += (
+            "\n\n"
+            f"{EMOJI_SELLERS} "
+            "فروشگاه‌های مرتبط:"
+        )
+
     now = time.monotonic()
 
     _cleanup_search_cache(
@@ -1993,6 +2225,7 @@ async def handle_search_query(
     _search_result_cache[user_id] = {
         "header": header,
         "products": products,
+        "sellers": sellers,
         "created_at": now,
     }
 
@@ -2004,6 +2237,7 @@ async def handle_search_query(
         message,
         header,
         products,
+        sellers=sellers,
         page=0,
     )
 
@@ -2063,7 +2297,15 @@ async def handle_search_page(
         )
         return
 
-    if page * PAGE_SIZE_LIST >= len(cached["products"]):
+    if (
+        page * PAGE_SIZE_LIST >= len(
+            cached["products"]
+        )
+        and not (
+            page == 0
+            and cached.get("sellers")
+        )
+    ):
         await callback.answer(
             "⚠️ این صفحه وجود ندارد.",
             show_alert=True,
@@ -2074,5 +2316,6 @@ async def handle_search_page(
         callback,
         cached["header"],
         cached["products"],
+        sellers=cached.get("sellers", []),
         page=page,
     )
