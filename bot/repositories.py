@@ -856,6 +856,47 @@ async def create_report(
     return True
 
 
+async def has_open_report(
+    user_id: int,
+    seller_id: Optional[int],
+    product_id: Optional[int],
+) -> bool:
+    if seller_id is not None:
+        row = await db.fetchone(
+            """
+            SELECT 1
+            FROM reports
+            WHERE user_id = ?
+              AND seller_id = ?
+              AND status = 'PENDING'
+            LIMIT 1;
+            """,
+            (
+                user_id,
+                seller_id,
+            ),
+        )
+    elif product_id is not None:
+        row = await db.fetchone(
+            """
+            SELECT 1
+            FROM reports
+            WHERE user_id = ?
+              AND product_id = ?
+              AND status = 'PENDING'
+            LIMIT 1;
+            """,
+            (
+                user_id,
+                product_id,
+            ),
+        )
+    else:
+        return False
+
+    return row is not None
+
+
 async def get_pending_reports(
     limit: int = 50,
 ) -> list[dict[str, Any]]:
@@ -903,6 +944,47 @@ REQUEST_STATUS_LABELS = {
     "COMPLETED": "تکمیل شده",
     "CANCELLED": "لغو شده",
 }
+
+
+async def has_open_request(
+    user_id: int,
+    request_type: str,
+    topic: Optional[str] = None,
+) -> bool:
+    if topic is None:
+        row = await db.fetchone(
+            """
+            SELECT 1
+            FROM requests
+            WHERE user_id = ?
+              AND request_type = ?
+              AND status = 'PENDING'
+            LIMIT 1;
+            """,
+            (
+                user_id,
+                request_type,
+            ),
+        )
+    else:
+        row = await db.fetchone(
+            """
+            SELECT 1
+            FROM requests
+            WHERE user_id = ?
+              AND request_type = ?
+              AND topic = ?
+              AND status = 'PENDING'
+            LIMIT 1;
+            """,
+            (
+                user_id,
+                request_type,
+                topic,
+            ),
+        )
+
+    return row is not None
 
 
 async def create_request(
