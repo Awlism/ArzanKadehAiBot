@@ -827,6 +827,36 @@ async def handle_report_start(
         )
         return
 
+    if target_type == "seller":
+        target = await db.fetchone(
+            """
+            SELECT id
+            FROM sellers
+            WHERE id = ?
+              AND COALESCE(is_active, 1) = 1;
+            """,
+            (target_id,),
+        )
+    else:
+        target = await db.fetchone(
+            """
+            SELECT p.id
+            FROM products p
+            JOIN sellers s
+                ON s.id = p.seller_id
+            WHERE p.id = ?
+              AND COALESCE(s.is_active, 1) = 1;
+            """,
+            (target_id,),
+        )
+
+    if not target:
+        await callback.answer(
+            "⚠️ این مورد دیگر در دسترس نیست.",
+            show_alert=True,
+        )
+        return
+
     user_id = await ensure_user(
         callback.from_user
     )
@@ -952,7 +982,7 @@ async def _save_report(
     data: dict,
     description: Optional[str],
     bot: Optional[Bot] = None,
-) -> None:
+) -> bool:
     target_type = data.get(
         "report_target_type"
     )
@@ -965,6 +995,40 @@ async def _save_report(
         "report_reason"
     )
 
+    if (
+        target_type not in ("seller", "product")
+        or not isinstance(target_id, int)
+        or target_id <= 0
+        or reason_code not in REPORT_REASONS
+    ):
+        return False
+
+    if target_type == "seller":
+        target = await db.fetchone(
+            """
+            SELECT id
+            FROM sellers
+            WHERE id = ?
+              AND COALESCE(is_active, 1) = 1;
+            """,
+            (target_id,),
+        )
+    else:
+        target = await db.fetchone(
+            """
+            SELECT p.id
+            FROM products p
+            JOIN sellers s
+                ON s.id = p.seller_id
+            WHERE p.id = ?
+              AND COALESCE(s.is_active, 1) = 1;
+            """,
+            (target_id,),
+        )
+
+    if not target:
+        return False
+
     seller_id = (
         target_id
         if target_type == "seller"
@@ -976,6 +1040,13 @@ async def _save_report(
         if target_type == "product"
         else None
     )
+
+    if await has_open_report(
+        user_id,
+        seller_id,
+        product_id,
+    ):
+        return False
 
     cursor = await db.execute(
         """
@@ -1054,6 +1125,8 @@ async def _save_report(
             reply_markup=builder.as_markup(),
         )
 
+    return True
+
 
 @router.callback_query(
     F.data == "reportskip",
@@ -1071,12 +1144,29 @@ async def handle_report_skip(
 
     await state.clear()
 
-    await _save_report(
+    saved = await _save_report(
         user_id,
         data,
         None,
         bot=callback.bot,
     )
+
+    if not saved:
+        builder = InlineKeyboardBuilder()
+
+        kb_add_back(
+            builder,
+            "main",
+        )
+
+        await safe_edit(
+            callback,
+            "⚠️ این مورد دیگر در دسترس نیست یا گزارش مشابهی در حال بررسی است.",
+            builder.as_markup(),
+        )
+
+        await callback.answer()
+        return
 
     builder = InlineKeyboardBuilder()
 
@@ -1115,12 +1205,18 @@ async def handle_report_description(
 
     await state.clear()
 
-    await _save_report(
+    saved = await _save_report(
         user_id,
         data,
         (message.text or "").strip(),
         bot=message.bot,
     )
+
+    if not saved:
+        await message.answer(
+            "⚠️ این مورد دیگر در دسترس نیست یا گزارش مشابهی در حال بررسی است. گزارش ثبت نشد."
+        )
+        return
 
     await message.answer(
         "گزارش شما ثبت شد. ممنون که به امن‌تر شدن ارزانکده کمک می‌کنی."
