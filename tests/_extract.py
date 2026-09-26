@@ -35,10 +35,7 @@ MODULE_PATHS = {
     "search": PROJECT_ROOT / "bot" / "handlers" / "search.py",
     "navigation": PROJECT_ROOT / "bot" / "handlers" / "navigation.py",
     "products": PROJECT_ROOT / "bot" / "handlers" / "products.py",
-    "sellers": PROJECT_ROOT / "bot" / "handlers" / "sellers.py",
-    "favorites": PROJECT_ROOT / "bot" / "handlers" / "favorites.py",
     "compare": PROJECT_ROOT / "bot" / "handlers" / "compare.py",
-    "orders": PROJECT_ROOT / "bot" / "handlers" / "orders.py",
     "notifications": PROJECT_ROOT / "bot" / "services" / "notifications.py",
     "referrals": PROJECT_ROOT / "bot" / "services" / "referrals.py",
     "admin": PROJECT_ROOT / "bot" / "handlers" / "admin.py",
@@ -298,14 +295,8 @@ def _module_imports(module_name: str) -> dict[str, tuple[str, str]]:
             source_module = "navigation"
         elif module.endswith(".products"):
             source_module = "products"
-        elif module.endswith(".sellers"):
-            source_module = "sellers"
-        elif module.endswith(".favorites"):
-            source_module = "favorites"
         elif module.endswith(".compare"):
             source_module = "compare"
-        elif module.endswith(".orders"):
-            source_module = "orders"
         else:
             continue
 
