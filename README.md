@@ -50,7 +50,9 @@ ArzanKadeh AI یک ربات تلگرام MVP است که با aiogram 3.x، aios
     │   ├── config.py
     │   ├── constants.py
     │   ├── database.py
+    │   ├── keyboards.py
     │   ├── repositories.py
+    │   ├── states.py
     │   ├── utils.py
     │   ├── handlers/
     │   │   ├── __init__.py
@@ -65,7 +67,6 @@ ArzanKadeh AI یک ربات تلگرام MVP است که با aiogram 3.x، aios
     │   │   ├── referrals.py
     │   │   ├── search.py
     │   │   ├── seller.py
-    │   │   ├── start.py
     │   │   └── support.py
     │   └── services/
     │       ├── __init__.py
@@ -112,6 +113,8 @@ ArzanKadeh AI یک ربات تلگرام MVP است که با aiogram 3.x، aios
     SQLite
 
 مسئولیت هر بخش از پروژه از بخش‌های دیگر جدا شده است تا توسعه، تست و نگهداری پروژه ساده‌تر باشد.
+
+`navigation.py` مسئول جریان‌های اصلی ورود و ناوبری، انتخاب نقش، restart، referral deep-link و fallbackهای عمومی است.
 
 ---
 
