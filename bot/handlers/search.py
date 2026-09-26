@@ -38,6 +38,15 @@ router = Router(name="search")
 
 
 # ======================================================================
+# SEARCH INPUT LIMITS
+# ======================================================================
+
+SEARCH_MAX_QUERY_LENGTH = 120
+SEARCH_MAX_QUERY_TOKENS = 12
+SEARCH_MAX_REPEATED_CHARACTERS = 8
+
+
+# ======================================================================
 # LOCAL SEARCH ENGINE
 # ======================================================================
 
@@ -84,6 +93,97 @@ def normalize_persian_text(text: str) -> str:
         " ",
         "".join(output),
     ).strip()
+
+
+def _validate_search_query(
+    raw_query: str,
+) -> tuple[bool, str, Optional[str]]:
+    """
+    Validate and normalize a user-provided search query.
+
+    Returns:
+        (is_valid, normalized_query, error_message)
+    """
+    query = (raw_query or "").strip()
+
+    if not query:
+        return False, "", "⚠️ لطفاً یک متن معتبر برای جستجو بفرست."
+
+    if len(query) > SEARCH_MAX_QUERY_LENGTH:
+        return (
+            False,
+            "",
+            (
+                "⚠️ متن جستجو خیلی طولانیه.\n"
+                f"حداکثر {SEARCH_MAX_QUERY_LENGTH} کاراکتر مجازه."
+            ),
+        )
+
+    normalized = normalize_persian_text(query)
+
+    if not normalized:
+        return (
+            False,
+            "",
+            "⚠️ متن جستجو باید شامل حروف یا عدد باشه.",
+        )
+
+    tokens = normalized.split()
+
+    if not tokens:
+        return (
+            False,
+            "",
+            "⚠️ متن جستجو باید شامل حروف یا عدد باشه.",
+        )
+
+    if len(tokens) > SEARCH_MAX_QUERY_TOKENS:
+        return (
+            False,
+            "",
+            (
+                "⚠️ عبارت جستجو خیلی شلوغه.\n"
+                f"حداکثر {SEARCH_MAX_QUERY_TOKENS} کلمه وارد کن."
+            ),
+        )
+
+    if all(
+        len(token) == 1
+        and not token.isalnum()
+        for token in tokens
+    ):
+        return (
+            False,
+            "",
+            "⚠️ لطفاً یک عبارت واقعی برای جستجو وارد کن.",
+        )
+
+    compact_alnum = "".join(
+        char
+        for char in normalized
+        if char.isalnum()
+    )
+
+    if not compact_alnum:
+        return (
+            False,
+            "",
+            "⚠️ لطفاً یک عبارت واقعی برای جستجو وارد کن.",
+        )
+
+    repeated_char_match = re.search(
+        rf"(.)\1{{{SEARCH_MAX_REPEATED_CHARACTERS - 1},}}",
+        compact_alnum,
+    )
+
+    if repeated_char_match:
+        return (
+            False,
+            "",
+            "⚠️ عبارت جستجو معتبر نیست.",
+        )
+
+    return True, normalized, None
 
 
 ALT_CITY_SPELLINGS = {
@@ -241,13 +341,16 @@ _STOPWORD_TOKENS = {
 
 _PRICE_UNIT_RE = r"(\d+(?:\.\d+)?)\s*(میلیون|هزار)?"
 
+
 _PRICE_RANGE_RE = re.compile(
     rf"بین\s+{_PRICE_UNIT_RE}\s+تا\s+{_PRICE_UNIT_RE}"
 )
 
+
 _PRICE_MAX_RE = re.compile(
     rf"(?:زیر|کمتر از|کمتر|حداکثر|تا)\s+{_PRICE_UNIT_RE}"
 )
+
 
 _PRICE_MIN_RE = re.compile(
     rf"(?:بالای|بیشتر از|بیشتر|حداقل|از)\s+{_PRICE_UNIT_RE}"
@@ -1072,15 +1175,20 @@ async def handle_search_query(
         message.from_user
     )
 
-    query = (
+    raw_query = (
         message.text or ""
     ).strip()
 
     await state.clear()
 
-    if not query:
+    is_valid, query, error_message = (
+        _validate_search_query(raw_query)
+    )
+
+    if not is_valid:
         await message.answer(
-            "⚠️ لطفاً یک متن معتبر برای جستجو بفرست."
+            error_message
+            or "⚠️ عبارت جستجو معتبر نیست."
         )
         return
 
