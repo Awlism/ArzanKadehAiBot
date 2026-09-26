@@ -117,7 +117,8 @@ async def _render_product_detail(
             ON s.id = p.seller_id
         LEFT JOIN cities c
             ON c.id = s.city_id
-        WHERE p.id = ?;
+        WHERE p.id = ?
+          AND COALESCE(s.is_active, 1) = 1;
         """,
         (product_id,),
     )
