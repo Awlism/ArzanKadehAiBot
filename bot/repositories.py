@@ -9,17 +9,22 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from .config import ADMIN_CHAT_ID
-from .constants import COMPARE_MAX_ITEMS
+from .constants import (
+    COMPARE_MAX_ITEMS,
+    VALID_MODES,
+)
 from .database import db
 from .utils import now_iso
 
 
-# ======================================================================
+# ============================================================================
 # USERS
-# ======================================================================
+# ============================================================================
 
 
-async def get_user(user_id: int) -> Optional[dict[str, Any]]:
+async def get_user(
+    user_id: int,
+) -> Optional[dict[str, Any]]:
     return await db.fetchone(
         """
         SELECT *
@@ -35,11 +40,14 @@ async def ensure_user(
     user_id: int,
     username: Optional[str] = None,
     first_name: Optional[str] = None,
+    last_name: Optional[str] = None,
 ) -> dict[str, Any]:
     user = await get_user(user_id)
 
     if user:
         return user
+
+    now = now_iso()
 
     await db.execute(
         """
@@ -47,23 +55,28 @@ async def ensure_user(
             telegram_id,
             username,
             first_name,
-            role,
-            created_at
+            last_name,
+            created_at,
+            updated_at
         )
-        VALUES (?, ?, ?, 'user', ?);
+        VALUES (?, ?, ?, ?, ?, ?);
         """,
         (
             user_id,
             username,
             first_name,
-            now_iso(),
+            last_name,
+            now,
+            now,
         ),
     )
 
     user = await get_user(user_id)
 
     if not user:
-        raise RuntimeError(f"Failed to create user {user_id}")
+        raise RuntimeError(
+            f"Failed to create user {user_id}"
+        )
 
     return user
 
@@ -72,14 +85,20 @@ async def update_user_role(
     user_id: int,
     role: str,
 ) -> bool:
+    if role not in VALID_MODES:
+        return False
+
     await db.execute(
         """
         UPDATE users
-        SET role = ?
+        SET active_mode = ?,
+            role_chosen = 1,
+            updated_at = ?
         WHERE telegram_id = ?;
         """,
         (
             role,
+            now_iso(),
             user_id,
         ),
     )
@@ -87,12 +106,113 @@ async def update_user_role(
     return True
 
 
-# ======================================================================
+async def user_has_any_seller(
+    user_id: int,
+) -> bool:
+    row = await db.fetchone(
+        """
+        SELECT 1
+        FROM sellers
+        WHERE owner_user_id = ?
+           OR created_by_user_id = ?
+        LIMIT 1;
+        """,
+        (
+            user_id,
+            user_id,
+        ),
+    )
+
+    return row is not None
+
+
+async def get_active_mode(
+    user_id: int,
+) -> str:
+    row = await db.fetchone(
+        """
+        SELECT active_mode
+        FROM users
+        WHERE id = ?
+        LIMIT 1;
+        """,
+        (user_id,),
+    )
+
+    if row and row["active_mode"] in VALID_MODES:
+        return row["active_mode"]
+
+    admin = await db.fetchone(
+        """
+        SELECT telegram_id
+        FROM users
+        WHERE id = ?
+        LIMIT 1;
+        """,
+        (user_id,),
+    )
+
+    if (
+        admin
+        and ADMIN_CHAT_ID
+        and admin["telegram_id"] == ADMIN_CHAT_ID
+    ):
+        return "admin"
+
+    return "seller" if await user_has_any_seller(user_id) else "buyer"
+
+
+async def set_active_mode(
+    user_id: int,
+    mode: str,
+) -> bool:
+    if mode not in VALID_MODES:
+        return False
+
+    await db.execute(
+        """
+        UPDATE users
+        SET active_mode = ?,
+            role_chosen = 1,
+            updated_at = ?
+        WHERE id = ?;
+        """,
+        (
+            mode,
+            now_iso(),
+            user_id,
+        ),
+    )
+
+    return True
+
+
+async def is_admin_user_id(
+    user_id: int,
+) -> bool:
+    row = await db.fetchone(
+        """
+        SELECT telegram_id
+        FROM users
+        WHERE id = ?
+        LIMIT 1;
+        """,
+        (user_id,),
+    )
+
+    return bool(
+        row
+        and ADMIN_CHAT_ID
+        and row["telegram_id"] == ADMIN_CHAT_ID
+    )
+
+
+# ============================================================================
 # PRODUCTS
-# ======================================================================
+# ============================================================================
 
 
-async def get_product(
+async def get_product_by_id(
     product_id: int,
 ) -> Optional[dict[str, Any]]:
     return await db.fetchone(
@@ -100,7 +220,6 @@ async def get_product(
         SELECT
             p.*,
             s.name AS seller_name,
-            s.telegram_id AS seller_telegram_id,
             c.name AS category_name
         FROM products p
         LEFT JOIN sellers s
@@ -114,13 +233,33 @@ async def get_product(
     )
 
 
+async def get_product(
+    product_id: int,
+) -> Optional[dict[str, Any]]:
+    return await get_product_by_id(product_id)
+
+
 async def get_products_by_ids(
     product_ids: list[int],
 ) -> list[dict[str, Any]]:
     if not product_ids:
         return []
 
-    placeholders = ",".join("?" for _ in product_ids)
+    normalized_ids: list[int] = []
+
+    for product_id in product_ids:
+        if product_id < 1:
+            continue
+
+        if product_id not in normalized_ids:
+            normalized_ids.append(product_id)
+
+    if not normalized_ids:
+        return []
+
+    placeholders = ",".join(
+        "?" for _ in normalized_ids
+    )
 
     return await db.fetchall(
         f"""
@@ -135,46 +274,84 @@ async def get_products_by_ids(
             ON c.id = p.category_id
         WHERE p.id IN ({placeholders});
         """,
-        tuple(product_ids),
+        tuple(normalized_ids),
     )
 
 
-async def get_products_for_compare(
-    product_ids: list[int],
-) -> list[dict[str, Any]]:
-    if not product_ids:
-        return []
+async def create_product_record(
+    seller_id: int,
+    name: str,
+    **fields: Any,
+) -> int:
+    allowed_fields = {
+        "description",
+        "category_id",
+        "price",
+        "old_price",
+        "image_url",
+        "stock_status",
+    }
 
-    product_ids = product_ids[:COMPARE_MAX_ITEMS]
+    clean_fields = {
+        key: value
+        for key, value in fields.items()
+        if key in allowed_fields
+    }
 
-    placeholders = ",".join("?" for _ in product_ids)
+    columns = [
+        "seller_id",
+        "name",
+        "created_at",
+        "updated_at",
+    ]
 
-    return await db.fetchall(
+    values: list[Any] = [
+        seller_id,
+        name,
+        now_iso(),
+        now_iso(),
+    ]
+
+    for field in (
+        "description",
+        "category_id",
+        "price",
+        "old_price",
+        "image_url",
+        "stock_status",
+    ):
+        if field in clean_fields:
+            columns.append(field)
+            values.append(clean_fields[field])
+
+    placeholders = ", ".join(
+        "?" for _ in columns
+    )
+
+    cursor = await db.execute(
         f"""
-        SELECT
-            p.*,
-            s.name AS seller_name,
-            s.telegram_id AS seller_telegram_id,
-            c.name AS category_name
-        FROM products p
-        LEFT JOIN sellers s
-            ON s.id = p.seller_id
-        LEFT JOIN categories c
-            ON c.id = p.category_id
-        WHERE p.id IN ({placeholders})
-        ORDER BY p.id ASC;
+        INSERT INTO products (
+            {", ".join(columns)}
+        )
+        VALUES ({placeholders});
         """,
-        tuple(product_ids),
+        tuple(values),
     )
 
+    if cursor.lastrowid is None:
+        raise RuntimeError(
+            "Failed to create product."
+        )
 
-async def increment_product_views(
+    return int(cursor.lastrowid)
+
+
+async def delete_product_record(
     product_id: int,
 ) -> bool:
     await db.execute(
         """
-        UPDATE products
-        SET views = COALESCE(views, 0) + 1
+        DELETE FROM products
         WHERE id = ?;
         """,
         (product_id,),
@@ -183,12 +360,61 @@ async def increment_product_views(
     return True
 
 
-# ======================================================================
+async def increment_product_views(
+    product_id: int,
+) -> bool:
+    await db.execute(
+        """
+        UPDATE products
+        SET views = COALESCE(views, 0) + 1,
+            updated_at = ?
+        WHERE id = ?;
+        """,
+        (
+            now_iso(),
+            product_id,
+        ),
+    )
+
+    return True
+
+
+async def get_product_statistics(
+    product_id: int,
+) -> Optional[dict[str, Any]]:
+    return await db.fetchone(
+        """
+        SELECT
+            p.id,
+            p.name,
+            p.views,
+            p.rating,
+            p.review_count,
+            COUNT(DISTINCT f.id) AS favorite_count,
+            COUNT(DISTINCT o.id) AS order_count
+        FROM products p
+        LEFT JOIN favorites f
+            ON f.product_id = p.id
+        LEFT JOIN orders o
+            ON o.product_id = p.id
+        WHERE p.id = ?
+        GROUP BY
+            p.id,
+            p.name,
+            p.views,
+            p.rating,
+            p.review_count;
+        """,
+        (product_id,),
+    )
+
+
+# ============================================================================
 # SELLERS
-# ======================================================================
+# ============================================================================
 
 
-async def get_seller(
+async def get_seller_by_id(
     seller_id: int,
 ) -> Optional[dict[str, Any]]:
     return await db.fetchone(
@@ -202,17 +428,27 @@ async def get_seller(
     )
 
 
-async def get_seller_by_telegram_id(
-    telegram_id: int,
+async def get_seller(
+    seller_id: int,
 ) -> Optional[dict[str, Any]]:
-    return await db.fetchone(
+    return await get_seller_by_id(seller_id)
+
+
+async def get_sellers_owned_by_user(
+    user_id: int,
+) -> list[dict[str, Any]]:
+    return await db.fetchall(
         """
         SELECT *
         FROM sellers
-        WHERE telegram_id = ?
-        LIMIT 1;
+        WHERE owner_user_id = ?
+           OR created_by_user_id = ?
+        ORDER BY id DESC;
         """,
-        (telegram_id,),
+        (
+            user_id,
+            user_id,
+        ),
     )
 
 
@@ -230,9 +466,42 @@ async def get_seller_products(
     )
 
 
-# ======================================================================
-# FAVORITES
-# ======================================================================
+async def get_seller_statistics(
+    seller_id: int,
+) -> Optional[dict[str, Any]]:
+    return await db.fetchone(
+        """
+        SELECT
+            s.id,
+            s.name,
+            s.views,
+            s.rating,
+            s.review_count,
+            COUNT(DISTINCT p.id) AS product_count,
+            COUNT(DISTINCT sf.id) AS favorite_count,
+            COUNT(DISTINCT o.id) AS order_count
+        FROM sellers s
+        LEFT JOIN products p
+            ON p.seller_id = s.id
+        LEFT JOIN seller_favorites sf
+            ON sf.seller_id = s.id
+        LEFT JOIN orders o
+            ON o.seller_id = s.id
+        WHERE s.id = ?
+        GROUP BY
+            s.id,
+            s.name,
+            s.views,
+            s.rating,
+            s.review_count;
+        """,
+        (seller_id,),
+    )
+
+
+# ============================================================================
+# PRODUCT FAVORITES
+# ============================================================================
 
 
 async def is_favorite(
@@ -321,9 +590,9 @@ async def get_user_favorites(
     )
 
 
-# ======================================================================
+# ============================================================================
 # SELLER FAVORITES
-# ======================================================================
+# ============================================================================
 
 
 async def is_seller_favorite(
@@ -345,6 +614,48 @@ async def is_seller_favorite(
     )
 
     return row is not None
+
+
+async def toggle_seller_favorite(
+    user_id: int,
+    seller_id: int,
+) -> bool:
+    existing = await is_seller_favorite(
+        user_id,
+        seller_id,
+    )
+
+    if existing:
+        await db.execute(
+            """
+            DELETE FROM seller_favorites
+            WHERE user_id = ?
+              AND seller_id = ?;
+            """,
+            (
+                user_id,
+                seller_id,
+            ),
+        )
+        return False
+
+    await db.execute(
+        """
+        INSERT OR IGNORE INTO seller_favorites (
+            user_id,
+            seller_id,
+            created_at
+        )
+        VALUES (?, ?, ?);
+        """,
+        (
+            user_id,
+            seller_id,
+            now_iso(),
+        ),
+    )
+
+    return True
 
 
 async def add_seller_favorite(
@@ -389,13 +700,27 @@ async def remove_seller_favorite(
     return True
 
 
+async def count_seller_favorites(
+    seller_id: int,
+) -> int:
+    row = await db.fetchone(
+        """
+        SELECT COUNT(*) AS c
+        FROM seller_favorites
+        WHERE seller_id = ?;
+        """,
+        (seller_id,),
+    )
+
+    return int(row["c"]) if row else 0
+
+
 async def get_user_seller_favorites(
     user_id: int,
 ) -> list[dict[str, Any]]:
     return await db.fetchall(
         """
-        SELECT
-            s.*
+        SELECT s.*
         FROM seller_favorites sf
         JOIN sellers s
             ON s.id = sf.seller_id
@@ -406,9 +731,9 @@ async def get_user_seller_favorites(
     )
 
 
-# ======================================================================
+# ============================================================================
 # REVIEWS
-# ======================================================================
+# ============================================================================
 
 
 async def get_seller_reviews(
@@ -422,7 +747,7 @@ async def get_seller_reviews(
             u.username
         FROM reviews r
         LEFT JOIN users u
-            ON u.telegram_id = r.user_id
+            ON u.id = r.user_id
         WHERE r.seller_id = ?
         ORDER BY r.created_at DESC;
         """,
@@ -441,7 +766,7 @@ async def get_product_reviews(
             u.username
         FROM reviews r
         LEFT JOIN users u
-            ON u.telegram_id = r.user_id
+            ON u.id = r.user_id
         WHERE r.product_id = ?
         ORDER BY r.created_at DESC;
         """,
@@ -463,7 +788,7 @@ async def create_review(
             seller_id,
             product_id,
             rating,
-            comment,
+            text,
             created_at
         )
         VALUES (?, ?, ?, ?, ?, ?);
@@ -481,9 +806,9 @@ async def create_review(
     return True
 
 
-# ======================================================================
+# ============================================================================
 # REPORTS
-# ======================================================================
+# ============================================================================
 
 
 async def create_report(
@@ -492,22 +817,37 @@ async def create_report(
     target_id: int,
     reason: str,
 ) -> bool:
+    seller_id = (
+        target_id
+        if target_type == "seller"
+        else None
+    )
+
+    product_id = (
+        target_id
+        if target_type == "product"
+        else None
+    )
+
+    if seller_id is None and product_id is None:
+        return False
+
     await db.execute(
         """
         INSERT INTO reports (
             user_id,
-            target_type,
-            target_id,
+            seller_id,
+            product_id,
             reason,
             status,
             created_at
         )
-        VALUES (?, ?, ?, ?, 'pending', ?);
+        VALUES (?, ?, ?, ?, 'PENDING', ?);
         """,
         (
             user_id,
-            target_type,
-            target_id,
+            seller_id,
+            product_id,
             reason,
             now_iso(),
         ),
@@ -523,7 +863,7 @@ async def get_pending_reports(
         """
         SELECT *
         FROM reports
-        WHERE status = 'pending'
+        WHERE status = 'PENDING'
         ORDER BY created_at ASC
         LIMIT ?;
         """,
@@ -550,9 +890,19 @@ async def update_report_status(
     return True
 
 
-# ======================================================================
+# ============================================================================
 # REQUESTS
-# ======================================================================
+# ============================================================================
+
+
+REQUEST_STATUS_LABELS = {
+    "PENDING": "در انتظار بررسی",
+    "APPROVED": "تأیید شده",
+    "REJECTED": "رد شده",
+    "ACTIVE": "فعال",
+    "COMPLETED": "تکمیل شده",
+    "CANCELLED": "لغو شده",
+}
 
 
 async def create_request(
@@ -561,28 +911,36 @@ async def create_request(
     title: str,
     description: Optional[str] = None,
 ) -> Optional[int]:
+    now = now_iso()
+
     cursor = await db.execute(
         """
         INSERT INTO requests (
             user_id,
             request_type,
-            title,
-            description,
+            topic,
+            message,
             status,
-            created_at
+            created_at,
+            updated_at
         )
-        VALUES (?, ?, ?, ?, 'pending', ?);
+        VALUES (?, ?, ?, ?, 'PENDING', ?, ?);
         """,
         (
             user_id,
             request_type,
             title,
             description,
-            now_iso(),
+            now,
+            now,
         ),
     )
 
-    return cursor.lastrowid if cursor else None
+    return (
+        int(cursor.lastrowid)
+        if cursor and cursor.lastrowid is not None
+        else None
+    )
 
 
 async def get_request(
@@ -613,6 +971,12 @@ async def get_user_requests(
     )
 
 
+async def list_my_requests(
+    user_id: int,
+) -> list[dict[str, Any]]:
+    return await get_user_requests(user_id)
+
+
 async def get_pending_requests(
     limit: int = 50,
 ) -> list[dict[str, Any]]:
@@ -620,7 +984,7 @@ async def get_pending_requests(
         """
         SELECT *
         FROM requests
-        WHERE status = 'pending'
+        WHERE status = 'PENDING'
         ORDER BY created_at ASC
         LIMIT ?;
         """,
@@ -635,11 +999,13 @@ async def update_request_status(
     await db.execute(
         """
         UPDATE requests
-        SET status = ?
+        SET status = ?,
+            updated_at = ?
         WHERE id = ?;
         """,
         (
             status,
+            now_iso(),
             request_id,
         ),
     )
@@ -647,9 +1013,9 @@ async def update_request_status(
     return True
 
 
-# ======================================================================
+# ============================================================================
 # NOTIFICATIONS
-# ======================================================================
+# ============================================================================
 
 
 async def get_user_notifications(
@@ -691,9 +1057,9 @@ async def mark_notification_read(
     return True
 
 
-# ======================================================================
+# ============================================================================
 # REFERRALS
-# ======================================================================
+# ============================================================================
 
 
 async def get_referral_by_seller(
@@ -710,6 +1076,21 @@ async def get_referral_by_seller(
     )
 
 
+async def get_referral_count(
+    seller_id: int,
+) -> int:
+    row = await db.fetchone(
+        """
+        SELECT COUNT(*) AS c
+        FROM referrals
+        WHERE seller_id = ?;
+        """,
+        (seller_id,),
+    )
+
+    return int(row["c"]) if row else 0
+
+
 async def get_referral_rewards(
     seller_id: int,
 ) -> list[dict[str, Any]]:
@@ -724,9 +1105,17 @@ async def get_referral_rewards(
     )
 
 
-# ======================================================================
+# ============================================================================
 # ORDERS
-# ======================================================================
+# ============================================================================
+
+
+ORDER_STATUSES = (
+    "PENDING",
+    "CONFIRMED",
+    "COMPLETED",
+    "CANCELLED",
+)
 
 
 async def create_order(
@@ -736,6 +1125,28 @@ async def create_order(
     quantity: int = 1,
     unit_price: Optional[int] = None,
 ) -> Optional[int]:
+    if quantity < 1:
+        return None
+
+    if unit_price is None:
+        product = await db.fetchone(
+            """
+            SELECT price
+            FROM products
+            WHERE id = ?
+            LIMIT 1;
+            """,
+            (product_id,),
+        )
+
+        if not product or product["price"] is None:
+            return None
+
+        unit_price = int(product["price"])
+
+    total_price = int(unit_price) * int(quantity)
+    now = now_iso()
+
     cursor = await db.execute(
         """
         INSERT INTO orders (
@@ -743,23 +1154,29 @@ async def create_order(
             seller_id,
             product_id,
             quantity,
-            unit_price,
+            total_price,
             status,
-            created_at
+            created_at,
+            updated_at
         )
-        VALUES (?, ?, ?, ?, ?, 'pending', ?);
+        VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?);
         """,
         (
             buyer_user_id,
             seller_id,
             product_id,
             quantity,
-            unit_price,
-            now_iso(),
+            total_price,
+            now,
+            now,
         ),
     )
 
-    return cursor.lastrowid if cursor else None
+    return (
+        int(cursor.lastrowid)
+        if cursor and cursor.lastrowid is not None
+        else None
+    )
 
 
 async def get_order(
@@ -776,46 +1193,77 @@ async def get_order(
     )
 
 
-async def get_user_orders(
-    user_id: int,
+async def list_orders_for_buyer(
+    buyer_user_id: int,
 ) -> list[dict[str, Any]]:
     return await db.fetchall(
         """
-        SELECT *
-        FROM orders
-        WHERE buyer_user_id = ?
-        ORDER BY created_at DESC;
+        SELECT
+            o.*,
+            p.name AS product_name,
+            s.name AS seller_name
+        FROM orders o
+        LEFT JOIN products p
+            ON p.id = o.product_id
+        LEFT JOIN sellers s
+            ON s.id = o.seller_id
+        WHERE o.buyer_user_id = ?
+        ORDER BY o.created_at DESC;
         """,
-        (user_id,),
+        (buyer_user_id,),
     )
+
+
+async def list_orders_for_seller(
+    seller_id: int,
+) -> list[dict[str, Any]]:
+    return await db.fetchall(
+        """
+        SELECT
+            o.*,
+            p.name AS product_name,
+            u.telegram_id AS buyer_telegram_id
+        FROM orders o
+        LEFT JOIN products p
+            ON p.id = o.product_id
+        LEFT JOIN users u
+            ON u.id = o.buyer_user_id
+        WHERE o.seller_id = ?
+        ORDER BY o.created_at DESC;
+        """,
+        (seller_id,),
+    )
+
+
+async def get_user_orders(
+    user_id: int,
+) -> list[dict[str, Any]]:
+    return await list_orders_for_buyer(user_id)
 
 
 async def get_seller_orders(
     seller_id: int,
 ) -> list[dict[str, Any]]:
-    return await db.fetchall(
-        """
-        SELECT *
-        FROM orders
-        WHERE seller_id = ?
-        ORDER BY created_at DESC;
-        """,
-        (seller_id,),
-    )
+    return await list_orders_for_seller(seller_id)
 
 
 async def update_order_status(
     order_id: int,
     status: str,
 ) -> bool:
+    if status not in ORDER_STATUSES:
+        return False
+
     await db.execute(
         """
         UPDATE orders
-        SET status = ?
+        SET status = ?,
+            updated_at = ?
         WHERE id = ?;
         """,
         (
             status,
+            now_iso(),
             order_id,
         ),
     )
@@ -823,9 +1271,9 @@ async def update_order_status(
     return True
 
 
-# ======================================================================
+# ============================================================================
 # AUDIT LOG
-# ======================================================================
+# ============================================================================
 
 
 async def create_audit_log(
@@ -874,18 +1322,19 @@ async def get_audit_logs(
     )
 
 
-# ======================================================================
-# ADMIN HELPERS
-# ======================================================================
+# ============================================================================
+# ADMIN
+# ============================================================================
 
 
 async def get_admin_chat_id() -> Optional[int]:
     return ADMIN_CHAT_ID
 
 
-# ======================================================================
+# ============================================================================
 # COMPARE
-# ======================================================================
+# ============================================================================
+
 
 COMPARE_INTRO_TEXT = (
     "⚖️ مقایسه چیه؟\n"
@@ -914,6 +1363,9 @@ def set_compare_selection(
     normalized: list[int] = []
 
     for product_id in selection:
+        if product_id < 1:
+            continue
+
         if product_id in normalized:
             continue
 
@@ -967,13 +1419,15 @@ async def has_seen_compare_intro(
         """
         SELECT has_seen_compare_intro
         FROM users
-        WHERE id = ?;
+        WHERE id = ?
+        LIMIT 1;
         """,
         (user_id,),
     )
 
     return bool(
-        row and row["has_seen_compare_intro"]
+        row
+        and row["has_seen_compare_intro"]
     )
 
 
@@ -983,10 +1437,14 @@ async def mark_compare_intro_seen(
     await db.execute(
         """
         UPDATE users
-        SET has_seen_compare_intro = 1
+        SET has_seen_compare_intro = 1,
+            updated_at = ?
         WHERE id = ?;
         """,
-        (user_id,),
+        (
+            now_iso(),
+            user_id,
+        ),
     )
 
 
@@ -999,12 +1457,30 @@ async def get_compare_products(
     The maximum number of products is controlled centrally by
     bot.constants.COMPARE_MAX_ITEMS.
     """
+
     if not product_ids:
         return []
 
-    product_ids = product_ids[:COMPARE_MAX_ITEMS]
+    normalized_ids: list[int] = []
 
-    placeholders = ",".join("?" for _ in product_ids)
+    for product_id in product_ids:
+        if product_id < 1:
+            continue
+
+        if product_id in normalized_ids:
+            continue
+
+        normalized_ids.append(product_id)
+
+        if len(normalized_ids) >= COMPARE_MAX_ITEMS:
+            break
+
+    if not normalized_ids:
+        return []
+
+    placeholders = ",".join(
+        "?" for _ in normalized_ids
+    )
 
     return await db.fetchall(
         f"""
@@ -1020,31 +1496,40 @@ async def get_compare_products(
         WHERE p.id IN ({placeholders})
         ORDER BY p.id ASC;
         """,
-        tuple(product_ids),
+        tuple(normalized_ids),
     )
 
 
-# ======================================================================
+# ============================================================================
 # GENERIC HELPERS
-# ======================================================================
+# ============================================================================
 
 
 async def execute(
     query: str,
     params: tuple[Any, ...] = (),
 ):
-    return await db.execute(query, params)
+    return await db.execute(
+        query,
+        params,
+    )
 
 
 async def fetchone(
     query: str,
     params: tuple[Any, ...] = (),
 ):
-    return await db.fetchone(query, params)
+    return await db.fetchone(
+        query,
+        params,
+    )
 
 
 async def fetchall(
     query: str,
     params: tuple[Any, ...] = (),
 ):
-    return await db.fetchall(query, params)
+    return await db.fetchall(
+        query,
+        params,
+    )
