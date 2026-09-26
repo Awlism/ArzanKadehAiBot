@@ -9,11 +9,11 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from ..constants import COMPARE_MAX_ITEMS
 from ..database import db
 from ..keyboards import kb_add_back
 from ..repositories import (
     COMPARE_INTRO_TEXT,
-    COMPARE_MAX_ITEMS,
     clear_compare_selection,
     compare_add,
     get_compare_selection,
@@ -25,7 +25,6 @@ from ..utils import (
     ensure_user,
     format_price,
     log_event,
-    now_iso,
     parse_int,
     safe_edit,
 )
@@ -157,10 +156,13 @@ async def handle_compare_list(
             for product in products
         )
 
+        remaining = COMPARE_MAX_ITEMS - len(products)
+
         await safe_edit(
             callback,
             (
-                "⚖️ یک محصول دیگر انتخاب کن."
+                "⚖️ برای شروع مقایسه، "
+                f"{remaining} محصول دیگه انتخاب کن."
                 "\n\n"
                 "انتخاب فعلی:"
                 f"\n{selected_names}"
@@ -171,61 +173,42 @@ async def handle_compare_list(
         await callback.answer()
         return
 
-    first_product = products[0]
-    second_product = products[1]
-
-    lines = [
-        "⚖️ <b>مقایسه دو محصول</b>",
-        "",
-        (
-            f"🛍️ <b>{first_product['name']}</b>"
-            "  ⚔️  "
-            f"<b>{second_product['name']}</b>"
-        ),
-        (
-            f"💰 "
-            f"{format_price(first_product['price'])}"
-            "  |  "
-            f"{format_price(second_product['price'])}"
-        ),
-        (
-            "⭐ "
-            f"{first_product['rating']:.1f}"
-            f" ({first_product['review_count']} نظر)"
-            "  |  "
-            f"{second_product['rating']:.1f}"
-            f" ({second_product['review_count']} نظر)"
-        ),
-        (
-            f"🏪 {first_product['seller_name']}"
-            "  |  "
-            f"{second_product['seller_name']}"
-        ),
-    ]
-
     builder = InlineKeyboardBuilder()
 
-    builder.row(
-        InlineKeyboardButton(
-            text=(
-                f"🛍️ {first_product['name']}"
-            ),
-            callback_data=(
-                f"product:{first_product['id']}"
-            ),
-        )
-    )
+    lines = [
+        "⚖️ <b>مقایسه محصولات</b>",
+        "",
+    ]
 
-    builder.row(
-        InlineKeyboardButton(
-            text=(
-                f"🛍️ {second_product['name']}"
-            ),
-            callback_data=(
-                f"product:{second_product['id']}"
-            ),
+    for index, product in enumerate(products, start=1):
+        lines.extend(
+            [
+                f"<b>{index}. {product['name']}</b>",
+                (
+                    f"💰 قیمت: "
+                    f"{format_price(product['price'])}"
+                ),
+                (
+                    "⭐ امتیاز: "
+                    f"{product['rating']:.1f}"
+                    f" ({product['review_count']} نظر)"
+                ),
+                (
+                    f"🏪 فروشنده: "
+                    f"{product['seller_name']}"
+                ),
+                "",
+            ]
         )
-    )
+
+        builder.row(
+            InlineKeyboardButton(
+                text=f"🛍️ {product['name']}",
+                callback_data=(
+                    f"product:{product['id']}"
+                ),
+            )
+        )
 
     builder.row(
         InlineKeyboardButton(
@@ -241,7 +224,7 @@ async def handle_compare_list(
 
     await safe_edit(
         callback,
-        "\n".join(lines),
+        "\n".join(lines).strip(),
         builder.as_markup(),
     )
 
@@ -319,7 +302,10 @@ async def handle_compare_start(
 
     elif outcome == "already_full":
         await callback.answer(
-            "مقایسه همزمان فقط برای ۲ محصول امکان‌پذیره.",
+            (
+                "مقایسه همزمان فقط برای "
+                f"{COMPARE_MAX_ITEMS} محصول امکان‌پذیره."
+            ),
             show_alert=True,
         )
 
@@ -332,7 +318,10 @@ async def handle_compare_start(
         )
 
         await callback.answer(
-            "✅ اضافه شد! حالا می‌تونی مقایسه رو ببینی.",
+            (
+                "✅ اضافه شد! حالا می‌تونی "
+                "مقایسه رو ببینی."
+            ),
             show_alert=True,
         )
 
@@ -344,8 +333,15 @@ async def handle_compare_start(
             product_id,
         )
 
+        remaining = COMPARE_MAX_ITEMS - len(
+            new_selection
+        )
+
         await callback.answer(
-            "✅ اضافه شد! یک محصول دیگه هم انتخاب کن.",
+            (
+                "✅ اضافه شد! "
+                f"{remaining} محصول دیگه انتخاب کن."
+            ),
             show_alert=True,
         )
 
