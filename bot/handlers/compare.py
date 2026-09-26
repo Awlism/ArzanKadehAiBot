@@ -113,7 +113,8 @@ async def handle_compare_list(
             FROM products p
             JOIN sellers s
                 ON s.id = p.seller_id
-            WHERE p.id = ?;
+            WHERE p.id = ?
+              AND COALESCE(s.is_active, 1) = 1;
             """,
             (product_id,),
         )
@@ -121,14 +122,38 @@ async def handle_compare_list(
         if row:
             products.append(row)
 
-    if len(products) < len(selection):
+    valid_product_ids = [
+        product["id"]
+        for product in products
+    ]
+
+    if len(products) != len(selection):
         set_compare_selection(
             user_id,
-            [
-                product["id"]
-                for product in products
-            ],
+            valid_product_ids,
         )
+
+    if not products:
+        builder = InlineKeyboardBuilder()
+
+        kb_add_back(
+            builder,
+            "main",
+        )
+
+        await safe_edit(
+            callback,
+            (
+                "⚠️ محصولات انتخاب‌شده دیگر "
+                "در دسترس نیستند.\n\n"
+                "مقایسه پاک شد؛ می‌تونی دوباره "
+                "محصولات جدید انتخاب کنی."
+            ),
+            builder.as_markup(),
+        )
+
+        await callback.answer()
+        return
 
     if len(products) < COMPARE_MAX_ITEMS:
         builder = InlineKeyboardBuilder()
@@ -156,7 +181,10 @@ async def handle_compare_list(
             for product in products
         )
 
-        remaining = COMPARE_MAX_ITEMS - len(products)
+        remaining = (
+            COMPARE_MAX_ITEMS
+            - len(products)
+        )
 
         await safe_edit(
             callback,
@@ -180,7 +208,10 @@ async def handle_compare_list(
         "",
     ]
 
-    for index, product in enumerate(products, start=1):
+    for index, product in enumerate(
+        products,
+        start=1,
+    ):
         lines.extend(
             [
                 f"<b>{index}. {product['name']}</b>",
@@ -250,16 +281,20 @@ async def handle_compare_start(
 
     product = await db.fetchone(
         """
-        SELECT id
-        FROM products
-        WHERE id = ?;
+        SELECT
+            p.id
+        FROM products p
+        JOIN sellers s
+            ON s.id = p.seller_id
+        WHERE p.id = ?
+          AND COALESCE(s.is_active, 1) = 1;
         """,
         (product_id,),
     )
 
     if not product:
         await callback.answer(
-            "⚠️ این محصول یافت نشد.",
+            "⚠️ این محصول دیگر در دسترس نیست.",
             show_alert=True,
         )
         return
@@ -333,8 +368,9 @@ async def handle_compare_start(
             product_id,
         )
 
-        remaining = COMPARE_MAX_ITEMS - len(
-            new_selection
+        remaining = (
+            COMPARE_MAX_ITEMS
+            - len(new_selection)
         )
 
         await callback.answer(
