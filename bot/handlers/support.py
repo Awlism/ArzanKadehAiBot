@@ -21,7 +21,6 @@ from ..states import SupportStates
 from ..utils import (
     ensure_user,
     log_audit,
-    now_iso,
     restart_requested,
     safe_edit,
     send_admin_dm,
@@ -31,6 +30,7 @@ from ..utils import (
 router = Router(name="support")
 
 SUPPORT_MESSAGE_MAX_LEN = 100
+VALID_SUPPORT_AUDIENCES = {"buyer", "seller"}
 
 SUPPORT_TOPICS_BUYER = {
     "buy": "🛍️ مشکل خرید",
@@ -113,6 +113,13 @@ async def handle_support_start(
         1,
     )[1]
 
+    if audience not in VALID_SUPPORT_AUDIENCES:
+        await callback.answer(
+            "⚠️ درخواست نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
     topics = (
         SUPPORT_TOPICS_SELLER
         if audience == "seller"
@@ -163,6 +170,13 @@ async def handle_support_topic(
         return
 
     _, audience, code = parts
+
+    if audience not in VALID_SUPPORT_AUDIENCES:
+        await callback.answer(
+            "⚠️ درخواست نامعتبر است.",
+            show_alert=True,
+        )
+        return
 
     topics = (
         SUPPORT_TOPICS_SELLER
