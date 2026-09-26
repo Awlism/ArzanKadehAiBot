@@ -49,6 +49,16 @@ SEARCH_MAX_CANDIDATES = 200
 SEARCH_RESULT_LIMIT = 30
 PLAIN_SEARCH_LIMIT = 30
 
+# Typo tolerance is intentionally bounded.
+# We only attempt fuzzy matching for short, useful tokens and a
+# relatively small candidate set so a user cannot turn search into
+# an expensive CPU operation.
+TYPO_MIN_TOKEN_LENGTH = 4
+TYPO_MAX_TOKEN_LENGTH = 32
+TYPO_MAX_DISTANCE = 1
+TYPO_MAX_FUZZY_TOKENS = 6
+TYPO_MAX_COMPARISONS = 1200
+
 
 # ======================================================================
 # LOCAL SEARCH ENGINE
@@ -682,6 +692,7 @@ def _field_match_score(
         score += exact_phrase_score
 
     matched_tokens = 0
+
     text_tokens = set(
         _tokenize(normalized_text)
     )
@@ -725,6 +736,347 @@ def _keyword_tokens(
 
     return tokens
 
+
+# ======================================================================
+# TYPO TOLERANCE
+# ======================================================================
+
+def _levenshtein_distance(
+    left: str,
+    right: str,
+    max_distance: int = TYPO_MAX_DISTANCE,
+) -> int:
+    """
+    Bounded Levenshtein distance.
+
+    Returns a value greater than max_distance as soon as it is clear
+    that the threshold cannot be satisfied.
+    """
+    if left == right:
+        return 0
+
+    if not left:
+        return len(right)
+
+    if not right:
+        return len(left)
+
+    if abs(len(left) - len(right)) > max_distance:
+        return max_distance + 1
+
+    if len(left) > len(right):
+        left, right = right, left
+
+    previous = list(range(len(left) + 1))
+
+    for row_index, right_char in enumerate(
+        right,
+        start=1,
+    ):
+        current = [row_index]
+
+        row_min = current[0]
+
+        for col_index, left_char in enumerate(
+            left,
+            start=1,
+        ):
+            insertion = current[col_index - 1] + 1
+            deletion = previous[col_index] + 1
+            substitution = (
+                previous[col_index - 1]
+                + (left_char != right_char)
+            )
+
+            value = min(
+                insertion,
+                deletion,
+                substitution,
+            )
+
+            current.append(value)
+            row_min = min(
+                row_min,
+                value,
+            )
+
+        if row_min > max_distance:
+            return max_distance + 1
+
+        previous = current
+
+    return previous[-1]
+
+
+def _is_typo_match(
+    query_token: str,
+    candidate_token: str,
+) -> bool:
+    if (
+        len(query_token) < TYPO_MIN_TOKEN_LENGTH
+        or len(candidate_token) < TYPO_MIN_TOKEN_LENGTH
+    ):
+        return False
+
+    if (
+        len(query_token) > TYPO_MAX_TOKEN_LENGTH
+        or len(candidate_token) > TYPO_MAX_TOKEN_LENGTH
+    ):
+        return False
+
+    if query_token == candidate_token:
+        return False
+
+    if abs(
+        len(query_token)
+        - len(candidate_token)
+    ) > TYPO_MAX_DISTANCE:
+        return False
+
+    return (
+        _levenshtein_distance(
+            query_token,
+            candidate_token,
+        )
+        <= TYPO_MAX_DISTANCE
+    )
+
+
+def _fuzzy_token_score(
+    query_tokens: list[str],
+    text: str,
+) -> float:
+    if not query_tokens or not text:
+        return 0.0
+
+    text_tokens = _tokenize(text)
+
+    if not text_tokens:
+        return 0.0
+
+    score = 0.0
+    comparisons = 0
+    fuzzy_tokens = 0
+
+    for query_token in query_tokens:
+        if fuzzy_tokens >= TYPO_MAX_FUZZY_TOKENS:
+            break
+
+        if (
+            len(query_token) < TYPO_MIN_TOKEN_LENGTH
+            or len(query_token) > TYPO_MAX_TOKEN_LENGTH
+        ):
+            continue
+
+        for candidate_token in text_tokens:
+            if comparisons >= TYPO_MAX_COMPARISONS:
+                return score
+
+            if (
+                len(candidate_token) < TYPO_MIN_TOKEN_LENGTH
+                or len(candidate_token) > TYPO_MAX_TOKEN_LENGTH
+            ):
+                continue
+
+            comparisons += 1
+
+            if _is_typo_match(
+                query_token,
+                candidate_token,
+            ):
+                score += 7.0
+                fuzzy_tokens += 1
+                break
+
+    return score
+
+
+def _row_fuzzy_score(
+    row,
+    query_tokens: list[str],
+) -> float:
+    if not query_tokens:
+        return 0.0
+
+    score = 0.0
+
+    name = normalize_persian_text(
+        row["name"] or ""
+    )
+    description = normalize_persian_text(
+        row["description"] or ""
+    )
+    seller_name = normalize_persian_text(
+        row["seller_name"] or ""
+    )
+    category_name = normalize_persian_text(
+        row["category_name"] or ""
+    )
+
+    score += (
+        _fuzzy_token_score(
+            query_tokens,
+            name,
+        )
+        * 1.0
+    )
+
+    score += (
+        _fuzzy_token_score(
+            query_tokens,
+            category_name,
+        )
+        * 0.8
+    )
+
+    score += (
+        _fuzzy_token_score(
+            query_tokens,
+            seller_name,
+        )
+        * 0.7
+    )
+
+    score += (
+        _fuzzy_token_score(
+            query_tokens,
+            description,
+        )
+        * 0.3
+    )
+
+    return score
+
+
+async def _fuzzy_keyword_search(
+    query: str,
+    structured_query: StructuredQuery,
+    limit: int = PLAIN_SEARCH_LIMIT,
+) -> list:
+    """
+    Final fuzzy-search fallback.
+
+    First retrieves a bounded candidate pool using LIKE-based
+    substring matching, then applies bounded Levenshtein scoring.
+    This keeps fuzzy matching CPU-bounded and avoids loading the
+    entire products table into Python.
+    """
+    query_tokens = [
+        token
+        for token in _tokenize(
+            normalize_persian_text(query)
+        )
+        if token not in _STOPWORD_TOKENS
+    ]
+
+    fuzzy_tokens = [
+        token
+        for token in query_tokens
+        if (
+            TYPO_MIN_TOKEN_LENGTH
+            <= len(token)
+            <= TYPO_MAX_TOKEN_LENGTH
+        )
+    ]
+
+    if not fuzzy_tokens:
+        return []
+
+    conditions = []
+    params: list = []
+
+    for token in fuzzy_tokens:
+        like = f"%{token[:3]}%"
+
+        conditions.append(
+            """
+            (
+                p.name LIKE ?
+                OR p.description LIKE ?
+                OR s.name LIKE ?
+                OR s.description LIKE ?
+                OR c.name LIKE ?
+            )
+            """
+        )
+
+        params.extend(
+            [
+                like,
+                like,
+                like,
+                like,
+                like,
+            ]
+        )
+
+    where_clause = (
+        " OR ".join(conditions)
+    )
+
+    params.append(
+        SEARCH_MAX_CANDIDATES
+    )
+
+    rows = await db.fetchall(
+        "SELECT DISTINCT "
+        "p.*, "
+        "s.name AS seller_name, "
+        "s.city_id AS seller_city_id, "
+        "c.name AS category_name "
+        "FROM products p "
+        "JOIN sellers s "
+        "ON s.id = p.seller_id "
+        "LEFT JOIN categories c "
+        "ON c.id = p.category_id "
+        f"WHERE {where_clause} "
+        "LIMIT ?;",
+        params,
+    )
+
+    scored = []
+
+    for row in rows:
+        fuzzy_score = _row_fuzzy_score(
+            row,
+            fuzzy_tokens,
+        )
+
+        if fuzzy_score <= 0:
+            continue
+
+        normal_score = score_search_candidate(
+            row,
+            structured_query,
+            set(),
+            None,
+        )
+
+        scored.append(
+            (
+                fuzzy_score + normal_score,
+                row,
+            )
+        )
+
+    scored.sort(
+        key=lambda pair: (
+            pair[0],
+            int(pair[1]["views"] or 0),
+            int(pair[1]["id"] or 0),
+        ),
+        reverse=True,
+    )
+
+    return [
+        row
+        for _score, row in scored[:limit]
+    ]
+
+
+# ======================================================================
+# RESULT SCORING
+# ======================================================================
 
 def score_search_candidate(
     row,
@@ -878,6 +1230,10 @@ def score_search_candidate(
 
     return score
 
+
+# ======================================================================
+# DATABASE SEARCH
+# ======================================================================
 
 async def resolve_category_ids(
     name: Optional[str],
@@ -1226,7 +1582,7 @@ class SearchEngine:
             1. Full structured query.
             2. Remove price constraints.
             3. Remove city constraint.
-            4. Keep semantic filters and keyword only.
+            4. Keep category + keyword.
         """
 
         stages = [
@@ -1358,9 +1714,31 @@ class SearchEngine:
                 ]
             ]
 
+            return (
+                structured,
+                plain_results,
+                "plain",
+            )
+
+        # --------------------------------------------------------------
+        # Final fuzzy fallback
+        # --------------------------------------------------------------
+
+        fuzzy_results = await _fuzzy_keyword_search(
+            raw_query,
+            structured,
+        )
+
+        if fuzzy_results:
+            return (
+                structured,
+                fuzzy_results,
+                "fuzzy",
+            )
+
         return (
             structured,
-            plain_results,
+            [],
             "plain",
         )
 
@@ -1574,7 +1952,7 @@ async def handle_search_query(
         "search",
         (
             "local_smart"
-            if mode == "structured"
+            if mode in {"structured", "fuzzy"}
             else "query"
         ),
         None,
@@ -1594,6 +1972,11 @@ async def handle_search_query(
         header = (
             build_search_summary(structured)
             + "\n\nنتایج:"
+        )
+    elif mode == "fuzzy":
+        header = (
+            f"🔎 نتایج نزدیک به "
+            f"«{query}»:"
         )
     else:
         header = (
