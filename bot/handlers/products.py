@@ -382,7 +382,10 @@ async def handle_favorites_list(
         FROM favorites f
         JOIN products p
             ON p.id = f.product_id
+        JOIN sellers s
+            ON s.id = p.seller_id
         WHERE f.user_id = ?
+          AND COALESCE(s.is_active, 1) = 1
         ORDER BY f.created_at DESC;
         """,
         (user_id,),
