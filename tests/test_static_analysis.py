@@ -106,10 +106,7 @@ def _defined_functions(tree: ast.AST):
 
 def _decorator_source(source: str, decorator: ast.AST) -> str:
     """Return source text for a decorator node."""
-    return (
-        ast.get_source_segment(source, decorator)
-        or ""
-    )
+    return ast.get_source_segment(source, decorator) or ""
 
 
 def _call_name(node: ast.Call) -> str:
@@ -121,7 +118,6 @@ def _call_name(node: ast.Call) -> str:
         router.message(...) -> "router.message"
     """
     parts = []
-
     current = node.func
 
     while isinstance(current, ast.Attribute):
@@ -205,7 +201,6 @@ class CompileTests(unittest.TestCase):
 
     def test_all_test_files_compile_without_syntax_errors(self):
         tests_path = PROJECT_ROOT / "tests"
-
         python_files = _python_files(tests_path)
 
         self.assertTrue(
@@ -383,12 +378,6 @@ class EntryPointArchitectureTests(unittest.TestCase):
         )
 
     def test_bot_py_contains_no_router_handler_decorator_calls(self):
-        """
-        AST-level guard against handler decorators.
-
-        This complements the text-based decorator check so formatting
-        changes cannot bypass the architecture test.
-        """
         leaked = []
 
         for node in ast.walk(self.tree):
@@ -427,11 +416,6 @@ class EntryPointArchitectureTests(unittest.TestCase):
         )
 
     def test_bot_py_has_no_handler_like_functions(self):
-        """
-        Guard against accidentally moving a new handler back into bot.py.
-
-        Entry-point lifecycle functions are explicitly allowed.
-        """
         functions = _defined_functions(self.tree)
 
         allowed = {
@@ -468,9 +452,7 @@ class EntryPointArchitectureTests(unittest.TestCase):
                         "router",
                         "dp",
                     }:
-                        assignments.append(
-                            target.id
-                        )
+                        assignments.append(target.id)
 
         self.assertNotIn(
             "router",
@@ -482,31 +464,34 @@ class EntryPointArchitectureTests(unittest.TestCase):
         )
 
     def test_bot_py_registers_all_main_routers(self):
-        registrations = set()
+        registrations = []
 
-        for node in ast.walk(self.tree):
-            if not isinstance(node, ast.Call):
+        for node in self.tree.body:
+            if not isinstance(node, ast.Expr):
                 continue
 
-            if _call_name(node) != "dp.include_router":
+            call = node.value
+
+            if not isinstance(call, ast.Call):
                 continue
 
-            if not node.args:
+            if _call_name(call) != "dp.include_router":
                 continue
 
-            argument = node.args[0]
+            if not call.args:
+                continue
+
+            argument = call.args[0]
 
             if (
                 isinstance(argument, ast.Attribute)
                 and argument.attr == "router"
                 and isinstance(argument.value, ast.Name)
             ):
-                registrations.add(
-                    argument.value.id
-                )
+                registrations.append(argument.value.id)
 
         missing = sorted(
-            EXPECTED_ROUTER_MODULES - registrations
+            EXPECTED_ROUTER_MODULES - set(registrations)
         )
 
         self.assertFalse(
@@ -520,26 +505,29 @@ class EntryPointArchitectureTests(unittest.TestCase):
     def test_bot_py_does_not_register_unknown_routers(self):
         registrations = []
 
-        for node in ast.walk(self.tree):
-            if not isinstance(node, ast.Call):
+        for node in self.tree.body:
+            if not isinstance(node, ast.Expr):
                 continue
 
-            if _call_name(node) != "dp.include_router":
+            call = node.value
+
+            if not isinstance(call, ast.Call):
                 continue
 
-            if not node.args:
+            if _call_name(call) != "dp.include_router":
                 continue
 
-            argument = node.args[0]
+            if not call.args:
+                continue
+
+            argument = call.args[0]
 
             if (
                 isinstance(argument, ast.Attribute)
                 and argument.attr == "router"
                 and isinstance(argument.value, ast.Name)
             ):
-                registrations.append(
-                    argument.value.id
-                )
+                registrations.append(argument.value.id)
 
         unknown = sorted(
             set(registrations) - EXPECTED_ROUTER_MODULES
@@ -556,26 +544,29 @@ class EntryPointArchitectureTests(unittest.TestCase):
     def test_navigation_router_is_registered_last(self):
         registrations = []
 
-        for node in ast.walk(self.tree):
-            if not isinstance(node, ast.Call):
+        for node in self.tree.body:
+            if not isinstance(node, ast.Expr):
                 continue
 
-            if _call_name(node) != "dp.include_router":
+            call = node.value
+
+            if not isinstance(call, ast.Call):
                 continue
 
-            if not node.args:
+            if _call_name(call) != "dp.include_router":
                 continue
 
-            argument = node.args[0]
+            if not call.args:
+                continue
+
+            argument = call.args[0]
 
             if (
                 isinstance(argument, ast.Attribute)
                 and argument.attr == "router"
                 and isinstance(argument.value, ast.Name)
             ):
-                registrations.append(
-                    argument.value.id
-                )
+                registrations.append(argument.value.id)
 
         self.assertTrue(
             registrations,
@@ -622,15 +613,11 @@ class RouterImportTests(unittest.TestCase):
             elif isinstance(node, ast.ImportFrom):
                 module = node.module or ""
 
-                # Case 1:
-                # from bot.handlers.account import router
                 if module.startswith("bot.handlers."):
                     imported.add(
                         module.rsplit(".", 1)[-1]
                     )
 
-                # Case 2:
-                # from bot.handlers import account, seller, ...
                 elif module == "bot.handlers":
                     for alias in node.names:
                         if (
@@ -657,9 +644,6 @@ class RouterImportTests(unittest.TestCase):
         )
 
     def test_no_legacy_monolithic_bot_imports_in_application_code(self):
-        """
-        No application module should import business logic from root bot.py.
-        """
         violations = []
 
         for path in _python_files(BOT_PACKAGE_PATH):
@@ -993,12 +977,6 @@ class LegacyArchitectureReferenceTests(unittest.TestCase):
         )
 
     def test_application_and_tests_have_no_stale_architecture_references(self):
-        """
-        Catch executable-code references to the old monolithic architecture.
-
-        Documentation strings that intentionally explain migration history
-        are allowed; executable imports/references are handled separately.
-        """
         roots = (
             BOT_PACKAGE_PATH,
             PROJECT_ROOT / "tests",
@@ -1008,6 +986,9 @@ class LegacyArchitectureReferenceTests(unittest.TestCase):
 
         for root in roots:
             for path in _python_files(root):
+                if path.name == "test_static_analysis.py":
+                    continue
+
                 source = path.read_text(
                     encoding="utf-8"
                 )
@@ -1024,12 +1005,6 @@ class LegacyArchitectureReferenceTests(unittest.TestCase):
                                 pattern,
                             )
                         )
-
-        violations = [
-            item
-            for item in violations
-            if item[0] != "tests/test_static_analysis.py"
-        ]
 
         self.assertFalse(
             violations,
@@ -1082,16 +1057,14 @@ class SourceQualityTests(unittest.TestCase):
             )
 
             for node in ast.walk(tree):
-                if isinstance(
-                    node,
-                    ast.ImportFrom,
-                ) and any(
-                    alias.name == "*"
-                    for alias in node.names
-                ):
-                    violations.append(
-                        str(path.relative_to(PROJECT_ROOT))
-                    )
+                if isinstance(node, ast.ImportFrom):
+                    if any(
+                        alias.name == "*"
+                        for alias in node.names
+                    ):
+                        violations.append(
+                            str(path.relative_to(PROJECT_ROOT))
+                        )
 
         self.assertFalse(
             violations,
@@ -1103,154 +1076,210 @@ class SourceQualityTests(unittest.TestCase):
 
     def test_sql_queries_do_not_use_direct_f_string_interpolation(self):
         """
-        Detect f-strings passed directly to database execution methods.
+        Detect f-strings used directly as SQL statements.
 
         Dynamic SQL is allowed only when the interpolated expression
         is the controlled `placeholders` variable.
         """
         suspicious = []
 
-        call_pattern = re.compile(
-            r"""
-            (?P<receiver>db|conn)
-            \.
-            (?P<method>
-                execute
-                |
-                executemany
-                |
-                executescript
-                |
-                fetchone
-                |
-                fetchall
+        sql_methods = {
+            "execute",
+            "executemany",
+            "executescript",
+            "fetchone",
+            "fetchall",
+        }
+
+        for path in _python_files(BOT_PACKAGE_PATH):
+            source = path.read_text(
+                encoding="utf-8"
             )
-            \s*
-            $begin:math:text$
-            \\s\*
-            \(\?P\<prefix\>f\|fr\|rf\|F\|FR\|RF\)
-            \(\?P\<quote\>\[\"\'\]\)
-            \"\"\"\,
-            re\.VERBOSE\,
-        \)
 
-        interpolation\_pattern \= re\.compile\(
-            r\"\\\{\(\[\^\{\}\]\+\)\\\}\"
-        \)
-
-        for path in \_python\_files\(BOT\_PACKAGE\_PATH\)\:
-            source \= path\.read\_text\(
-                encoding\=\"utf\-8\"
-            \)
-
-            for match in call\_pattern\.finditer\(source\)\:
-                start \= match\.start\(\)
-
-                snippet \= source\[
-                    start\:start \+ 1500
-                \]
-
-                interpolation \= interpolation\_pattern\.search\(
-                    snippet
-                \)
-
-                if interpolation is None\:
-                    continue
-
-                expression \= \(
-                    interpolation\.group\(1\)\.strip\(\)
-                \)
-
-                if expression \=\= \"placeholders\"\:
-                    continue
-
-                suspicious\.append\(
-                    \(
-                        str\(
-                            path\.relative\_to\(
-                                PROJECT\_ROOT
-                            \)
-                        \)\,
-                        expression\,
-                    \)
-                \)
-
-        self\.assertFalse\(
-            suspicious\,
-            \(
-                \"Found database queries that interpolate \"
-                f\"values directly\: \{suspicious\}\"
-            \)\,
-        \)
-
-    def test\_no\_legacy\_handler\_implementation\_remains\_in\_bot\_py\(self\)\:
-        source \= BOT\_PY\_PATH\.read\_text\(
-            encoding\=\"utf\-8\"
-        \)
-
-        legacy\_patterns \= \[
-            r\"\@dp\\\.message\"\,
-            r\"\@dp\\\.callback\_query\"\,
-            r\"\@router\\\.message\"\,
-            r\"\@router\\\.callback\_query\"\,
-        \]
-
-        found \= \[\]
-
-        for pattern in legacy\_patterns\:
-            if re\.search\(pattern\, source\)\:
-                found\.append\(pattern\)
-
-        self\.assertFalse\(
-            found\,
-            \(
-                \"bot\.py still contains handler decorators\; \"
-                f\"handlers should live in bot\/handlers\/\: \{found\}\"
-            \)\,
-        \)
-
-
-class CallbackDataCollisionTests\(unittest\.TestCase\)\:
-    \"\"\"Detect callback\-data patterns that could shadow one another\.\"\"\"
-
-    \@classmethod
-    def setUpClass\(cls\)\:
-        cls\.python\_sources \= \[\]
-
-        for path in HANDLERS\_PATH\.rglob\(\"\*\.py\"\)\:
-            cls\.python\_sources\.append\(
-                \(
-                    path\,
-                    path\.read\_text\(
-                        encoding\=\"utf\-8\"
-                    \)\,
-                \)
-            \)
-
-    def \_extract\_patterns\(self\)\:
-        exact \= \[\]
-        prefixes \= \[\]
-
-        for path\, source in self\.python\_sources\:
-            exact\_matches \= re\.findall\(
-                r\'F\\\.data\\s\*\=\=\\s\*\"\(\[\^\"\]\+\)\"\'\,
-                source\,
-            \)
-
-            prefix\_matches \= re\.findall\(
-                r\'F\\\.data\\\.startswith\\\(\"\(\[\^\"\]\+\)\"$end:math:text$',
+            tree = ast.parse(
                 source,
+                filename=str(path),
             )
 
-            exact.extend(
-                (value, path)
-                for value in exact_matches
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+
+                if not isinstance(node.func, ast.Attribute):
+                    continue
+
+                if node.func.attr not in sql_methods:
+                    continue
+
+                if not node.args:
+                    continue
+
+                query_arg = node.args[0]
+
+                if not isinstance(
+                    query_arg,
+                    ast.JoinedStr,
+                ):
+                    continue
+
+                for value in query_arg.values:
+                    if not isinstance(
+                        value,
+                        ast.FormattedValue,
+                    ):
+                        continue
+
+                    expression = ast.get_source_segment(
+                        source,
+                        value.value,
+                    )
+
+                    if not expression:
+                        expression = ast.unparse(
+                            value.value
+                        )
+
+                    expression = expression.strip()
+
+                    if expression == "placeholders":
+                        continue
+
+                    suspicious.append(
+                        (
+                            str(
+                                path.relative_to(
+                                    PROJECT_ROOT
+                                )
+                            ),
+                            expression,
+                        )
+                    )
+
+        self.assertFalse(
+            suspicious,
+            (
+                "Found database queries that interpolate "
+                f"values directly: {suspicious}"
+            ),
+        )
+
+    def test_no_legacy_handler_implementation_remains_in_bot_py(self):
+        source = BOT_PY_PATH.read_text(
+            encoding="utf-8"
+        )
+
+        legacy_patterns = [
+            r"@dp\.message",
+            r"@dp\.callback_query",
+            r"@router\.message",
+            r"@router\.callback_query",
+        ]
+
+        found = []
+
+        for pattern in legacy_patterns:
+            if re.search(pattern, source):
+                found.append(pattern)
+
+        self.assertFalse(
+            found,
+            (
+                "bot.py still contains handler decorators; "
+                f"handlers should live in bot/handlers/: {found}"
+            ),
+        )
+
+
+class CallbackDataCollisionTests(unittest.TestCase):
+    """Detect callback-data patterns that could shadow one another."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.python_sources = []
+
+        for path in HANDLERS_PATH.rglob("*.py"):
+            cls.python_sources.append(
+                (
+                    path,
+                    path.read_text(
+                        encoding="utf-8"
+                    ),
+                )
             )
 
-            prefixes.extend(
-                (value, path)
-                for value in prefix_matches
+    def _extract_patterns(self):
+        exact = []
+        prefixes = []
+
+        for path, source in self.python_sources:
+            tree = ast.parse(
+                source,
+                filename=str(path),
             )
+
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+
+                if not isinstance(node.func, ast.Attribute):
+                    continue
+
+                # F.data == "value"
+                if (
+                    node.func.attr == "startswith"
+                    and isinstance(node.func.value, ast.Attribute)
+                    and isinstance(node.func.value.value, ast.Name)
+                    and node.func.value.value.id == "F"
+                    and node.func.value.attr == "data"
+                ):
+                    if (
+                        node.args
+                        and isinstance(node.args[0], ast.Constant)
+                        and isinstance(node.args[0].value, str)
+                    ):
+                        prefixes.append(
+                            (
+                                node.args[0].value,
+                                path,
+                            )
+                        )
+
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Compare):
+                    continue
+
+                if len(node.ops) != 1:
+                    continue
+
+                if not isinstance(node.ops[0], ast.Eq):
+                    continue
+
+                if len(node.comparators) != 1:
+                    continue
+
+                left = node.left
+                right = node.comparators[0]
+
+                if not (
+                    isinstance(left, ast.Attribute)
+                    and left.attr == "data"
+                    and isinstance(left.value, ast.Name)
+                    and left.value.id == "F"
+                ):
+                    continue
+
+                if not (
+                    isinstance(right, ast.Constant)
+                    and isinstance(right.value, str)
+                ):
+                    continue
+
+                exact.append(
+                    (
+                        right.value,
+                        path,
+                    )
+                )
 
         return exact, prefixes
 
@@ -1364,12 +1393,6 @@ class BackgroundTaskStructureTests(unittest.TestCase):
         )
 
     def test_bot_py_starts_background_tasks(self):
-        """
-        Ensure the imported periodic tasks are actually scheduled.
-
-        This is intentionally source-level rather than runtime-level because
-        lifecycle behavior belongs to integration tests.
-        """
         self.assertRegex(
             self.source,
             r"(?:asyncio\.)?create_task\([^)]*periodic_backup_task",
