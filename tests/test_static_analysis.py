@@ -5,10 +5,10 @@ Static analysis for the modular ArzanKadeh AI bot.
 These tests verify:
 - bot.py remains a clean application entry point
 - required handler/service modules exist
-- required helpers live in their new modules
+- required helpers live in their canonical modules
 - navigation handler ordering is safe
 - callback patterns do not collide
-- SQL queries do not interpolate values directly
+- SQL queries do not interpolate runtime values directly
 - source files compile successfully
 """
 
@@ -29,7 +29,7 @@ SERVICES_PATH = BOT_PACKAGE_PATH / "services"
 
 
 class CompileTests(unittest.TestCase):
-    """Ensure the main application and modular Python files compile."""
+    """Ensure the application and modular Python files compile."""
 
     def test_bot_py_compiles_without_syntax_errors(self):
         result = subprocess.run(
@@ -54,9 +54,7 @@ class CompileTests(unittest.TestCase):
         )
 
     def test_bot_package_files_compile_without_syntax_errors(self):
-        python_files = sorted(
-            BOT_PACKAGE_PATH.rglob("*.py")
-        )
+        python_files = sorted(BOT_PACKAGE_PATH.rglob("*.py"))
 
         self.assertTrue(
             python_files,
@@ -101,7 +99,7 @@ class CompileTests(unittest.TestCase):
 
 
 class ModularStructureTests(unittest.TestCase):
-    """Verify the new modular project structure."""
+    """Verify the current modular project structure."""
 
     REQUIRED_HANDLER_MODULES = {
         "account.py",
@@ -172,16 +170,14 @@ class ModularStructureTests(unittest.TestCase):
         )
 
     def test_bot_py_is_entry_point_not_monolith(self):
-        source = BOT_PY_PATH.read_text(
-            encoding="utf-8"
-        )
+        source = BOT_PY_PATH.read_text(encoding="utf-8")
 
         tree = ast.parse(
             source,
             filename=str(BOT_PY_PATH),
         )
 
-        top_level_functions = [
+        top_level_functions = {
             node.name
             for node in tree.body
             if isinstance(
@@ -191,7 +187,7 @@ class ModularStructureTests(unittest.TestCase):
                     ast.AsyncFunctionDef,
                 ),
             )
-        ]
+        }
 
         expected_functions = {
             "on_startup",
@@ -201,9 +197,7 @@ class ModularStructureTests(unittest.TestCase):
             "main",
         }
 
-        missing = expected_functions - set(
-            top_level_functions
-        )
+        missing = expected_functions - top_level_functions
 
         self.assertFalse(
             missing,
@@ -238,9 +232,7 @@ class ModularStructureTests(unittest.TestCase):
         )
 
     def test_bot_py_registers_all_main_routers(self):
-        source = BOT_PY_PATH.read_text(
-            encoding="utf-8"
-        )
+        source = BOT_PY_PATH.read_text(encoding="utf-8")
 
         required_routers = {
             "buyer.router",
@@ -269,9 +261,7 @@ class ModularStructureTests(unittest.TestCase):
         )
 
     def test_navigation_router_is_registered_last(self):
-        source = BOT_PY_PATH.read_text(
-            encoding="utf-8"
-        )
+        source = BOT_PY_PATH.read_text(encoding="utf-8")
 
         registrations = re.findall(
             r"dp\.include_router\(\s*([a-zA-Z_]+)\.router\s*\)",
@@ -299,14 +289,10 @@ class NavigationStructureTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.navigation_path = (
-            HANDLERS_PATH / "navigation.py"
-        )
-
+        cls.navigation_path = HANDLERS_PATH / "navigation.py"
         cls.source = cls.navigation_path.read_text(
             encoding="utf-8"
         )
-
         cls.tree = ast.parse(
             cls.source,
             filename=str(cls.navigation_path),
@@ -327,13 +313,8 @@ class NavigationStructureTests(unittest.TestCase):
             f"Function '{func_name}' not found in navigation.py"
         )
 
-    def test_command_start_handler_is_before_generic_message_fallback(
-        self,
-    ):
-        start_line = self._line_of_def(
-            "handle_start"
-        )
-
+    def test_command_start_handler_is_before_generic_message_fallback(self):
+        start_line = self._line_of_def("handle_start")
         fallback_line = self._line_of_def(
             "handle_unknown_message"
         )
@@ -342,8 +323,8 @@ class NavigationStructureTests(unittest.TestCase):
             start_line,
             fallback_line,
             (
-                "handle_start (CommandStart) must be registered "
-                "before the generic message fallback."
+                "handle_start must be registered before "
+                "the generic message fallback."
             ),
         )
 
@@ -377,9 +358,7 @@ class NavigationStructureTests(unittest.TestCase):
                 )
 
                 if "router.callback_query" in source:
-                    other_callback_lines.append(
-                        node.lineno
-                    )
+                    other_callback_lines.append(node.lineno)
 
         self.assertTrue(
             other_callback_lines,
@@ -425,9 +404,7 @@ class NavigationStructureTests(unittest.TestCase):
                 )
 
                 if "router.message" in source:
-                    other_message_lines.append(
-                        node.lineno
-                    )
+                    other_message_lines.append(node.lineno)
 
         self.assertTrue(
             other_message_lines,
@@ -438,33 +415,21 @@ class NavigationStructureTests(unittest.TestCase):
             fallback_line,
             max(other_message_lines),
             (
-                "The generic message fallback must be registered "
-                "after all specific message handlers."
+                "The generic message fallback must be "
+                "registered after all specific message handlers."
             ),
         )
 
     def test_navigation_has_command_start_handler(self):
-        self.assertIn(
-            "@router.message",
-            self.source,
-        )
-
-        self.assertIn(
-            "CommandStart()",
-            self.source,
-        )
-
-        self.assertIn(
-            "async def handle_start",
-            self.source,
-        )
+        self.assertIn("@router.message", self.source)
+        self.assertIn("CommandStart()", self.source)
+        self.assertIn("async def handle_start", self.source)
 
     def test_navigation_handles_both_restart_callbacks(self):
         self.assertIn(
             'F.data == "restart_button"',
             self.source,
         )
-
         self.assertIn(
             'F.data == "restartmain"',
             self.source,
@@ -472,15 +437,12 @@ class NavigationStructureTests(unittest.TestCase):
 
 
 class HelperLocationTests(unittest.TestCase):
-    """
-    Verify helpers moved out of bot.py into their intended modules.
-    """
+    """Verify helpers live in their canonical modules."""
 
     EXPECTED_HELPERS = {
         "utils.py": {
             "ensure_user",
             "log_event",
-            "notify_user",
             "safe_edit",
             "parse_int",
             "format_price",
@@ -490,6 +452,9 @@ class HelperLocationTests(unittest.TestCase):
             "website_url",
             "now_iso",
             "restart_requested",
+        },
+        "services/notifications.py": {
+            "notify_user",
         },
         "keyboards.py": {
             "kb_add_back",
@@ -509,9 +474,7 @@ class HelperLocationTests(unittest.TestCase):
     }
 
     def _defined_functions(self, path: Path):
-        source = path.read_text(
-            encoding="utf-8"
-        )
+        source = path.read_text(encoding="utf-8")
 
         tree = ast.parse(
             source,
@@ -533,9 +496,7 @@ class HelperLocationTests(unittest.TestCase):
     def test_helpers_are_in_expected_modules(self):
         missing = []
 
-        for relative_path, expected in (
-            self.EXPECTED_HELPERS.items()
-        ):
+        for relative_path, expected in self.EXPECTED_HELPERS.items():
             path = BOT_PACKAGE_PATH / relative_path
 
             self.assertTrue(
@@ -543,9 +504,7 @@ class HelperLocationTests(unittest.TestCase):
                 f"Expected module does not exist: {relative_path}",
             )
 
-            defined = self._defined_functions(
-                path
-            )
+            defined = self._defined_functions(path)
 
             for function_name in expected:
                 if function_name not in defined:
@@ -560,9 +519,7 @@ class HelperLocationTests(unittest.TestCase):
         )
 
     def test_bot_py_no_longer_contains_moved_helpers(self):
-        source = BOT_PY_PATH.read_text(
-            encoding="utf-8"
-        )
+        source = BOT_PY_PATH.read_text(encoding="utf-8")
 
         tree = ast.parse(
             source,
@@ -585,9 +542,7 @@ class HelperLocationTests(unittest.TestCase):
             *self.EXPECTED_HELPERS.values()
         )
 
-        leaked = defined.intersection(
-            moved_helpers
-        )
+        leaked = defined.intersection(moved_helpers)
 
         self.assertFalse(
             leaked,
@@ -609,9 +564,7 @@ class SourceQualityTests(unittest.TestCase):
         failures = []
 
         for path in BOT_PACKAGE_PATH.rglob("*.py"):
-            source = path.read_text(
-                encoding="utf-8"
-            )
+            source = path.read_text(encoding="utf-8")
 
             if pattern.search(source):
                 failures.append(
@@ -626,69 +579,91 @@ class SourceQualityTests(unittest.TestCase):
             ),
         )
 
-    def test_sql_queries_do_not_use_direct_f_string_interpolation(
-        self,
-    ):
+    def test_sql_queries_do_not_use_direct_f_string_interpolation(self):
         """
-        Heuristic check for f-strings passed directly to database
-        execution methods.
+        Detect f-strings passed directly to database execution methods.
 
-        Dynamic SQL that uses a fixed list of '?' placeholders is
-        allowed only when the interpolated value is named
-        `placeholders`.
+        Dynamic SQL is allowed only when the interpolated expression is
+        the controlled `placeholders` variable.
         """
 
         suspicious = []
 
-        pattern = re.compile(
+        execute_methods = (
+            "execute",
+            "executemany",
+            "executescript",
+            "fetchone",
+            "fetchall",
+        )
+
+        call_pattern = re.compile(
             r"""
-            (?:
-                db\.execute
+            (?P<receiver>
+                db
                 |
-                db\.fetchone
+                conn
+            )
+            \.
+            (?P<method>
+                execute
                 |
-                db\.fetchall
+                executemany
                 |
-                conn\.execute
+                executescript
+                |
+                fetchone
+                |
+                fetchall
             )
             \(
                 \s*
-                f["']
-                [^"']*
-                \{
-                (?!placeholders\b)
+                (?P<prefix>f|fr|rf|F|FR|RF)
+                (?P<quote>["'])
             """,
             re.VERBOSE,
         )
 
+        interpolation_pattern = re.compile(
+            r"\{([^{}]+)\}"
+        )
+
         for path in BOT_PACKAGE_PATH.rglob("*.py"):
-            source = path.read_text(
-                encoding="utf-8"
-            )
+            source = path.read_text(encoding="utf-8")
 
-            matches = pattern.findall(
-                source
-            )
+            for match in call_pattern.finditer(source):
+                start = match.start()
+                snippet = source[start:start + 1500]
 
-            if matches:
+                interpolation = interpolation_pattern.search(
+                    snippet
+                )
+
+                if interpolation is None:
+                    continue
+
+                expression = interpolation.group(1).strip()
+
+                if expression == "placeholders":
+                    continue
+
                 suspicious.append(
-                    str(path.relative_to(PROJECT_ROOT))
+                    (
+                        str(path.relative_to(PROJECT_ROOT)),
+                        expression,
+                    )
                 )
 
         self.assertFalse(
             suspicious,
             (
-                "Found database queries that may interpolate "
-                f"values directly: {suspicious}"
+                "Found database queries that interpolate values "
+                f"directly: {suspicious}"
             ),
         )
 
-    def test_no_legacy_handler_implementation_remains_in_bot_py(
-        self,
-    ):
-        source = BOT_PY_PATH.read_text(
-            encoding="utf-8"
-        )
+    def test_no_legacy_handler_implementation_remains_in_bot_py(self):
+        source = BOT_PY_PATH.read_text(encoding="utf-8")
 
         legacy_patterns = [
             r"@dp\.message",
@@ -700,10 +675,7 @@ class SourceQualityTests(unittest.TestCase):
         found = []
 
         for pattern in legacy_patterns:
-            if re.search(
-                pattern,
-                source,
-            ):
+            if re.search(pattern, source):
                 found.append(pattern)
 
         self.assertFalse(
@@ -716,11 +688,7 @@ class SourceQualityTests(unittest.TestCase):
 
 
 class CallbackDataCollisionTests(unittest.TestCase):
-    """
-    Detect callback-data patterns that could shadow one another.
-
-    This scan covers all handler modules, not just bot.py.
-    """
+    """Detect callback-data patterns that could shadow one another."""
 
     @classmethod
     def setUpClass(cls):
@@ -730,9 +698,7 @@ class CallbackDataCollisionTests(unittest.TestCase):
             cls.python_sources.append(
                 (
                     path,
-                    path.read_text(
-                        encoding="utf-8"
-                    ),
+                    path.read_text(encoding="utf-8"),
                 )
             )
 
@@ -766,10 +732,7 @@ class CallbackDataCollisionTests(unittest.TestCase):
     def test_exact_match_patterns_are_unique(self):
         exact, _prefixes = self._extract_patterns()
 
-        values = [
-            value
-            for value, _path in exact
-        ]
+        values = [value for value, _path in exact]
 
         duplicates = {
             value
@@ -797,17 +760,13 @@ class CallbackDataCollisionTests(unittest.TestCase):
 
         collisions = []
 
-        for i, first in enumerate(
-            unique_prefixes
-        ):
+        for i, first in enumerate(unique_prefixes):
             for second in unique_prefixes[i + 1:]:
                 if (
                     first.startswith(second)
                     or second.startswith(first)
                 ):
-                    collisions.append(
-                        (first, second)
-                    )
+                    collisions.append((first, second))
 
         self.assertFalse(
             collisions,
@@ -817,9 +776,7 @@ class CallbackDataCollisionTests(unittest.TestCase):
             ),
         )
 
-    def test_exact_patterns_are_not_shadowed_by_different_prefix(
-        self,
-    ):
+    def test_exact_patterns_are_not_shadowed_by_different_prefix(self):
         exact, prefixes = self._extract_patterns()
 
         unique_prefixes = {
@@ -857,12 +814,10 @@ class CallbackDataCollisionTests(unittest.TestCase):
 
 
 class ImportStructureTests(unittest.TestCase):
-    """Verify that the modular entry point imports the expected modules."""
+    """Verify modular imports and background tasks."""
 
     def test_bot_py_imports_handler_package_modules(self):
-        source = BOT_PY_PATH.read_text(
-            encoding="utf-8"
-        )
+        source = BOT_PY_PATH.read_text(encoding="utf-8")
 
         expected_modules = [
             "account",
@@ -887,19 +842,10 @@ class ImportStructureTests(unittest.TestCase):
             )
 
     def test_bot_py_imports_background_tasks(self):
-        source = BOT_PY_PATH.read_text(
-            encoding="utf-8"
-        )
+        source = BOT_PY_PATH.read_text(encoding="utf-8")
 
-        self.assertIn(
-            "periodic_backup_task",
-            source,
-        )
-
-        self.assertIn(
-            "periodic_ad_expiry_task",
-            source,
-        )
+        self.assertIn("periodic_backup_task", source)
+        self.assertIn("periodic_ad_expiry_task", source)
 
 
 if __name__ == "__main__":
