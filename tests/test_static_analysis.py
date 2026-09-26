@@ -622,10 +622,22 @@ class RouterImportTests(unittest.TestCase):
             elif isinstance(node, ast.ImportFrom):
                 module = node.module or ""
 
+                # Case 1:
+                # from bot.handlers.account import router
                 if module.startswith("bot.handlers."):
                     imported.add(
                         module.rsplit(".", 1)[-1]
                     )
+
+                # Case 2:
+                # from bot.handlers import account, seller, ...
+                elif module == "bot.handlers":
+                    for alias in node.names:
+                        if (
+                            alias.name != "*"
+                            and alias.name in EXPECTED_ROUTER_MODULES
+                        ):
+                            imported.add(alias.name)
 
         return imported
 
@@ -1013,8 +1025,6 @@ class LegacyArchitectureReferenceTests(unittest.TestCase):
                             )
                         )
 
-        # Explicitly remove the expected test filename itself from the
-        # stale-reference check if it happens to mention the term in prose.
         violations = [
             item
             for item in violations
@@ -1098,16 +1108,11 @@ class SourceQualityTests(unittest.TestCase):
         Dynamic SQL is allowed only when the interpolated expression
         is the controlled `placeholders` variable.
         """
-
         suspicious = []
 
         call_pattern = re.compile(
             r"""
-            (?P<receiver>
-                db
-                |
-                conn
-            )
+            (?P<receiver>db|conn)
             \.
             (?P<method>
                 execute
@@ -1120,10 +1125,11 @@ class SourceQualityTests(unittest.TestCase):
                 |
                 fetchall
             )
+            \s*
             $begin:math:text$
-                \\s\*
-                \(\?P\<prefix\>f\|fr\|rf\|F\|FR\|RF\)
-                \(\?P\<quote\>\[\"\'\]\)
+            \\s\*
+            \(\?P\<prefix\>f\|fr\|rf\|F\|FR\|RF\)
+            \(\?P\<quote\>\[\"\'\]\)
             \"\"\"\,
             re\.VERBOSE\,
         \)
