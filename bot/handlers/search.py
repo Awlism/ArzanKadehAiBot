@@ -45,6 +45,10 @@ SEARCH_MAX_QUERY_LENGTH = 120
 SEARCH_MAX_QUERY_TOKENS = 12
 SEARCH_MAX_REPEATED_CHARACTERS = 8
 
+SEARCH_MAX_CANDIDATES = 200
+SEARCH_RESULT_LIMIT = 30
+PLAIN_SEARCH_LIMIT = 30
+
 
 # ======================================================================
 # LOCAL SEARCH ENGINE
@@ -93,6 +97,19 @@ def normalize_persian_text(text: str) -> str:
         " ",
         "".join(output),
     ).strip()
+
+
+def _tokenize(text: str) -> list[str]:
+    normalized = normalize_persian_text(text)
+
+    if not normalized:
+        return []
+
+    return [
+        token
+        for token in normalized.split()
+        if token
+    ]
 
 
 def _validate_search_query(
@@ -640,6 +657,65 @@ def build_search_summary(
     return "\n".join(lines)
 
 
+def _field_match_score(
+    tokens: list[str],
+    text: str,
+    *,
+    exact_phrase_score: float,
+    token_score: float,
+    all_tokens_bonus: float,
+    partial_token_score: float = 0.0,
+) -> float:
+    if not tokens or not text:
+        return 0.0
+
+    normalized_text = normalize_persian_text(text)
+
+    if not normalized_text:
+        return 0.0
+
+    score = 0.0
+
+    phrase = " ".join(tokens)
+
+    if phrase and phrase in normalized_text:
+        score += exact_phrase_score
+
+    matched_tokens = 0
+
+    text_tokens = _tokenize(normalized_text)
+
+    for token in tokens:
+        if token in text_tokens:
+            score += token_score
+            matched_tokens += 1
+            continue
+
+        if token in normalized_text:
+            score += partial_token_score
+            matched_tokens += 1
+
+    if matched_tokens == len(tokens):
+        score += all_tokens_bonus
+
+    return score
+
+
+def _keyword_tokens(
+    structured_query: StructuredQuery,
+) -> list[str]:
+    if not structured_query.keyword:
+        return []
+
+    return [
+        token
+        for token in _tokenize(
+            structured_query.keyword
+        )
+        if token not in _STOPWORD_TOKENS
+    ]
+
+
 def score_search_candidate(
     row,
     structured_query: StructuredQuery,
@@ -648,36 +724,104 @@ def score_search_candidate(
 ) -> float:
     score = 0.0
 
-    name = row["name"] or ""
-    description = row["description"] or ""
+    name = normalize_persian_text(
+        row["name"] or ""
+    )
+    description = normalize_persian_text(
+        row["description"] or ""
+    )
+
+    seller_name = normalize_persian_text(
+        row["seller_name"] or ""
+    )
+
+    category_name = normalize_persian_text(
+        row["category_name"] or ""
+    )
+
+    query_tokens = _keyword_tokens(
+        structured_query
+    )
+
+    # ------------------------------------------------------------------
+    # Category relevance
+    # ------------------------------------------------------------------
 
     if (
         resolved_category_ids
         and row["category_id"] in resolved_category_ids
     ):
-        score += 30
+        score += 35
 
-    if structured_query.keyword:
-        if structured_query.keyword in name:
-            score += 25
-        elif structured_query.keyword in description:
-            score += 10
+    if structured_query.category:
+        score += _field_match_score(
+            [structured_query.category],
+            category_name,
+            exact_phrase_score=8,
+            token_score=4,
+            all_tokens_bonus=3,
+            partial_token_score=2,
+        )
+
+    # ------------------------------------------------------------------
+    # Main keyword relevance
+    # ------------------------------------------------------------------
+
+    if query_tokens:
+        score += _field_match_score(
+            query_tokens,
+            name,
+            exact_phrase_score=32,
+            token_score=13,
+            all_tokens_bonus=18,
+            partial_token_score=5,
+        )
+
+        score += _field_match_score(
+            query_tokens,
+            description,
+            exact_phrase_score=8,
+            token_score=4,
+            all_tokens_bonus=6,
+            partial_token_score=2,
+        )
+
+        score += _field_match_score(
+            query_tokens,
+            seller_name,
+            exact_phrase_score=7,
+            token_score=4,
+            all_tokens_bonus=5,
+            partial_token_score=2,
+        )
+
+    # ------------------------------------------------------------------
+    # Explicit filters
+    # ------------------------------------------------------------------
 
     for term in (
         structured_query.color,
         structured_query.gender,
     ):
-        if term and (
-            term in name
-            or term in description
-        ):
-            score += 8
+        if not term:
+            continue
+
+        normalized_term = normalize_persian_text(term)
+
+        if normalized_term in name:
+            score += 12
+        elif normalized_term in description:
+            score += 6
 
     if (
         resolved_city_id
         and row["seller_city_id"] == resolved_city_id
     ):
-        score += 15
+        score += 18
+
+    # ------------------------------------------------------------------
+    # Price relevance
+    # ------------------------------------------------------------------
 
     price = row["price"]
 
@@ -686,25 +830,39 @@ def score_search_candidate(
             structured_query.min_price is not None
             and price < structured_query.min_price
         ):
-            score -= 20
+            score -= 30
 
         if (
             structured_query.max_price is not None
             and price > structured_query.max_price
         ):
-            score -= 20
+            score -= 30
 
-        elif (
+        if (
             structured_query.min_price is not None
             or structured_query.max_price is not None
         ):
-            score += 10
+            if (
+                (
+                    structured_query.min_price is None
+                    or price >= structured_query.min_price
+                )
+                and (
+                    structured_query.max_price is None
+                    or price <= structured_query.max_price
+                )
+            ):
+                score += 15
 
-    rating = row["rating"] or 0
-    review_count = row["review_count"] or 0
-    views = row["views"] or 0
+    # ------------------------------------------------------------------
+    # Quality signals
+    # ------------------------------------------------------------------
 
-    score += min(rating, 5) * 2
+    rating = float(row["rating"] or 0)
+    review_count = int(row["review_count"] or 0)
+    views = int(row["views"] or 0)
+
+    score += min(max(rating, 0), 5) * 2
     score += min(review_count, 50) * 0.1
     score += min(views, 500) * 0.01
 
@@ -775,34 +933,82 @@ async def resolve_city_id(
 
 async def plain_keyword_search(
     query: str,
-    limit: int = 20,
+    limit: int = PLAIN_SEARCH_LIMIT,
 ) -> list:
-    like = f"%{query}%"
+    normalized_query = normalize_persian_text(
+        query
+    )
+
+    query_tokens = [
+        token
+        for token in _tokenize(normalized_query)
+        if token not in _STOPWORD_TOKENS
+    ]
+
+    if not query_tokens:
+        return []
+
+    # Search candidates using each token independently.
+    # This makes multi-word queries useful even when the exact
+    # phrase does not exist in the database.
+    conditions = []
+    params: list = []
+
+    for token in query_tokens:
+        like = f"%{token}%"
+
+        conditions.append(
+            """
+            (
+                p.name LIKE ?
+                OR p.description LIKE ?
+                OR s.name LIKE ?
+                OR s.description LIKE ?
+                OR c.name LIKE ?
+            )
+            """
+        )
+
+        params.extend(
+            [
+                like,
+                like,
+                like,
+                like,
+                like,
+            ]
+        )
+
+    where_clause = (
+        " OR ".join(conditions)
+    )
+
+    query_sql = (
+        "SELECT DISTINCT "
+        "p.*, "
+        "s.name AS seller_name, "
+        "s.city_id AS seller_city_id, "
+        "c.name AS category_name "
+        "FROM products p "
+        "JOIN sellers s "
+        "ON s.id = p.seller_id "
+        "LEFT JOIN categories c "
+        "ON c.id = p.category_id "
+        f"WHERE {where_clause} "
+        "ORDER BY p.views DESC "
+        "LIMIT ?;"
+    )
+
+    params.append(
+        min(
+            max(limit, 1),
+            SEARCH_MAX_CANDIDATES,
+        )
+    )
 
     return await db.fetchall(
-        """
-        SELECT DISTINCT p.*
-        FROM products p
-        JOIN sellers s
-            ON s.id = p.seller_id
-        LEFT JOIN categories c
-            ON c.id = p.category_id
-        WHERE p.name LIKE ?
-           OR p.description LIKE ?
-           OR s.name LIKE ?
-           OR s.description LIKE ?
-           OR c.name LIKE ?
-        ORDER BY p.views DESC
-        LIMIT ?;
-        """,
-        (
-            like,
-            like,
-            like,
-            like,
-            like,
-            limit,
-        ),
+        query_sql,
+        params,
     )
 
 
@@ -816,7 +1022,7 @@ class SearchEngine:
     async def _structured_search(
         self,
         structured_query: StructuredQuery,
-        limit: int = 30,
+        limit: int = SEARCH_RESULT_LIMIT,
     ) -> list:
         resolved_category_ids = (
             await resolve_category_ids(
@@ -853,19 +1059,24 @@ class SearchEngine:
                 resolved_city_id
             )
 
-        for term in (
-            structured_query.keyword,
-            structured_query.color,
-            structured_query.gender,
-        ):
-            if term:
-                like = f"%{term}%"
+        keyword_tokens = _keyword_tokens(
+            structured_query
+        )
 
-                conditions.append(
+        if keyword_tokens:
+            keyword_conditions = []
+
+            for token in keyword_tokens:
+                like = f"%{token}%"
+
+                keyword_conditions.append(
                     """
                     (
                         p.name LIKE ?
                         OR p.description LIKE ?
+                        OR s.name LIKE ?
+                        OR s.description LIKE ?
+                        OR c.name LIKE ?
                     )
                     """
                 )
@@ -874,8 +1085,44 @@ class SearchEngine:
                     [
                         like,
                         like,
+                        like,
+                        like,
+                        like,
                     ]
                 )
+
+            conditions.append(
+                "("
+                + " OR ".join(
+                    keyword_conditions
+                )
+                + ")"
+            )
+
+        for term in (
+            structured_query.color,
+            structured_query.gender,
+        ):
+            if not term:
+                continue
+
+            like = f"%{term}%"
+
+            conditions.append(
+                """
+                (
+                    p.name LIKE ?
+                    OR p.description LIKE ?
+                )
+                """
+            )
+
+            params.extend(
+                [
+                    like,
+                    like,
+                ]
+            )
 
         if structured_query.max_price is not None:
             conditions.append(
@@ -910,15 +1157,22 @@ class SearchEngine:
         )
 
         query = (
-            "SELECT p.*, "
+            "SELECT "
+            "p.*, "
             "s.name AS seller_name, "
-            "s.city_id AS seller_city_id "
+            "s.city_id AS seller_city_id, "
+            "c.name AS category_name "
             "FROM products p "
             "JOIN sellers s "
             "ON s.id = p.seller_id "
+            "LEFT JOIN categories c "
+            "ON c.id = p.category_id "
             f"WHERE {where_clause} "
-            "ORDER BY p.views DESC "
-            "LIMIT 200;"
+            "LIMIT ?;"
+        )
+
+        params.append(
+            SEARCH_MAX_CANDIDATES
         )
 
         rows = await db.fetchall(
@@ -940,7 +1194,11 @@ class SearchEngine:
         ]
 
         scored.sort(
-            key=lambda pair: pair[0],
+            key=lambda pair: (
+                pair[0],
+                int(pair[1]["views"] or 0),
+                int(pair[1]["id"] or 0),
+            ),
             reverse=True,
         )
 
@@ -990,6 +1248,51 @@ class SearchEngine:
             raw_query
         )
 
+        if plain_results:
+            query_tokens = _tokenize(
+                normalize_persian_text(
+                    raw_query
+                )
+            )
+
+            scored = []
+
+            for row in plain_results:
+                score = score_search_candidate(
+                    row,
+                    StructuredQuery(
+                        raw_query=raw_query,
+                        keyword=" ".join(
+                            query_tokens
+                        ),
+                    ),
+                    set(),
+                    None,
+                )
+
+                scored.append(
+                    (
+                        score,
+                        row,
+                    )
+                )
+
+            scored.sort(
+                key=lambda pair: (
+                    pair[0],
+                    int(pair[1]["views"] or 0),
+                    int(pair[1]["id"] or 0),
+                ),
+                reverse=True,
+            )
+
+            plain_results = [
+                row
+                for _score, row in scored[
+                    :PLAIN_SEARCH_LIMIT
+                ]
+            ]
+
         return (
             structured,
             plain_results,
@@ -1020,6 +1323,7 @@ async def handle_search_start(
     )
 
     builder = InlineKeyboardBuilder()
+
     kb_add_back(
         builder,
         "main",
@@ -1036,6 +1340,12 @@ async def handle_search_start(
     )
 
     await callback.answer()
+
+
+SEARCH_CACHE_TTL_SECONDS = 15 * 60
+SEARCH_CACHE_MAX_USERS = 1000
+
+_search_result_cache: dict[int, dict] = {}
 
 
 def _cleanup_search_cache(
@@ -1074,12 +1384,6 @@ def _cleanup_search_cache(
             user_id,
             None,
         )
-
-
-SEARCH_CACHE_TTL_SECONDS = 15 * 60
-SEARCH_CACHE_MAX_USERS = 1000
-
-_search_result_cache: dict[int, dict] = {}
 
 
 async def _render_search_results(
