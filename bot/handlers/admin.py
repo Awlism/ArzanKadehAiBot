@@ -7,11 +7,11 @@ Admin handlers
 from datetime import datetime, timedelta, timezone
 
 from aiogram import F, Router
-from aiogram.fsm.context import FSMContext
-from aiogram.filters import StateFilter
-from aiogram.types import CallbackQuery, Message, InlineKeyboardButton
-from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.filters import StateFilter
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from ..config import ADMIN_CHAT_ID
 from ..database import db
@@ -38,16 +38,45 @@ from ..utils import (
     parse_int,
     restart_requested,
     safe_edit,
-    send_admin_dm,
 )
 
 router = Router(name="admin")
 
 PAGE_SIZE_LIST = 10
+AD_REQUEST_TYPES = ("ad", "general_ad")
 
 
 def _is_admin(callback: CallbackQuery) -> bool:
     return is_admin_telegram_id(callback.from_user.id)
+
+
+async def _get_ad_request(request_id: int):
+    return await db.fetchone(
+        """
+        SELECT *
+        FROM requests
+        WHERE id = ?
+          AND request_type IN ('ad', 'general_ad');
+        """,
+        (request_id,),
+    )
+
+
+def _parse_callback_int(
+    callback: CallbackQuery,
+    prefix: str,
+) -> int | None:
+    data = callback.data or ""
+
+    if not data.startswith(prefix):
+        return None
+
+    parts = data.split(":")
+
+    if len(parts) != 2:
+        return None
+
+    return parse_int(parts[1])
 
 
 # ======================================================================
@@ -55,8 +84,11 @@ def _is_admin(callback: CallbackQuery) -> bool:
 # ======================================================================
 
 @router.callback_query(F.data.startswith("adminreq:"))
-async def handle_admin_request_decision(callback: CallbackQuery) -> None:
-    parts = callback.data.split(":")
+async def handle_admin_request_decision(
+    callback: CallbackQuery,
+) -> None:
+    data = callback.data or ""
+    parts = data.split(":")
 
     if len(parts) != 3:
         await callback.answer(
@@ -97,7 +129,19 @@ async def handle_admin_request_decision(callback: CallbackQuery) -> None:
         )
         return
 
-    is_ad = req["request_type"] in ("ad", "general_ad")
+    if req["status"] != "PENDING":
+        current_status = REQUEST_STATUS_LABELS.get(
+            req["status"],
+            req["status"],
+        )
+
+        await callback.answer(
+            f"⚠️ این درخواست قبلاً تعیین‌تکلیف شده: {current_status}",
+            show_alert=True,
+        )
+        return
+
+    is_ad = req["request_type"] in AD_REQUEST_TYPES
 
     if action == "reject":
         new_status = "REJECTED"
@@ -106,7 +150,8 @@ async def handle_admin_request_decision(callback: CallbackQuery) -> None:
             """
             UPDATE requests
             SET status = ?, updated_at = ?
-            WHERE id = ?;
+            WHERE id = ?
+              AND status = 'PENDING';
             """,
             (
                 new_status,
@@ -129,7 +174,8 @@ async def handle_admin_request_decision(callback: CallbackQuery) -> None:
             SET status = ?,
                 ad_expires_at = ?,
                 updated_at = ?
-            WHERE id = ?;
+            WHERE id = ?
+              AND status = 'PENDING';
             """,
             (
                 new_status,
@@ -146,7 +192,8 @@ async def handle_admin_request_decision(callback: CallbackQuery) -> None:
             """
             UPDATE requests
             SET status = ?, updated_at = ?
-            WHERE id = ?;
+            WHERE id = ?
+              AND status = 'PENDING';
             """,
             (
                 new_status,
@@ -471,13 +518,21 @@ async def handle_admin_user_list(
         )
         return
 
-    page = parse_int(
-        callback.data.split(":")[1]
-    )
+    data = callback.data or ""
+    parts = data.split(":")
 
-    if page is None:
+    if len(parts) != 2:
         await callback.answer(
             "⚠️ درخواست نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    page = parse_int(parts[1])
+
+    if page is None or page < 0:
+        await callback.answer(
+            "⚠️ صفحه نامعتبر است.",
             show_alert=True,
         )
         return
@@ -556,9 +611,17 @@ async def handle_admin_user_view(
         )
         return
 
-    target_user_id = parse_int(
-        callback.data.split(":")[1]
-    )
+    data = callback.data or ""
+    parts = data.split(":")
+
+    if len(parts) != 2:
+        await callback.answer(
+            "⚠️ شناسه نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    target_user_id = parse_int(parts[1])
 
     if target_user_id is None:
         await callback.answer(
@@ -710,13 +773,23 @@ async def handle_admin_ad_set_price_start(
         )
         return
 
-    request_id = parse_int(
-        callback.data.split(":")[1]
+    request_id = _parse_callback_int(
+        callback,
+        "adsetprice:",
     )
 
     if request_id is None:
         await callback.answer(
             "⚠️ شناسه نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    req = await _get_ad_request(request_id)
+
+    if not req:
+        await callback.answer(
+            "⚠️ درخواست تبلیغاتی یافت نشد.",
             show_alert=True,
         )
         return
@@ -774,12 +847,21 @@ async def handle_admin_ad_set_price_value(
         )
         return
 
+    req = await _get_ad_request(request_id)
+
+    if not req:
+        await message.answer(
+            "⚠️ درخواست تبلیغاتی پیدا نشد."
+        )
+        return
+
     await db.execute(
         """
         UPDATE requests
         SET ad_price = ?,
             updated_at = ?
-        WHERE id = ?;
+        WHERE id = ?
+          AND request_type IN ('ad', 'general_ad');
         """,
         (
             price,
@@ -820,13 +902,23 @@ async def handle_admin_ad_set_duration_start(
         )
         return
 
-    request_id = parse_int(
-        callback.data.split(":")[1]
+    request_id = _parse_callback_int(
+        callback,
+        "adsetduration:",
     )
 
     if request_id is None:
         await callback.answer(
             "⚠️ شناسه نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    req = await _get_ad_request(request_id)
+
+    if not req:
+        await callback.answer(
+            "⚠️ درخواست تبلیغاتی یافت نشد.",
             show_alert=True,
         )
         return
@@ -882,12 +974,21 @@ async def handle_admin_ad_set_duration_value(
         )
         return
 
+    req = await _get_ad_request(request_id)
+
+    if not req:
+        await message.answer(
+            "⚠️ درخواست تبلیغاتی پیدا نشد."
+        )
+        return
+
     await db.execute(
         """
         UPDATE requests
         SET ad_duration_days = ?,
             updated_at = ?
-        WHERE id = ?;
+        WHERE id = ?
+          AND request_type IN ('ad', 'general_ad');
         """,
         (
             days,
@@ -925,7 +1026,9 @@ async def handle_admin_ad_set_duration_value(
             SET status = 'ACTIVE',
                 ad_expires_at = ?,
                 updated_at = ?
-            WHERE id = ?;
+            WHERE id = ?
+              AND status = 'APPROVED'
+              AND request_type IN ('ad', 'general_ad');
             """,
             (
                 expires_at,
@@ -966,13 +1069,23 @@ async def handle_admin_ad_set_placement_start(
         )
         return
 
-    request_id = parse_int(
-        callback.data.split(":")[1]
+    request_id = _parse_callback_int(
+        callback,
+        "adsetplacement:",
     )
 
     if request_id is None:
         await callback.answer(
             "⚠️ شناسه نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    req = await _get_ad_request(request_id)
+
+    if not req:
+        await callback.answer(
+            "⚠️ درخواست تبلیغاتی یافت نشد.",
             show_alert=True,
         )
         return
@@ -1028,12 +1141,21 @@ async def handle_admin_ad_set_placement_value(
         )
         return
 
+    req = await _get_ad_request(request_id)
+
+    if not req:
+        await message.answer(
+            "⚠️ درخواست تبلیغاتی پیدا نشد."
+        )
+        return
+
     await db.execute(
         """
         UPDATE requests
         SET ad_placement = ?,
             updated_at = ?
-        WHERE id = ?;
+        WHERE id = ?
+          AND request_type IN ('ad', 'general_ad');
         """,
         (
             placement,
@@ -1167,22 +1289,31 @@ async def handle_ads_admin_detail(
         )
         return
 
-    request_id = parse_int(
-        callback.data.split(":")[1]
+    request_id = _parse_callback_int(
+        callback,
+        "adsadmindetail:",
     )
 
-    req = (
-        await db.fetchone(
-            "SELECT * FROM requests WHERE id = ?;",
-            (request_id,),
+    if request_id is None:
+        await callback.answer(
+            "⚠️ شناسه نامعتبر است.",
+            show_alert=True,
         )
-        if request_id
-        else None
+        return
+
+    req = await db.fetchone(
+        """
+        SELECT *
+        FROM requests
+        WHERE id = ?
+          AND request_type IN ('ad', 'general_ad');
+        """,
+        (request_id,),
     )
 
     if not req:
         await callback.answer(
-            "⚠️ این درخواست یافت نشد.",
+            "⚠️ این درخواست تبلیغاتی یافت نشد.",
             show_alert=True,
         )
         return
@@ -1230,20 +1361,21 @@ async def handle_ads_admin_detail(
 
     builder = InlineKeyboardBuilder()
 
-    builder.row(
-        InlineKeyboardButton(
-            text="🟢 تأیید تبلیغ",
-            callback_data=(
-                f"adminreq:approve:{req['id']}"
+    if req["status"] == "PENDING":
+        builder.row(
+            InlineKeyboardButton(
+                text="🟢 تأیید تبلیغ",
+                callback_data=(
+                    f"adminreq:approve:{req['id']}"
+                ),
             ),
-        ),
-        InlineKeyboardButton(
-            text="🔴 رد تبلیغ",
-            callback_data=(
-                f"adminreq:reject:{req['id']}"
+            InlineKeyboardButton(
+                text="🔴 رد تبلیغ",
+                callback_data=(
+                    f"adminreq:reject:{req['id']}"
+                ),
             ),
-        ),
-    )
+        )
 
     builder.row(
         InlineKeyboardButton(
