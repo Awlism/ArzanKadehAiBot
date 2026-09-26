@@ -11,8 +11,9 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from ..database import db
-from ..utils import now_iso, notify_user
+from ..utils import now_iso
 from .backups import create_database_backup
+from .notifications import notify_user
 
 
 logger = logging.getLogger("arzankadeh")
