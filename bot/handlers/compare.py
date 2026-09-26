@@ -279,11 +279,14 @@ async def handle_compare_list(
 async def handle_compare_start(
     callback: CallbackQuery,
 ) -> None:
-    product_id = parse_int(
-        callback.data.split(":")[1]
+    parts = callback.data.split(":", 1)
+    product_id = (
+        parse_int(parts[1])
+        if len(parts) > 1
+        else None
     )
 
-    if product_id is None:
+    if product_id is None or product_id < 1:
         await callback.answer(
             "⚠️ شناسه نامعتبر است.",
             show_alert=True,
@@ -397,15 +400,18 @@ async def handle_compare_drop(
     callback: CallbackQuery,
     state: FSMContext,
 ) -> None:
-    product_id = parse_int(
-        callback.data.split(":")[1]
+    parts = callback.data.split(":", 1)
+    product_id = (
+        parse_int(parts[1])
+        if len(parts) > 1
+        else None
     )
 
     user_id = await ensure_user(
         callback.from_user
     )
 
-    if product_id is not None:
+    if product_id is not None and product_id > 0:
         selection = [
             selected_id
             for selected_id in get_compare_selection(
