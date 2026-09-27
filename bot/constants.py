@@ -52,6 +52,7 @@ SUPPORT_MESSAGE_MAX_LEN = 4000
 # ---------------------------------------------------------------------------
 
 EMOJI_MAIN_MENU = "🛍️"
+
 EMOJI_SEARCH = "🔎"
 EMOJI_SELLERS = "🏪"
 EMOJI_CATEGORIES = "📂"
@@ -60,6 +61,14 @@ EMOJI_PRICE = "💰"
 EMOJI_CITY = "📍"
 EMOJI_RATING = "⭐"
 EMOJI_LINK = "🔗"
+
+EMOJI_HOT = "🔥"
+EMOJI_NEW_TODAY = "🆕"
+EMOJI_PICKS = "✨"
+EMOJI_NEAR_ME = "📍"
+EMOJI_TOP_SELLERS = "⭐"
+
+EMOJI_FAVORITES = "❤️"
 
 
 # ---------------------------------------------------------------------------
