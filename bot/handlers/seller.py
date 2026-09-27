@@ -716,9 +716,16 @@ async def handle_seller_favorite_remove(
         )
         return
 
-    await toggle_seller_favorite(
-        user_id,
-        seller_id,
+    await db.execute(
+        """
+        DELETE FROM seller_favorites
+        WHERE user_id = ?
+          AND seller_id = ?;
+        """,
+        (
+            user_id,
+            seller_id,
+        ),
     )
 
     await log_event(
