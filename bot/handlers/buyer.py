@@ -4,7 +4,9 @@ ArzanKadeh AI
 Buyer / discovery handlers
 """
 
+from datetime import datetime
 from html import escape
+from zoneinfo import ZoneInfo
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, InlineKeyboardButton
@@ -36,6 +38,8 @@ from ..utils import (
 
 router = Router(name="buyer")
 
+TEHRAN_TIMEZONE = ZoneInfo("Asia/Tehran")
+
 
 def _html(value) -> str:
     """
@@ -48,6 +52,15 @@ def _html(value) -> str:
         str(value),
         quote=False,
     )
+
+
+def _today_tehran() -> str:
+    """
+    Return today's date in Tehran local time as YYYY-MM-DD.
+    """
+    return datetime.now(
+        TEHRAN_TIMEZONE
+    ).date().isoformat()
 
 
 @router.callback_query(F.data.startswith("cat:"))
@@ -407,7 +420,7 @@ async def handle_near_me(
         for seller in sellers:
             badge = (
                 "🟢"
-                if seller["status"] == "CLAIMED"
+                if seller["status"] == "approved"
                 else "⚪"
             )
 
@@ -514,18 +527,23 @@ async def handle_new_today(
         callback.from_user
     )
 
+    today_tehran = _today_tehran()
+
     products = await db.fetchall(
         """
         SELECT p.*
         FROM products p
         JOIN sellers s
           ON s.id = p.seller_id
-        WHERE date(p.created_at) = date('now')
+        WHERE date(p.created_at) = ?
           AND COALESCE(s.is_active, 1) = 1
         ORDER BY p.created_at DESC
         LIMIT ?;
         """,
-        (TOP_LIST_LIMIT,),
+        (
+            today_tehran,
+            TOP_LIST_LIMIT,
+        ),
     )
 
     builder = InlineKeyboardBuilder()
