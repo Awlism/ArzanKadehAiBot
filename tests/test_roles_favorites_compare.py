@@ -287,8 +287,8 @@ class RolesFavoritesCompareTests(unittest.TestCase):
             "buyer",
         )
 
-    def test_set_active_mode_rejects_invalid_mode(self):
-        with self.assertRaises(ValueError):
+    def test_set_active_mode_rejects_unauthorized_admin_mode(self):
+        with self.assertRaises(PermissionError):
             run(
                 self.ns["set_active_mode"](
                     1,
