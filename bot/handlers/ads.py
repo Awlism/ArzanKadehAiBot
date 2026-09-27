@@ -837,51 +837,52 @@ async def _finish_public_ad(
 
         return
 
-    now = now_iso()
+    request_id = await create_request(
+        user_id,
+        "general_ad",
+        topic=AD_KIND_LABELS[kind],
+        message=data.get("pubad_description"),
+    )
 
-    cursor = await db.execute(
-        """
-        INSERT INTO requests (
-            user_id,
-            request_type,
-            topic,
-            message,
-            status,
-            created_at,
-            updated_at,
-            ad_kind,
-            ad_title,
-            ad_image_url,
-            ad_link
+    if request_id is None:
+        text = (
+            "⚠️ ثبت تبلیغ انجام نشد. "
+            "لطفاً دوباره تلاش کن."
         )
-        VALUES (
-            ?,
-            'general_ad',
-            ?,
-            ?,
-            'PENDING',
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            ?
-        );
+
+        if callback:
+            await safe_edit(
+                callback,
+                text,
+                InlineKeyboardBuilder().as_markup(),
+            )
+            await callback.answer()
+
+        elif message:
+            await message.answer(text)
+
+        return
+
+    await db.execute(
+        """
+        UPDATE requests
+        SET ad_kind = ?,
+            ad_title = ?,
+            ad_image_url = ?,
+            ad_link = ?,
+            updated_at = ?
+        WHERE id = ?
+          AND request_type = 'general_ad';
         """,
         (
-            user_id,
-            AD_KIND_LABELS[kind],
-            data.get("pubad_description"),
-            now,
-            now,
             kind,
             title,
             data.get("pubad_image_url"),
             data.get("pubad_link"),
+            now_iso(),
+            request_id,
         ),
     )
-
-    request_id = cursor.lastrowid
 
     await log_audit(
         user_id,
