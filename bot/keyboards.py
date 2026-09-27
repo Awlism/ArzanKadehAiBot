@@ -9,13 +9,11 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from .constants import (
     EMOJI_ACCOUNT,
-    EMOJI_ADS,
     EMOJI_BACK,
     EMOJI_CATEGORIES,
     EMOJI_COMPARE,
     EMOJI_FAVORITES,
     EMOJI_HOT,
-    EMOJI_MAIN_MENU,
     EMOJI_NEAR_ME,
     EMOJI_NEW_TODAY,
     EMOJI_PICKS,
@@ -81,56 +79,71 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
         text=f"{EMOJI_SEARCH} جستجوی محصول",
         callback_data="search",
     )
+
     builder.button(
         text=f"{EMOJI_SELLERS} فروشگاه‌ها",
         callback_data="sellers:0",
     )
+
     builder.button(
         text=f"{EMOJI_CATEGORIES} دسته‌بندی‌ها",
         callback_data="cat:0:0",
     )
+
     builder.button(
         text=f"{EMOJI_HOT} داغ‌ترین‌ها",
         callback_data="hot",
     )
+
     builder.button(
         text=f"{EMOJI_NEW_TODAY} جدیدهای امروز",
         callback_data="newtoday",
     )
+
     builder.button(
         text=f"{EMOJI_PICKS} انتخاب ارزانکده",
         callback_data="picks",
     )
+
     builder.button(
         text=f"{EMOJI_NEAR_ME} نزدیک من",
         callback_data="nearme",
     )
+
     builder.button(
         text=f"{EMOJI_TOP_SELLERS} فروشندگان برتر",
         callback_data="topsellers",
     )
+
     builder.button(
         text=f"{EMOJI_FAVORITES} علاقه‌مندی‌ها",
         callback_data="favorites:0",
     )
+
     builder.button(
         text=f"{EMOJI_COMPARE} مقایسه",
         callback_data="comparelist",
     )
+
     builder.button(
         text=f"{EMOJI_REGISTER_SELLER} ثبت فروشگاه من",
         callback_data="registerseller",
     )
+
     builder.button(
         text="📢 تبلیغ در ارزانکده",
         callback_data="publicads",
     )
+
     builder.button(
         text=f"{EMOJI_ACCOUNT} حساب کاربری",
         callback_data="account",
     )
 
     builder.adjust(2)
-    builder.row(restart_button())
+
+    builder.row(
+        restart_button()
+    )
 
     return builder.as_markup()
