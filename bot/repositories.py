@@ -169,6 +169,11 @@ async def set_active_mode(
     if mode not in VALID_MODES:
         return False
 
+    if mode == "admin" and not await is_admin_user_id(user_id):
+        raise PermissionError(
+            "Admin mode is restricted to the configured admin user."
+        )
+
     await db.execute(
         """
         UPDATE users
