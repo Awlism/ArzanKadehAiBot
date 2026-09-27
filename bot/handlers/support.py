@@ -4,6 +4,8 @@ ArzanKadeh AI
 Support and request handlers
 """
 
+from html import escape
+
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.filters import StateFilter
@@ -48,6 +50,12 @@ SUPPORT_TOPICS_SELLER = {
 }
 
 
+def _html(value) -> str:
+    if value is None:
+        return ""
+    return escape(str(value), quote=False)
+
+
 @router.callback_query(F.data == "myrequests")
 async def handle_my_requests(
     callback: CallbackQuery,
@@ -78,9 +86,9 @@ async def handle_my_requests(
 
         for item in items:
             lines.append(
-                f"{item['title']} — "
-                f"{item['status_label']}\n"
-                f"{item['created_at'][:10]}"
+                f"{_html(item['title'])} — "
+                f"{_html(item['status_label'])}\n"
+                f"{_html(item['created_at'][:10])}"
             )
 
         text = "\n\n".join(lines)
@@ -221,7 +229,7 @@ async def handle_support_topic(
     await safe_edit(
         callback,
         (
-            f"دلیل انتخابی: {topic}\n\n"
+            f"دلیل انتخابی: {_html(topic)}\n\n"
             "✍️ در یک جمله برامون بنویس "
             "چه مشکلی پیش اومده.\n"
             f"حداکثر {SUPPORT_MESSAGE_MAX_LEN} حرف 👇"
@@ -316,8 +324,8 @@ async def handle_support_text(
             message.bot,
             (
                 "🛟 درخواست پشتیبانی جدید\n"
-                f"موضوع: {topic}\n"
-                f"پیام: {text}\n"
+                f"موضوع: {_html(topic)}\n"
+                f"پیام: {_html(text)}\n"
                 f"(کاربر داخلی #{user_id})"
             ),
             reply_markup=builder.as_markup(),
