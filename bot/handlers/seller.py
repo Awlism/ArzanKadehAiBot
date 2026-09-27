@@ -3233,9 +3233,21 @@ async def handle_product_delete_confirmed(
         "seller_id"
     ]
 
-    await delete_product_record(
+    deleted = await delete_product_record(
         product_id
     )
+
+    if not deleted:
+        await callback.answer(
+            "⚠️ حذف محصول انجام نشد. "
+            "ممکن است محصول قبلاً حذف شده باشد.",
+            show_alert=True,
+        )
+        await _render_product_list(
+            callback,
+            seller_id,
+        )
+        return
 
     await log_audit(
         user_id,
