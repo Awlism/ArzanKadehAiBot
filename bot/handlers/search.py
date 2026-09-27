@@ -7,6 +7,7 @@ Local search engine and search handlers
 import re
 import time
 from dataclasses import dataclass
+from html import escape
 from typing import Optional
 
 from aiogram import F, Router
@@ -36,6 +37,20 @@ from ..utils import (
 
 
 router = Router(name="search")
+
+
+# ======================================================================
+# HTML HELPERS
+# ======================================================================
+
+def _html(value) -> str:
+    if value is None:
+        return ""
+
+    return escape(
+        str(value),
+        quote=False,
+    )
 
 
 # ======================================================================
@@ -630,9 +645,12 @@ def build_search_summary(
     ]
 
     first_line = (
-        " • ".join(parts)
+        " • ".join(
+            _html(part)
+            for part in parts
+        )
         if parts
-        else structured_query.raw_query
+        else _html(structured_query.raw_query)
     )
 
     lines = [
@@ -646,24 +664,25 @@ def build_search_summary(
     ):
         lines.append(
             "بین "
-            f"{format_price(structured_query.min_price)} "
+            f"{_html(format_price(structured_query.min_price))} "
             "تا "
-            f"{format_price(structured_query.max_price)}"
+            f"{_html(format_price(structured_query.max_price))}"
         )
 
     elif structured_query.max_price is not None:
         lines.append(
-            f"تا {format_price(structured_query.max_price)}"
+            f"تا {_html(format_price(structured_query.max_price))}"
         )
 
     elif structured_query.min_price is not None:
         lines.append(
-            f"از {format_price(structured_query.min_price)}"
+            f"از {_html(format_price(structured_query.min_price))}"
         )
 
     if structured_query.city:
         lines.append(
-            f"{EMOJI_CITY} {structured_query.city}"
+            f"{EMOJI_CITY} "
+            f"{_html(structured_query.city)}"
         )
 
     return "\n".join(lines)
@@ -2045,7 +2064,7 @@ async def _render_search_results(
             ).strip()
 
             suffix = (
-                f" • {city_name}"
+                f" • {_html(city_name)}"
                 if city_name
                 else ""
             )
@@ -2055,7 +2074,7 @@ async def _render_search_results(
                     text=(
                         f"{EMOJI_SELLERS} "
                         f"{badge} "
-                        f"{seller['name']}"
+                        f"{_html(seller['name'])}"
                         f"{suffix}"
                     ),
                     callback_data=(
@@ -2077,8 +2096,8 @@ async def _render_search_results(
             InlineKeyboardButton(
                 text=(
                     f"{EMOJI_PRODUCT} "
-                    f"{product['name']} - "
-                    f"{format_price(product['price'])}"
+                    f"{_html(product['name'])} - "
+                    f"{_html(format_price(product['price']))}"
                 ),
                 callback_data=(
                     f"product:{product['id']}"
@@ -2187,8 +2206,8 @@ async def handle_search_query(
         await _render_no_results(
             message,
             (
-                f"🔎 نتیجه‌ای برای "
-                f"«{query}» پیدا نشد."
+                "🔎 نتیجه‌ای برای "
+                f"«{_html(query)}» پیدا نشد."
             ),
         )
         return
@@ -2200,13 +2219,13 @@ async def handle_search_query(
         )
     elif mode == "fuzzy":
         header = (
-            f"🔎 نتایج نزدیک به "
-            f"«{query}»:"
+            "🔎 نتایج نزدیک به "
+            f"«{_html(query)}»:"
         )
     else:
         header = (
-            f"🔎 نتایج جستجو برای "
-            f"«{query}»:"
+            "🔎 نتایج جستجو برای "
+            f"«{_html(query)}»:"
         )
 
     if sellers and not products:
