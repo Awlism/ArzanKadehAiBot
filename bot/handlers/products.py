@@ -836,14 +836,16 @@ async def handle_review_text(
             SELECT id
             FROM reviews
             WHERE user_id = ?
-              AND seller_id = ?;
+              AND seller_id = ?
+              AND product_id IS NULL;
         """
     else:
         duplicate_query = """
             SELECT id
             FROM reviews
             WHERE user_id = ?
-              AND product_id = ?;
+              AND product_id = ?
+              AND seller_id IS NULL;
         """
 
     existing = await db.fetchone(
@@ -864,27 +866,42 @@ async def handle_review_text(
         message.text or ""
     ).strip()
 
-    await db.execute(
-        """
-        INSERT INTO reviews (
-            user_id,
-            seller_id,
-            product_id,
-            rating,
-            text,
-            created_at
+    try:
+        cursor = await db.execute(
+            """
+            INSERT INTO reviews (
+                user_id,
+                seller_id,
+                product_id,
+                rating,
+                text,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?);
+            """,
+            (
+                user_id,
+                seller_id,
+                product_id,
+                rating,
+                review_text,
+                now_iso(),
+            ),
         )
-        VALUES (?, ?, ?, ?, ?, ?);
-        """,
-        (
-            user_id,
-            seller_id,
-            product_id,
-            rating,
-            review_text,
-            now_iso(),
-        ),
-    )
+
+    except aiosqlite.IntegrityError:
+        # The database-level unique index protects against
+        # concurrent duplicate review submissions.
+        await message.answer(
+            "شما قبلاً برای این مورد نظر ثبت کرده‌اید."
+        )
+        return
+
+    if cursor.rowcount != 1:
+        await message.answer(
+            "⚠️ ثبت نظر انجام نشد. لطفاً دوباره تلاش کن."
+        )
+        return
 
     if target_type == "seller":
         await db.execute(
