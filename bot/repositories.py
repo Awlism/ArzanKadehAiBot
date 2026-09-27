@@ -1228,11 +1228,23 @@ async def create_review(
     rating: int,
     comment: Optional[str],
 ) -> bool:
-    # Rating must always be within the canonical 1–5 range.
+    """
+    Create one review for either a seller or a product.
+
+    Canonical storage rules:
+    - Seller review: seller_id is set, product_id is NULL.
+    - Product review: product_id is set, seller_id is NULL.
+    """
+
+    if user_id < 1:
+        return False
+
     if not 1 <= rating <= 5:
         return False
 
-    # The seller must exist.
+    if seller_id < 1:
+        return False
+
     seller = await db.fetchone(
         """
         SELECT id
@@ -1246,9 +1258,17 @@ async def create_review(
     if seller is None:
         return False
 
-    # If the review targets a product, that product must belong
-    # to the same seller supplied for the review.
-    if product_id is not None:
+    review_seller_id: Optional[int]
+    review_product_id: Optional[int]
+
+    if product_id is None:
+        review_seller_id = seller_id
+        review_product_id = None
+
+    else:
+        if product_id < 1:
+            return False
+
         product = await db.fetchone(
             """
             SELECT id
@@ -1266,6 +1286,37 @@ async def create_review(
         if product is None:
             return False
 
+        review_seller_id = None
+        review_product_id = product_id
+
+    existing = await db.fetchone(
+        """
+        SELECT id
+        FROM reviews
+        WHERE user_id = ?
+          AND (
+                (
+                    seller_id = ?
+                    AND product_id IS NULL
+                )
+                OR
+                (
+                    product_id = ?
+                    AND seller_id IS NULL
+                )
+          )
+        LIMIT 1;
+        """,
+        (
+            user_id,
+            review_seller_id,
+            review_product_id,
+        ),
+    )
+
+    if existing is not None:
+        return False
+
     await db.execute(
         """
         INSERT INTO reviews (
@@ -1280,8 +1331,8 @@ async def create_review(
         """,
         (
             user_id,
-            seller_id,
-            product_id,
+            review_seller_id,
+            review_product_id,
             rating,
             comment,
             now_iso(),
