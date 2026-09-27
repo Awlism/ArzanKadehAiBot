@@ -8,16 +8,12 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from .constants import (
-    EMOJI_ACCOUNT,
-    EMOJI_BACK,
     EMOJI_CATEGORIES,
-    EMOJI_COMPARE,
     EMOJI_FAVORITES,
     EMOJI_HOT,
     EMOJI_NEAR_ME,
     EMOJI_NEW_TODAY,
     EMOJI_PICKS,
-    EMOJI_REGISTER_SELLER,
     EMOJI_SEARCH,
     EMOJI_SELLERS,
     EMOJI_TOP_SELLERS,
@@ -34,7 +30,7 @@ def restart_button() -> InlineKeyboardButton:
 def kb_add_back(
     builder: InlineKeyboardBuilder,
     callback_data: str,
-    text: str = f"{EMOJI_BACK} بازگشت",
+    text: str = "🔙 بازگشت",
 ) -> None:
     builder.row(
         InlineKeyboardButton(
@@ -121,12 +117,12 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
     )
 
     builder.button(
-        text=f"{EMOJI_COMPARE} مقایسه",
+        text="⚖️ مقایسه",
         callback_data="comparelist",
     )
 
     builder.button(
-        text=f"{EMOJI_REGISTER_SELLER} ثبت فروشگاه من",
+        text="🏪 ثبت فروشگاه من",
         callback_data="registerseller",
     )
 
@@ -136,7 +132,7 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
     )
 
     builder.button(
-        text=f"{EMOJI_ACCOUNT} حساب کاربری",
+        text="👤 حساب کاربری",
         callback_data="account",
     )
 
