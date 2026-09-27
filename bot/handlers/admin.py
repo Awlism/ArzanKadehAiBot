@@ -5,6 +5,7 @@ Admin handlers
 """
 
 from datetime import datetime, timedelta, timezone
+from html import escape
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -40,14 +41,30 @@ from ..utils import (
     safe_edit,
 )
 
+
 router = Router(name="admin")
 
 PAGE_SIZE_LIST = 10
 AD_REQUEST_TYPES = ("ad", "general_ad")
 
 
+def _html(value) -> str:
+    """
+    Escape dynamic values before inserting them into Telegram HTML.
+    """
+    if value is None:
+        return ""
+
+    return escape(
+        str(value),
+        quote=False,
+    )
+
+
 def _is_admin(callback: CallbackQuery) -> bool:
-    return is_admin_telegram_id(callback.from_user.id)
+    return is_admin_telegram_id(
+        callback.from_user.id
+    )
 
 
 async def _get_ad_request(request_id: int):
@@ -101,7 +118,10 @@ async def handle_admin_request_decision(
 
     request_id = parse_int(request_id_str)
 
-    if request_id is None or action not in ("approve", "reject"):
+    if request_id is None or action not in (
+        "approve",
+        "reject",
+    ):
         await callback.answer(
             "⚠️ درخواست نامعتبر است.",
             show_alert=True,
@@ -115,7 +135,9 @@ async def handle_admin_request_decision(
         )
         return
 
-    admin_user_id = await ensure_user(callback.from_user)
+    admin_user_id = await ensure_user(
+        callback.from_user
+    )
 
     req = await db.fetchone(
         "SELECT * FROM requests WHERE id = ?;",
@@ -136,7 +158,10 @@ async def handle_admin_request_decision(
         )
 
         await callback.answer(
-            f"⚠️ این درخواست قبلاً تعیین‌تکلیف شده: {current_status}",
+            (
+                "⚠️ این درخواست قبلاً تعیین‌تکلیف شده: "
+                f"{_html(current_status)}"
+            ),
             show_alert=True,
         )
         return
@@ -165,8 +190,12 @@ async def handle_admin_request_decision(
 
         expires_at = (
             datetime.now(timezone.utc)
-            + timedelta(days=req["ad_duration_days"])
-        ).isoformat(timespec="seconds")
+            + timedelta(
+                days=req["ad_duration_days"]
+            )
+        ).isoformat(
+            timespec="seconds"
+        )
 
         await db.execute(
             """
@@ -215,13 +244,20 @@ async def handle_admin_request_decision(
             await notify_user(
                 req["user_id"],
                 "درخواست پشتیبانی",
-                "✅ درخواست پشتیبانی‌ات تأیید شد. تیم ارزانکده به‌زودی باهات در ارتباط خواهد بود.",
+                (
+                    "✅ درخواست پشتیبانی‌ات تأیید شد. "
+                    "تیم ارزانکده به‌زودی باهات در ارتباط خواهد بود."
+                ),
             )
+
         else:
             await notify_user(
                 req["user_id"],
                 "درخواست پشتیبانی",
-                "درخواست پشتیبانی‌ات بررسی شد. اگر همچنان مشکل داری، دوباره از منو درخواست بده.",
+                (
+                    "درخواست پشتیبانی‌ات بررسی شد. "
+                    "اگر همچنان مشکل داری، دوباره از منو درخواست بده."
+                ),
             )
 
     elif req["request_type"] == "general_ad":
@@ -230,10 +266,16 @@ async def handle_admin_request_decision(
             message = (
                 "✅ تبلیغت تأیید شد!"
                 + (
-                    f" برای {req['ad_duration_days']} روز فعال می‌مونه."
+                    (
+                        f" برای {req['ad_duration_days']} روز "
+                        "فعال می‌مونه."
+                    )
                     if new_status == "ACTIVE"
                     else
-                    " برای هماهنگی قیمت و مدت نمایش، تیم ارزانکده باهات در ارتباط خواهد بود."
+                    (
+                        " برای هماهنگی قیمت و مدت نمایش، "
+                        "تیم ارزانکده باهات در ارتباط خواهد بود."
+                    )
                 )
             )
 
@@ -247,7 +289,10 @@ async def handle_admin_request_decision(
             await notify_user(
                 req["user_id"],
                 "تبلیغ در ارزانکده",
-                "تبلیغت فعلاً امکان‌پذیر نیست. برای جزئیات بیشتر با پشتیبانی در ارتباط باش.",
+                (
+                    "تبلیغت فعلاً امکان‌پذیر نیست. "
+                    "برای جزئیات بیشتر با پشتیبانی در ارتباط باش."
+                ),
             )
 
     else:
@@ -256,13 +301,21 @@ async def handle_admin_request_decision(
             await notify_user(
                 req["user_id"],
                 "درخواست تبلیغات",
-                "✅ درخواست تبلیغاتت تأیید شد. تیم ارزانکده برای هماهنگی قیمت و پرداخت باهات تماس می‌گیره.",
+                (
+                    "✅ درخواست تبلیغاتت تأیید شد. "
+                    "تیم ارزانکده برای هماهنگی قیمت و پرداخت "
+                    "باهات تماس می‌گیره."
+                ),
             )
+
         else:
             await notify_user(
                 req["user_id"],
                 "درخواست تبلیغات",
-                "درخواست تبلیغاتت فعلاً امکان‌پذیر نیست. برای جزئیات بیشتر با پشتیبانی در ارتباط باش.",
+                (
+                    "درخواست تبلیغاتت فعلاً امکان‌پذیر نیست. "
+                    "برای جزئیات بیشتر با پشتیبانی در ارتباط باش."
+                ),
             )
 
     await callback.answer(
@@ -270,10 +323,18 @@ async def handle_admin_request_decision(
     )
 
     try:
-        await callback.message.edit_text(
-            f"{callback.message.text}\n\n"
-            f"— تصمیم ثبت شد: {REQUEST_STATUS_LABELS[new_status]}"
+        current_text = callback.message.text or ""
+
+        status_label = REQUEST_STATUS_LABELS.get(
+            new_status,
+            new_status,
         )
+
+        await callback.message.edit_text(
+            f"{current_text}\n\n"
+            f"— تصمیم ثبت شد: {_html(status_label)}"
+        )
+
     except TelegramBadRequest:
         pass
 
@@ -282,7 +343,9 @@ async def handle_admin_request_decision(
 # ADMIN HOME
 # ======================================================================
 
-async def _render_admin_home(callback: CallbackQuery) -> None:
+async def _render_admin_home(
+    callback: CallbackQuery,
+) -> None:
     text = "🛡 <b>پنل مدیریت</b>"
 
     builder = InlineKeyboardBuilder()
@@ -301,7 +364,10 @@ async def _render_admin_home(callback: CallbackQuery) -> None:
         )
     )
 
-    kb_add_back(builder, "main")
+    kb_add_back(
+        builder,
+        "main",
+    )
 
     await safe_edit(
         callback,
@@ -364,7 +430,10 @@ async def handle_admin_users_menu(
         )
     )
 
-    kb_add_back(builder, "adminhome")
+    kb_add_back(
+        builder,
+        "adminhome",
+    )
 
     await safe_edit(
         callback,
@@ -392,11 +461,18 @@ async def handle_admin_user_search_start(
     )
 
     builder = InlineKeyboardBuilder()
-    kb_add_back(builder, "adminusers")
+
+    kb_add_back(
+        builder,
+        "adminusers",
+    )
 
     await safe_edit(
         callback,
-        "🔎 نام، username یا آیدی عددی تلگرام کاربر را بفرست:",
+        (
+            "🔎 نام، username یا آیدی عددی "
+            "تلگرام کاربر را بفرست:"
+        ),
         builder.as_markup(),
     )
 
@@ -410,14 +486,21 @@ async def handle_admin_user_search_query(
     message: Message,
     state: FSMContext,
 ) -> None:
-    if await restart_requested(message, state):
+    if await restart_requested(
+        message,
+        state,
+    ):
         return
 
-    if not is_admin_telegram_id(message.from_user.id):
+    if not is_admin_telegram_id(
+        message.from_user.id
+    ):
         await state.clear()
         return
 
-    query = (message.text or "").strip()
+    query = (
+        message.text or ""
+    ).strip()
 
     await state.clear()
 
@@ -449,6 +532,7 @@ async def handle_admin_user_search_query(
                 PAGE_SIZE_LIST,
             ),
         )
+
     else:
         rows = await db.fetchall(
             """
@@ -472,12 +556,14 @@ async def handle_admin_user_search_query(
 
     if not rows:
         text = (
-            f"🔎 نتیجه‌ای برای «{query}» پیدا نشد."
+            "🔎 نتیجه‌ای برای "
+            f"«{_html(query)}» پیدا نشد."
         )
 
     else:
         text = (
-            f"🔎 نتایج جستجو برای «{query}»:"
+            "🔎 نتایج جستجو برای "
+            f"«{_html(query)}»:"
         )
 
         for user in rows:
@@ -490,11 +576,16 @@ async def handle_admin_user_search_query(
             builder.row(
                 InlineKeyboardButton(
                     text=f"👤 {label}",
-                    callback_data=f"adminuserview:{user['id']}",
+                    callback_data=(
+                        f"adminuserview:{user['id']}"
+                    ),
                 )
             )
 
-    kb_add_back(builder, "adminusers")
+    kb_add_back(
+        builder,
+        "adminusers",
+    )
 
     await message.answer(
         text,
@@ -573,7 +664,9 @@ async def handle_admin_user_list(
             builder.row(
                 InlineKeyboardButton(
                     text=f"👤 {label}",
-                    callback_data=f"adminuserview:{user['id']}",
+                    callback_data=(
+                        f"adminuserview:{user['id']}"
+                    ),
                 )
             )
 
@@ -584,7 +677,10 @@ async def handle_admin_user_list(
             has_next,
         )
 
-    kb_add_back(builder, "adminusers")
+    kb_add_back(
+        builder,
+        "adminusers",
+    )
 
     await safe_edit(
         callback,
@@ -694,23 +790,33 @@ async def handle_admin_user_view(
     ) or "بدون نام"
 
     lines = [
-        f"👤 <b>{name}</b>",
-        f"آیدی تلگرام: {user['telegram_id']}",
+        f"👤 <b>{_html(name)}</b>",
+        (
+            "آیدی تلگرام: "
+            f"{_html(user['telegram_id'])}"
+        ),
     ]
 
     if user["username"]:
         lines.append(
-            f"نام کاربری: @{user['username']}"
+            "نام کاربری: "
+            f"@{_html(user['username'])}"
         )
 
     lines += [
-        f"شهر: {user['city_name'] or 'ثبت نشده'}",
+        (
+            "شهر: "
+            f"{_html(user['city_name'] or 'ثبت نشده')}"
+        ),
         (
             "نقش انتخاب‌شده: "
             f"{'بله' if user['role_chosen'] else 'خیر'}"
         ),
-        f"حالت فعلی: {mode}",
-        f"عضویت از: {user['created_at'][:10]}",
+        f"حالت فعلی: {_html(mode)}",
+        (
+            "عضویت از: "
+            f"{_html(user['created_at'][:10])}"
+        ),
         "",
         (
             "🏪 فروشگاه‌های متعلق به این کاربر: "
@@ -720,7 +826,8 @@ async def handle_admin_user_view(
 
     for seller in owned_sellers:
         lines.append(
-            f"  • {seller['name']}"
+            "  • "
+            f"{_html(seller['name'])}"
         )
 
     lines += [
@@ -785,7 +892,9 @@ async def handle_admin_ad_set_price_start(
         )
         return
 
-    req = await _get_ad_request(request_id)
+    req = await _get_ad_request(
+        request_id
+    )
 
     if not req:
         await callback.answer(
@@ -816,10 +925,15 @@ async def handle_admin_ad_set_price_value(
     message: Message,
     state: FSMContext,
 ) -> None:
-    if await restart_requested(message, state):
+    if await restart_requested(
+        message,
+        state,
+    ):
         return
 
-    if not is_admin_telegram_id(message.from_user.id):
+    if not is_admin_telegram_id(
+        message.from_user.id
+    ):
         await state.clear()
         return
 
@@ -847,7 +961,9 @@ async def handle_admin_ad_set_price_value(
         )
         return
 
-    req = await _get_ad_request(request_id)
+    req = await _get_ad_request(
+        request_id
+    )
 
     if not req:
         await message.answer(
@@ -914,7 +1030,9 @@ async def handle_admin_ad_set_duration_start(
         )
         return
 
-    req = await _get_ad_request(request_id)
+    req = await _get_ad_request(
+        request_id
+    )
 
     if not req:
         await callback.answer(
@@ -945,10 +1063,15 @@ async def handle_admin_ad_set_duration_value(
     message: Message,
     state: FSMContext,
 ) -> None:
-    if await restart_requested(message, state):
+    if await restart_requested(
+        message,
+        state,
+    ):
         return
 
-    if not is_admin_telegram_id(message.from_user.id):
+    if not is_admin_telegram_id(
+        message.from_user.id
+    ):
         await state.clear()
         return
 
@@ -974,7 +1097,9 @@ async def handle_admin_ad_set_duration_value(
         )
         return
 
-    req = await _get_ad_request(request_id)
+    req = await _get_ad_request(
+        request_id
+    )
 
     if not req:
         await message.answer(
@@ -1018,7 +1143,9 @@ async def handle_admin_ad_set_duration_value(
         expires_at = (
             datetime.now(timezone.utc)
             + timedelta(days=days)
-        ).isoformat(timespec="seconds")
+        ).isoformat(
+            timespec="seconds"
+        )
 
         await db.execute(
             """
@@ -1051,7 +1178,8 @@ async def handle_admin_ad_set_duration_value(
         )
 
     await message.answer(
-        f"✅ مدت درخواست #{request_id} ثبت شد: {days} روز"
+        f"✅ مدت درخواست #{request_id} ثبت شد: "
+        f"{days} روز"
     )
 
 
@@ -1081,7 +1209,9 @@ async def handle_admin_ad_set_placement_start(
         )
         return
 
-    req = await _get_ad_request(request_id)
+    req = await _get_ad_request(
+        request_id
+    )
 
     if not req:
         await callback.answer(
@@ -1113,10 +1243,15 @@ async def handle_admin_ad_set_placement_value(
     message: Message,
     state: FSMContext,
 ) -> None:
-    if await restart_requested(message, state):
+    if await restart_requested(
+        message,
+        state,
+    ):
         return
 
-    if not is_admin_telegram_id(message.from_user.id):
+    if not is_admin_telegram_id(
+        message.from_user.id
+    ):
         await state.clear()
         return
 
@@ -1141,7 +1276,9 @@ async def handle_admin_ad_set_placement_value(
         )
         return
 
-    req = await _get_ad_request(request_id)
+    req = await _get_ad_request(
+        request_id
+    )
 
     if not req:
         await message.answer(
@@ -1177,8 +1314,8 @@ async def handle_admin_ad_set_placement_value(
     )
 
     await message.answer(
-        f"✅ محل نمایش درخواست #{request_id} ثبت شد: "
-        f"{placement}"
+        f"✅ محل نمایش درخواست #{request_id} "
+        f"ثبت شد: {_html(placement)}"
     )
 
 
@@ -1252,7 +1389,7 @@ async def handle_ads_admin_panel(
 
         builder.row(
             InlineKeyboardButton(
-                text=f"📋 {title}",
+                text=f"📋 {_html(title)}",
                 callback_data=(
                     f"adsadmindetail:{row['id']}"
                 ),
@@ -1324,39 +1461,55 @@ async def handle_ads_admin_detail(
         or "—"
     )
 
+    title = (
+        req["ad_title"]
+        or req["topic"]
+        or "—"
+    )
+
+    description = (
+        req["message"]
+        or "—"
+    )
+
+    ad_link = (
+        req["ad_link"]
+        or "—"
+    )
+
+    status_label = REQUEST_STATUS_LABELS.get(
+        req["status"],
+        req["status"],
+    )
+
+    price_text = (
+        format_price(req["ad_price"])
+        if req["ad_price"]
+        else "تعیین‌نشده"
+    )
+
+    if req["ad_duration_days"]:
+        duration_text = (
+            f"{req['ad_duration_days']} روز"
+        )
+    else:
+        duration_text = "تعیین‌نشده"
+
+    placement = (
+        req["ad_placement"]
+        or "تعیین‌نشده"
+    )
+
     lines = [
         f"📢 درخواست #{req['id']}",
-        f"نوع: {ad_kind}",
-        (
-            f"عنوان: "
-            f"{req['ad_title'] or req['topic'] or '—'}"
-        ),
-        (
-            f"توضیح: "
-            f"{req['message'] or '—'}"
-        ),
-        (
-            f"لینک: "
-            f"{req['ad_link'] or '—'}"
-        ),
-        (
-            "وضعیت: "
-            f"{REQUEST_STATUS_LABELS.get(req['status'], req['status'])}"
-        ),
-        (
-            "💰 قیمت: "
-            f"{format_price(req['ad_price']) if req['ad_price'] else 'تعیین‌نشده'}"
-        ),
-        (
-            f"⏰ مدت: "
-            f"{req['ad_duration_days']} روز"
-            if req["ad_duration_days"]
-            else "⏰ مدت: تعیین‌نشده"
-        ),
-        (
-            "📍 محل نمایش: "
-            f"{req['ad_placement'] or 'تعیین‌نشده'}"
-        ),
+        f"نوع: {_html(ad_kind)}",
+        f"عنوان: {_html(title)}",
+        f"توضیح: {_html(description)}",
+        f"لینک: {_html(ad_link)}",
+        f"وضعیت: {_html(status_label)}",
+        f"💰 قیمت: {_html(price_text)}",
+        f"⏰ مدت: {_html(duration_text)}",
+        f"📍 محل نمایش: {_html(placement)}",
     ]
 
     builder = InlineKeyboardBuilder()
