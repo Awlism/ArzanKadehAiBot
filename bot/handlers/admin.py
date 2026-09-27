@@ -176,7 +176,7 @@ async def handle_admin_request_decision(
     if action == "reject":
         new_status = "REJECTED"
 
-        await db.execute(
+        cursor = await db.execute(
             """
             UPDATE requests
             SET status = ?, updated_at = ?
@@ -202,7 +202,7 @@ async def handle_admin_request_decision(
             timespec="seconds"
         )
 
-        await db.execute(
+        cursor = await db.execute(
             """
             UPDATE requests
             SET status = ?,
@@ -222,7 +222,7 @@ async def handle_admin_request_decision(
     else:
         new_status = "APPROVED"
 
-        await db.execute(
+        cursor = await db.execute(
             """
             UPDATE requests
             SET status = ?, updated_at = ?
@@ -235,6 +235,33 @@ async def handle_admin_request_decision(
                 request_id,
             ),
         )
+
+    if cursor.rowcount != 1:
+        current_req = await db.fetchone(
+            "SELECT status FROM requests WHERE id = ?;",
+            (request_id,),
+        )
+
+        if not current_req:
+            await callback.answer(
+                "⚠️ این درخواست دیگر یافت نشد.",
+                show_alert=True,
+            )
+            return
+
+        current_status = REQUEST_STATUS_LABELS.get(
+            current_req["status"],
+            current_req["status"],
+        )
+
+        await callback.answer(
+            (
+                "⚠️ این درخواست قبلاً تعیین‌تکلیف شده: "
+                f"{_html(current_status)}"
+            ),
+            show_alert=True,
+        )
+        return
 
     await log_audit(
         admin_user_id,
