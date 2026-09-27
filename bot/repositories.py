@@ -288,6 +288,26 @@ async def create_product_record(
     name: str,
     **fields: Any,
 ) -> int:
+    if seller_id < 1:
+        raise ValueError("Invalid seller_id.")
+
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Product name is required.")
+
+    seller = await db.fetchone(
+        """
+        SELECT id
+        FROM sellers
+        WHERE id = ?
+        LIMIT 1;
+        """,
+        (seller_id,),
+    )
+
+    if seller is None:
+        raise ValueError("Seller does not exist.")
+
     allowed_fields = {
         "description",
         "category_id",
@@ -303,6 +323,59 @@ async def create_product_record(
         if key in allowed_fields
     }
 
+    category_id = clean_fields.get("category_id")
+
+    if category_id is not None:
+        if not isinstance(category_id, int) or category_id < 1:
+            raise ValueError("Invalid category_id.")
+
+        category = await db.fetchone(
+            """
+            SELECT id
+            FROM categories
+            WHERE id = ?
+            LIMIT 1;
+            """,
+            (category_id,),
+        )
+
+        if category is None:
+            raise ValueError("Category does not exist.")
+
+    price = clean_fields.get("price")
+    old_price = clean_fields.get("old_price")
+
+    if price is not None:
+        try:
+            price = float(price)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Invalid price.") from exc
+
+        if price < 0:
+            raise ValueError("Price cannot be negative.")
+
+        clean_fields["price"] = price
+
+    if old_price is not None:
+        try:
+            old_price = float(old_price)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Invalid old_price.") from exc
+
+        if old_price < 0:
+            raise ValueError("Old price cannot be negative.")
+
+        clean_fields["old_price"] = old_price
+
+    if (
+        price is not None
+        and old_price is not None
+        and old_price < price
+    ):
+        raise ValueError(
+            "Old price cannot be lower than the current price."
+        )
+
     columns = [
         "seller_id",
         "name",
@@ -310,11 +383,13 @@ async def create_product_record(
         "updated_at",
     ]
 
+    now = now_iso()
+
     values: list[Any] = [
         seller_id,
         name,
-        now_iso(),
-        now_iso(),
+        now,
+        now,
     ]
 
     for field in (
