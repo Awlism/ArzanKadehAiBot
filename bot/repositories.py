@@ -612,6 +612,20 @@ async def create_seller_claim(
     seller_id: int,
     user_id: int,
 ) -> Optional[int]:
+    """
+    Create a seller-ownership claim.
+
+    Lifecycle rules:
+
+    - Seller must still be UNCLAIMED.
+    - Seller owner/creator cannot claim their own seller.
+    - Existing PENDING claim returns its existing id.
+    - Existing REJECTED claim does not block a new claim.
+    - Existing APPROVED claim blocks a new claim.
+    - Database-level partial uniqueness allows only one PENDING
+      claim per seller/user pair while preserving rejected history.
+    """
+
     seller = await db.fetchone(
         """
         SELECT
@@ -640,7 +654,9 @@ async def create_seller_claim(
 
     existing = await db.fetchone(
         """
-        SELECT id, status
+        SELECT
+            id,
+            status
         FROM seller_claims
         WHERE seller_id = ?
           AND user_id = ?
@@ -654,10 +670,18 @@ async def create_seller_claim(
     )
 
     if existing:
-        if existing["status"] == "PENDING":
+        status = str(
+            existing["status"] or ""
+        ).upper()
+
+        if status == "PENDING":
             return int(existing["id"])
 
-        return None
+        if status == "APPROVED":
+            return None
+
+        if status != "REJECTED":
+            return None
 
     now = now_iso()
 
