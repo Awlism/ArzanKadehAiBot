@@ -469,6 +469,118 @@ async def run_seller_claim_migration() -> None:
     await db.conn.commit()
 
 
+async def run_report_migration() -> None:
+    """
+    Enforce report lifecycle rules safely.
+
+    Only one PENDING report is allowed for each user/target pair.
+    APPROVED and REJECTED reports remain in history.
+
+    Separate partial unique indexes are used because seller_id and
+    product_id are nullable and SQLite treats NULL values as distinct.
+    """
+
+    seller_duplicate_rows = await db.fetchall(
+        """
+        SELECT
+            user_id,
+            seller_id,
+            COUNT(*) AS report_count
+        FROM reports
+        WHERE status = 'PENDING'
+          AND seller_id IS NOT NULL
+          AND product_id IS NULL
+        GROUP BY user_id, seller_id
+        HAVING COUNT(*) > 1;
+        """
+    )
+
+    if seller_duplicate_rows:
+        await db.conn.execute(
+            """
+            DELETE FROM reports
+            WHERE status = 'PENDING'
+              AND seller_id IS NOT NULL
+              AND product_id IS NULL
+              AND id NOT IN (
+                  SELECT MAX(id)
+                  FROM reports
+                  WHERE status = 'PENDING'
+                    AND seller_id IS NOT NULL
+                    AND product_id IS NULL
+                  GROUP BY user_id, seller_id
+              );
+            """
+        )
+
+        logger.warning(
+            "Deduplicated %d pending seller report groups.",
+            len(seller_duplicate_rows),
+        )
+
+    product_duplicate_rows = await db.fetchall(
+        """
+        SELECT
+            user_id,
+            product_id,
+            COUNT(*) AS report_count
+        FROM reports
+        WHERE status = 'PENDING'
+          AND product_id IS NOT NULL
+          AND seller_id IS NULL
+        GROUP BY user_id, product_id
+        HAVING COUNT(*) > 1;
+        """
+    )
+
+    if product_duplicate_rows:
+        await db.conn.execute(
+            """
+            DELETE FROM reports
+            WHERE status = 'PENDING'
+              AND product_id IS NOT NULL
+              AND seller_id IS NULL
+              AND id NOT IN (
+                  SELECT MAX(id)
+                  FROM reports
+                  WHERE status = 'PENDING'
+                    AND product_id IS NOT NULL
+                    AND seller_id IS NULL
+                  GROUP BY user_id, product_id
+              );
+            """
+        )
+
+        logger.warning(
+            "Deduplicated %d pending product report groups.",
+            len(product_duplicate_rows),
+        )
+
+    await db.conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS
+            idx_reports_user_seller_pending_unique
+        ON reports(user_id, seller_id)
+        WHERE status = 'PENDING'
+          AND seller_id IS NOT NULL
+          AND product_id IS NULL;
+        """
+    )
+
+    await db.conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS
+            idx_reports_user_product_pending_unique
+        ON reports(user_id, product_id)
+        WHERE status = 'PENDING'
+          AND product_id IS NOT NULL
+          AND seller_id IS NULL;
+        """
+    )
+
+    await db.conn.commit()
+
+
 INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_categories_parent ON categories(parent_id);",
     "CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id);",
@@ -502,6 +614,7 @@ async def init_schema() -> None:
 
     await run_column_migrations()
     await run_seller_claim_migration()
+    await run_report_migration()
 
     for stmt in INDEX_STATEMENTS:
         await db.conn.execute(stmt)
