@@ -151,6 +151,20 @@ async def handle_role_pick(
         )
         return
 
+    # ------------------------------------------------------------------
+    # Authorization MUST happen before role_chosen is persisted.
+    # Otherwise an unauthorized admin selection could mark the user as
+    # having completed role selection even though access was denied.
+    # ------------------------------------------------------------------
+    if role == "admin" and not is_admin_telegram_id(
+        callback.from_user.id
+    ):
+        await callback.answer(
+            "⛔️ این گزینه فقط برای ادمین در دسترس است.",
+            show_alert=True,
+        )
+        return
+
     user_id = await ensure_user(
         callback.from_user
     )
@@ -182,15 +196,6 @@ async def handle_role_pick(
         return
 
     if role == "admin":
-        if not is_admin_telegram_id(
-            callback.from_user.id
-        ):
-            await callback.answer(
-                "⛔️ این گزینه فقط برای ادمین در دسترس است.",
-                show_alert=True,
-            )
-            return
-
         await set_active_mode(
             user_id,
             "admin",
