@@ -1645,7 +1645,7 @@ async def handle_admin_ad_set_duration_value(
             timespec="seconds"
         )
 
-        await db.execute(
+                cursor = await db.execute(
             """
             UPDATE requests
             SET status = 'ACTIVE',
@@ -1661,6 +1661,20 @@ async def handle_admin_ad_set_duration_value(
                 request_id,
             ),
         )
+
+        if cursor.rowcount == 1:
+            await notify_user(
+                req["user_id"],
+                (
+                    "تبلیغ در ارزانکده"
+                    if req["request_type"] == "general_ad"
+                    else "درخواست تبلیغات"
+                ),
+                (
+                    f"✅ تبلیغت فعال شد و برای "
+                    f"{days} روز نمایش داده می‌شه."
+                ),
+            )
 
         await notify_user(
             req["user_id"],
