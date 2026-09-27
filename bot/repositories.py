@@ -1651,6 +1651,9 @@ async def get_user_notifications(
     user_id: int,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
+    if limit < 1:
+        return []
+
     return await db.fetchall(
         """
         SELECT *
