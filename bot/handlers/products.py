@@ -18,12 +18,10 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from ..config import ADMIN_CHAT_ID
 from ..constants import (
     EMOJI_CITY,
-    EMOJI_COMPARE,
     EMOJI_FAVORITES,
     EMOJI_PRICE,
     EMOJI_PRODUCT,
     EMOJI_RATING,
-    EMOJI_REPORT,
     EMOJI_SELLERS,
     PAGE_SIZE_LIST,
 )
@@ -98,6 +96,7 @@ async def _render_product_detail(
     callback: CallbackQuery,
 ) -> None:
     parts = callback.data.split(":", 1)
+
     product_id = (
         parse_int(parts[1])
         if len(parts) > 1
@@ -143,10 +142,14 @@ async def _render_product_detail(
     await db.execute(
         """
         UPDATE products
-        SET views = views + 1
+        SET views = COALESCE(views, 0) + 1,
+            updated_at = ?
         WHERE id = ?;
         """,
-        (product_id,),
+        (
+            now_iso(),
+            product_id,
+        ),
     )
 
     await log_event(
@@ -169,6 +172,17 @@ async def _render_product_detail(
         ),
     )
 
+    rating = product["rating"]
+    review_count = product["review_count"]
+
+    if rating is None:
+        rating_text = "0.0"
+    else:
+        rating_text = f"{float(rating):.1f}"
+
+    if review_count is None:
+        review_count = 0
+
     lines = [
         f"{EMOJI_PRODUCT} <b>{_html(product['name'])}</b>",
         "",
@@ -179,8 +193,8 @@ async def _render_product_detail(
         f"{EMOJI_CITY} {_html(product['city_name'] or 'نامشخص')}",
         (
             f"{EMOJI_RATING} "
-            f"{product['rating']:.1f} "
-            f"({product['review_count']} نظر)"
+            f"{rating_text} "
+            f"({_html(review_count)} نظر)"
         ),
         _html(status_badge(product["seller_status"])),
     ]
@@ -211,7 +225,7 @@ async def _render_product_detail(
 
     builder.row(
         InlineKeyboardButton(
-            text=f"{EMOJI_COMPARE} افزودن به مقایسه",
+            text="⚖️ افزودن به مقایسه",
             callback_data=f"comparestart:{product_id}",
         )
     )
@@ -234,7 +248,7 @@ async def _render_product_detail(
 
     builder.row(
         InlineKeyboardButton(
-            text=f"{EMOJI_REPORT} گزارش",
+            text="🚩 گزارش",
             callback_data=(
                 f"report:product:{product_id}"
             ),
@@ -270,6 +284,7 @@ async def handle_favorite_add(
     callback: CallbackQuery,
 ) -> None:
     parts = callback.data.split(":", 1)
+
     product_id = (
         parse_int(parts[1])
         if len(parts) > 1
@@ -346,6 +361,7 @@ async def handle_favorite_remove(
     callback: CallbackQuery,
 ) -> None:
     parts = callback.data.split(":", 1)
+
     product_id = (
         parse_int(parts[1])
         if len(parts) > 1
@@ -375,6 +391,13 @@ async def handle_favorite_remove(
         ),
     )
 
+    await log_event(
+        user_id,
+        "favorite_remove",
+        "product",
+        product_id,
+    )
+
     await callback.answer(
         "از علاقه‌مندی‌ها حذف شد 💔"
     )
@@ -390,6 +413,7 @@ async def handle_favorites_list(
     await state.clear()
 
     parts = callback.data.split(":", 1)
+
     page = (
         parse_int(parts[1])
         if len(parts) > 1
@@ -432,7 +456,10 @@ async def handle_favorites_list(
 
         await safe_edit(
             callback,
-            f"{EMOJI_FAVORITES} هنوز محصولی به علاقه‌مندی‌ها اضافه نکردی.",
+            (
+                f"{EMOJI_FAVORITES} "
+                "هنوز محصولی به علاقه‌مندی‌ها اضافه نکردی."
+            ),
             builder.as_markup(),
         )
 
@@ -593,6 +620,7 @@ async def handle_review_rate(
     state: FSMContext,
 ) -> None:
     parts = callback.data.split(":", 1)
+
     rating = (
         parse_int(parts[1])
         if len(parts) > 1
@@ -736,6 +764,10 @@ async def handle_review_text(
         )
         return
 
+    review_text = (
+        message.text or ""
+    ).strip()
+
     await db.execute(
         """
         INSERT INTO reviews (
@@ -753,7 +785,7 @@ async def handle_review_text(
             seller_id,
             product_id,
             rating,
-            (message.text or "").strip(),
+            review_text,
             now_iso(),
         ),
     )
@@ -772,12 +804,14 @@ async def handle_review_text(
                     SELECT COUNT(*)
                     FROM reviews
                     WHERE seller_id = ?
-                )
+                ),
+                updated_at = ?
             WHERE id = ?;
             """,
             (
                 target_id,
                 target_id,
+                now_iso(),
                 target_id,
             ),
         )
@@ -796,12 +830,14 @@ async def handle_review_text(
                     SELECT COUNT(*)
                     FROM reviews
                     WHERE product_id = ?
-                )
+                ),
+                updated_at = ?
             WHERE id = ?;
             """,
             (
                 target_id,
                 target_id,
+                now_iso(),
                 target_id,
             ),
         )
@@ -1190,7 +1226,10 @@ async def handle_report_skip(
 
         await safe_edit(
             callback,
-            "⚠️ این مورد دیگر در دسترس نیست یا گزارش مشابهی در حال بررسی است.",
+            (
+                "⚠️ این مورد دیگر در دسترس نیست "
+                "یا گزارش مشابهی در حال بررسی است."
+            ),
             builder.as_markup(),
         )
 
@@ -1206,7 +1245,10 @@ async def handle_report_skip(
 
     await safe_edit(
         callback,
-        "گزارش شما ثبت شد. ممنون که به امن‌تر شدن ارزانکده کمک می‌کنی.",
+        (
+            "گزارش شما ثبت شد. ممنون که به امن‌تر شدن "
+            "ارزانکده کمک می‌کنی."
+        ),
         builder.as_markup(),
     )
 
@@ -1243,7 +1285,11 @@ async def handle_report_description(
 
     if not saved:
         await message.answer(
-            "⚠️ این مورد دیگر در دسترس نیست یا گزارش مشابهی در حال بررسی است. گزارش ثبت نشد."
+            (
+                "⚠️ این مورد دیگر در دسترس نیست یا "
+                "گزارش مشابهی در حال بررسی است. "
+                "گزارش ثبت نشد."
+            )
         )
         return
 
@@ -1336,9 +1382,15 @@ async def handle_admin_report_decision(
         ),
     )
 
+    audit_action = (
+        "report_approved"
+        if action == "approve"
+        else "report_rejected"
+    )
+
     await log_audit(
         admin_user_id,
-        f"report_{action}d",
+        audit_action,
         "report",
         report_id,
     )
@@ -1367,9 +1419,13 @@ async def handle_admin_report_decision(
     )
 
     try:
+        current_text = (
+            callback.message.text or ""
+        )
+
         await callback.message.edit_text(
             (
-                f"{callback.message.text}\n\n"
+                f"{current_text}\n\n"
                 f"— تصمیم ثبت شد: "
                 f"{_html(REQUEST_STATUS_LABELS[new_status])}"
             )
