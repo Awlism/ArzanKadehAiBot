@@ -4,6 +4,8 @@ ArzanKadeh AI
 Notification handlers
 """
 
+from html import escape
+
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton
@@ -84,17 +86,31 @@ async def _render_notifications(
             else "🆕"
         )
 
+        title = escape(
+            str(notification["title"] or ""),
+            quote=False,
+        )
+
+        message = escape(
+            str(notification["message"] or ""),
+            quote=False,
+        )
+
         lines.append(
-            f"{mark} <b>{notification['title']}</b>\n"
-            f"{notification['message'] or ''}"
+            f"{mark} <b>{title}</b>\n"
+            f"{message}"
         )
 
         if not notification["is_read"]:
-            title = notification["title"] or "اعلان"
+            raw_title = str(
+                notification["title"] or "اعلان"
+            )
+
+            button_title = raw_title[:20]
 
             builder.row(
                 InlineKeyboardButton(
-                    text=f"خواندم: {title[:20]}",
+                    text=f"خواندم: {button_title}",
                     callback_data=(
                         f"notifread:{notification['id']}"
                     ),
