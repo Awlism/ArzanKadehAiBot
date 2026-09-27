@@ -1081,18 +1081,8 @@ async def handle_claim(
         callback.from_user
     )
 
-    seller = await db.fetchone(
-        """
-        SELECT
-            id,
-            name,
-            status,
-            owner_user_id,
-            created_by_user_id
-        FROM sellers
-        WHERE id = ?;
-        """,
-        (seller_id,),
+    seller = await get_seller_by_id(
+        seller_id
     )
 
     if not seller:
@@ -1102,9 +1092,14 @@ async def handle_claim(
         )
         return
 
-    if seller["status"] != "UNCLAIMED":
+    status = str(
+        seller.get("status") or ""
+    ).upper()
+
+    if status != "UNCLAIMED":
         await callback.answer(
-            "⚠️ این فروشگاه قبلاً مالک دارد.",
+            "⚠️ این فروشگاه دیگر برای درخواست "
+            "مالکیت در دسترس نیست.",
             show_alert=True,
         )
         return
@@ -1120,45 +1115,20 @@ async def handle_claim(
         )
         return
 
-    existing = await db.fetchone(
-        """
-        SELECT id
-        FROM seller_claims
-        WHERE seller_id = ?
-          AND user_id = ?
-          AND status = 'PENDING'
-        LIMIT 1;
-        """,
-        (
-            seller_id,
-            user_id,
-        ),
+    claim_id = await create_seller_claim(
+        seller_id,
+        user_id,
     )
 
-    if existing:
+    if claim_id is None:
         await callback.answer(
-            "⏳ درخواست مالکیت شما قبلاً ثبت شده "
-            "و در انتظار بررسی است.",
+            "⚠️ درخواست مالکیت ثبت نشد. "
+            "ممکن است این فروشگاه قبلاً "
+            "درخواست مالکیت حل‌شده داشته باشد "
+            "یا وضعیت آن تغییر کرده باشد.",
             show_alert=True,
         )
         return
-
-    await db.execute(
-        """
-        INSERT INTO seller_claims (
-            seller_id,
-            user_id,
-            status,
-            created_at
-        )
-        VALUES (?, ?, 'PENDING', ?);
-        """,
-        (
-            seller_id,
-            user_id,
-            now_iso(),
-        ),
-    )
 
     await log_audit(
         user_id,
@@ -1178,7 +1148,8 @@ async def handle_claim(
                     f"🏪 فروشگاه: "
                     f"{_html(seller['name'])}\n"
                     f"🆔 Seller ID: {seller_id}\n"
-                    f"👤 User ID: {user_id}"
+                    f"👤 User ID: {user_id}\n"
+                    f"📋 Claim ID: {claim_id}"
                 ),
             )
         except Exception:
