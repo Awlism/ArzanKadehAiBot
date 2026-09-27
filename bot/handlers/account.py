@@ -39,7 +39,7 @@ async def handle_account(
     Renders:
     - Buyer panel for buyer mode
     - Seller panel for seller mode
-    - Admin panel for admin mode
+    - Admin panel only for the configured admin Telegram account
 
     A user without a seller always remains able to access the buyer
     panel. Seller mode and owning a seller are separate concerns.
@@ -49,14 +49,27 @@ async def handle_account(
     user_id = await ensure_user(callback.from_user)
     mode = await get_active_mode(user_id)
 
-    if mode == "admin":
+    # Never trust the stored active_mode alone for admin access.
+    # The configured Telegram account is the authoritative admin identity.
+    is_admin = bool(
+        ADMIN_CHAT_ID
+        and callback.from_user.id == ADMIN_CHAT_ID
+    )
+
+    if mode == "admin" and is_admin:
         await _render_admin_home(callback)
 
     elif mode == "seller":
-        await _render_seller_panel(callback, user_id)
+        await _render_seller_panel(
+            callback,
+            user_id,
+        )
 
     else:
-        await _render_buyer_panel(callback, user_id)
+        await _render_buyer_panel(
+            callback,
+            user_id,
+        )
 
     await callback.answer()
 
@@ -96,12 +109,28 @@ async def handle_set_mode(
         )
         return
 
+    # Admin mode is never a normal user-selectable mode.
+    # The only account allowed to enter admin mode is ADMIN_CHAT_ID.
+    if mode == "admin":
+        if not (
+            ADMIN_CHAT_ID
+            and callback.from_user.id == ADMIN_CHAT_ID
+        ):
+            await callback.answer(
+                "⛔️ این حالت فقط برای ادمین در دسترس است.",
+                show_alert=True,
+            )
+            return
+
     user_id = await ensure_user(callback.from_user)
 
     # Seller mode and owning a seller are deliberately separate.
     # A user may enter seller mode before registering a store.
     try:
-        await set_active_mode(user_id, mode)
+        await set_active_mode(
+            user_id,
+            mode,
+        )
 
     except PermissionError:
         await callback.answer(
@@ -110,7 +139,10 @@ async def handle_set_mode(
         )
         return
 
-    if mode == "seller":
+    if mode == "admin":
+        await _render_admin_home(callback)
+
+    elif mode == "seller":
         await _render_seller_panel(
             callback,
             user_id,
