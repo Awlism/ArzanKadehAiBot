@@ -6,7 +6,7 @@ Tests the modular admin-users implementation:
 - real SQLite query logic
 - real user profile aggregation
 - per-handler authorization in bot/handlers/admin.py
-- admin role routing in bot/handlers/account.py
+- admin role routing in bot/handlers/navigation.py
 """
 
 import ast
@@ -25,7 +25,9 @@ from _fakedb import FakeDB, new_conn  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ADMIN_PY_PATH = PROJECT_ROOT / "bot" / "handlers" / "admin.py"
-ACCOUNT_PY_PATH = PROJECT_ROOT / "bot" / "handlers" / "account.py"
+NAVIGATION_PY_PATH = (
+    PROJECT_ROOT / "bot" / "handlers" / "navigation.py"
+)
 
 PAGE_SIZE_LIST = 10
 
@@ -264,6 +266,7 @@ class AdminUserQueryLogicTests(unittest.TestCase):
 
     def test_search_by_first_name_finds_multiple_matches(self):
         results = self._search("Ali")
+
         self.assertEqual(
             {row["id"] for row in results},
             {1, 4},
@@ -271,6 +274,7 @@ class AdminUserQueryLogicTests(unittest.TestCase):
 
     def test_search_by_username_finds_exact_owner(self):
         results = self._search("sara99")
+
         self.assertEqual(
             [row["id"] for row in results],
             [2],
@@ -278,6 +282,7 @@ class AdminUserQueryLogicTests(unittest.TestCase):
 
     def test_search_by_numeric_telegram_id(self):
         results = self._search("300")
+
         self.assertEqual(
             [row["id"] for row in results],
             [3],
@@ -285,7 +290,11 @@ class AdminUserQueryLogicTests(unittest.TestCase):
 
     def test_search_no_match_returns_empty(self):
         results = self._search("nonexistent_zzz")
-        self.assertEqual(results, [])
+
+        self.assertEqual(
+            results,
+            [],
+        )
 
     def test_user_list_pagination_math(self):
         for user_id in range(5, 15):
@@ -314,9 +323,19 @@ class AdminUserQueryLogicTests(unittest.TestCase):
         page0 = all_users[:PAGE_SIZE_LIST]
         has_next = PAGE_SIZE_LIST < len(all_users)
 
-        self.assertEqual(len(all_users), 14)
-        self.assertEqual(len(page0), PAGE_SIZE_LIST)
-        self.assertTrue(has_next)
+        self.assertEqual(
+            len(all_users),
+            14,
+        )
+
+        self.assertEqual(
+            len(page0),
+            PAGE_SIZE_LIST,
+        )
+
+        self.assertTrue(
+            has_next,
+        )
 
     def test_owned_sellers_reflect_real_ownership(self):
         sellers = run(
@@ -332,7 +351,10 @@ class AdminUserQueryLogicTests(unittest.TestCase):
             self.referrals_module.get_sellers_owned_by_user(2)
         )
 
-        self.assertEqual(sellers_other, [])
+        self.assertEqual(
+            sellers_other,
+            [],
+        )
 
     def test_request_count_matches_real_rows(self):
         row = self.conn.execute(
@@ -344,7 +366,10 @@ class AdminUserQueryLogicTests(unittest.TestCase):
             (1,),
         ).fetchone()
 
-        self.assertEqual(row["c"], 2)
+        self.assertEqual(
+            row["c"],
+            2,
+        )
 
         row_empty = self.conn.execute(
             """
@@ -355,7 +380,10 @@ class AdminUserQueryLogicTests(unittest.TestCase):
             (3,),
         ).fetchone()
 
-        self.assertEqual(row_empty["c"], 0)
+        self.assertEqual(
+            row_empty["c"],
+            0,
+        )
 
     def test_report_count_matches_real_rows(self):
         row = self.conn.execute(
@@ -367,7 +395,10 @@ class AdminUserQueryLogicTests(unittest.TestCase):
             (2,),
         ).fetchone()
 
-        self.assertEqual(row["c"], 1)
+        self.assertEqual(
+            row["c"],
+            1,
+        )
 
     def test_referral_total_sums_across_owned_sellers(self):
         self.conn.execute(
@@ -417,7 +448,10 @@ class AdminUserQueryLogicTests(unittest.TestCase):
                 )
             )
 
-        self.assertEqual(total, 1)
+        self.assertEqual(
+            total,
+            1,
+        )
 
     def test_active_mode_is_read_via_existing_function(self):
         mode = run(
@@ -426,7 +460,11 @@ class AdminUserQueryLogicTests(unittest.TestCase):
 
         self.assertIn(
             mode,
-            ("buyer", "seller", "admin"),
+            (
+                "buyer",
+                "seller",
+                "admin",
+            ),
         )
 
 
@@ -440,17 +478,19 @@ class AdminUsersAuthorizationSourceTests(unittest.TestCase):
         cls.admin_source = ADMIN_PY_PATH.read_text(
             encoding="utf-8"
         )
+
         cls.admin_tree = ast.parse(
             cls.admin_source,
             filename=str(ADMIN_PY_PATH),
         )
 
-        cls.account_source = ACCOUNT_PY_PATH.read_text(
+        cls.navigation_source = NAVIGATION_PY_PATH.read_text(
             encoding="utf-8"
         )
-        cls.account_tree = ast.parse(
-            cls.account_source,
-            filename=str(ACCOUNT_PY_PATH),
+
+        cls.navigation_tree = ast.parse(
+            cls.navigation_source,
+            filename=str(NAVIGATION_PY_PATH),
         )
 
     @staticmethod
@@ -470,6 +510,7 @@ class AdminUsersAuthorizationSourceTests(unittest.TestCase):
                 lines = source.splitlines()[
                     node.lineno - 1 : node.end_lineno
                 ]
+
                 return "\n".join(lines)
 
         raise AssertionError(
@@ -540,7 +581,10 @@ class AdminUsersAuthorizationSourceTests(unittest.TestCase):
             and node.name == "_is_admin"
         )
 
-        self.assertEqual(count, 1)
+        self.assertEqual(
+            count,
+            1,
+        )
 
     def test_admin_user_view_does_not_invent_ban_or_score_system(self):
         body = self._get_function_body(
@@ -562,18 +606,18 @@ class AdminUsersAuthorizationSourceTests(unittest.TestCase):
 
     def test_admin_role_selection_activates_admin_mode_and_opens_panel(self):
         body = self._get_function_body(
-            self.account_source,
-            self.account_tree,
+            self.navigation_source,
+            self.navigation_tree,
             "handle_role_pick",
         )
 
         self.assertIn(
-            'await set_active_mode(user_id, "admin")',
+            'await set_active_mode(\n            user_id,\n            "admin",\n        )',
             body,
         )
 
         self.assertIn(
-            "await _render_admin_home(callback)",
+            "await _render_admin_home(\n            callback\n        )",
             body,
         )
 
@@ -581,17 +625,25 @@ class AdminUsersAuthorizationSourceTests(unittest.TestCase):
             'if role == "admin":'
         )
 
-        self.assertGreaterEqual(admin_pos, 0)
+        self.assertGreaterEqual(
+            admin_pos,
+            0,
+        )
 
         admin_branch = body[admin_pos:]
 
         self.assertIn(
-            'await set_active_mode(user_id, "admin")',
+            "if not is_admin_telegram_id(",
             admin_branch,
         )
 
         self.assertIn(
-            "await _render_admin_home(callback)",
+            'await set_active_mode(\n            user_id,\n            "admin",\n        )',
+            admin_branch,
+        )
+
+        self.assertIn(
+            "await _render_admin_home(\n            callback\n        )",
             admin_branch,
         )
 
