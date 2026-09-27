@@ -356,6 +356,95 @@ async def handle_favorite_add(
     await _render_product_detail(callback)
 
 
+@router.callback_query(F.data.startswith("favorite:"))
+async def handle_favorite_add(
+    callback: CallbackQuery,
+) -> None:
+    parts = callback.data.split(":", 1)
+
+    product_id = (
+        parse_int(parts[1])
+        if len(parts) > 1
+        else None
+    )
+
+    if product_id is None or product_id < 1:
+        await callback.answer(
+            "⚠️ شناسه نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    user_id = await ensure_user(
+        callback.from_user
+    )
+
+    product = await db.fetchone(
+        """
+        SELECT
+            p.id
+        FROM products p
+        JOIN sellers s
+          ON s.id = p.seller_id
+        WHERE p.id = ?
+          AND COALESCE(s.is_active, 1) = 1;
+        """,
+        (product_id,),
+    )
+
+    if not product:
+        await callback.answer(
+            "⚠️ این محصول یافت نشد.",
+            show_alert=True,
+        )
+        return
+
+    try:
+        cursor = await db.execute(
+            """
+            INSERT INTO favorites (
+                user_id,
+                product_id,
+                created_at
+            )
+            VALUES (?, ?, ?);
+            """,
+            (
+                user_id,
+                product_id,
+                now_iso(),
+            ),
+        )
+
+    except aiosqlite.IntegrityError:
+        await callback.answer(
+            "این محصول از قبل در علاقه‌مندی‌هاست ❤️",
+            show_alert=True,
+        )
+        await _render_product_detail(callback)
+        return
+
+    if cursor.rowcount != 1:
+        await callback.answer(
+            "⚠️ ذخیره علاقه‌مندی انجام نشد.",
+            show_alert=True,
+        )
+        return
+
+    await log_event(
+        user_id,
+        "favorite_add",
+        "product",
+        product_id,
+    )
+
+    await callback.answer(
+        "به علاقه‌مندی‌ها اضافه شد ❤️"
+    )
+
+    await _render_product_detail(callback)
+
+
 @router.callback_query(F.data.startswith("unfavorite:"))
 async def handle_favorite_remove(
     callback: CallbackQuery,
@@ -379,7 +468,7 @@ async def handle_favorite_remove(
         callback.from_user
     )
 
-    await db.execute(
+    cursor = await db.execute(
         """
         DELETE FROM favorites
         WHERE user_id = ?
@@ -390,6 +479,14 @@ async def handle_favorite_remove(
             product_id,
         ),
     )
+
+    if cursor.rowcount != 1:
+        await callback.answer(
+            "این محصول دیگر در علاقه‌مندی‌ها نیست.",
+            show_alert=True,
+        )
+        await _render_product_detail(callback)
+        return
 
     await log_event(
         user_id,
@@ -403,7 +500,6 @@ async def handle_favorite_remove(
     )
 
     await _render_product_detail(callback)
-
 
 @router.callback_query(F.data.startswith("favorites:"))
 async def handle_favorites_list(
