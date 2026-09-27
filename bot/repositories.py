@@ -1437,8 +1437,6 @@ async def update_report_status(
         "PENDING",
         "APPROVED",
         "REJECTED",
-        "COMPLETED",
-        "CANCELLED",
     }
 
     if report_id < 1:
