@@ -1332,9 +1332,6 @@ async def _render_store_status(
 @router.callback_query(
     F.data.startswith("storetoggle:")
 )
-@router.callback_query(
-    F.data.startswith("storetoggle:")
-)
 async def handle_store_toggle_active(
     callback: CallbackQuery,
 ) -> None:
