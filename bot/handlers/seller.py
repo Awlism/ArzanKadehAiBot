@@ -762,7 +762,11 @@ async def _handle_seller_url_click(
 
     seller = await db.fetchone(
         f"""
-        SELECT {field}
+        SELECT
+            {field},
+            is_active,
+            owner_user_id,
+            created_by_user_id
         FROM sellers
         WHERE id = ?;
         """,
@@ -772,6 +776,25 @@ async def _handle_seller_url_click(
     if not seller:
         await callback.answer(
             "⚠️ فروشگاه پیدا نشد.",
+            show_alert=True,
+        )
+        return
+
+    is_active = (
+        bool(seller["is_active"])
+        if seller["is_active"] is not None
+        else True
+    )
+
+    is_owner = user_id in (
+        seller["owner_user_id"],
+        seller["created_by_user_id"],
+    )
+
+    if not is_active and not is_owner:
+        await callback.answer(
+            "🔴 این فروشگاه فعلاً غیرفعال است و "
+            "ارتباطات جدید در دسترس نیست.",
             show_alert=True,
         )
         return
