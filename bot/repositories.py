@@ -1521,8 +1521,12 @@ async def has_open_request(
 async def create_request(
     user_id: int,
     request_type: str,
-    title: str,
+    title: Optional[str] = None,
     description: Optional[str] = None,
+    *,
+    topic: Optional[str] = None,
+    message: Optional[str] = None,
+    seller_id: Optional[int] = None,
 ) -> Optional[int]:
     if user_id < 1:
         return None
@@ -1530,13 +1534,43 @@ async def create_request(
     if request_type not in {"support", "ad"}:
         return None
 
-    title = (title or "").strip()
+    # Support both the newer explicit topic/message names and
+    # the original title/description interface.
+    request_topic = (
+        topic.strip()
+        if topic is not None
+        else (title or "").strip()
+    )
 
-    if not title:
+    if not request_topic:
         return None
 
-    if description is not None:
-        description = description.strip()
+    request_message = (
+        message.strip()
+        if message is not None
+        else (
+            description.strip()
+            if description is not None
+            else None
+        )
+    )
+
+    if seller_id is not None:
+        if seller_id < 1:
+            return None
+
+        seller = await db.fetchone(
+            """
+            SELECT id
+            FROM sellers
+            WHERE id = ?
+            LIMIT 1;
+            """,
+            (seller_id,),
+        )
+
+        if seller is None:
+            return None
 
     user = await db.fetchone(
         """
@@ -1560,17 +1594,19 @@ async def create_request(
             request_type,
             topic,
             message,
+            seller_id,
             status,
             created_at,
             updated_at
         )
-        VALUES (?, ?, ?, ?, 'PENDING', ?, ?);
+        VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?);
         """,
         (
             user_id,
             request_type,
-            title,
-            description,
+            request_topic,
+            request_message,
+            seller_id,
             now,
             now,
         ),
