@@ -1414,6 +1414,9 @@ async def has_open_report(
 async def get_pending_reports(
     limit: int = 50,
 ) -> list[dict[str, Any]]:
+    if limit < 1:
+        return []
+
     return await db.fetchall(
         """
         SELECT *
