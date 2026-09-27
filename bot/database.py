@@ -469,15 +469,16 @@ async def run_seller_claim_migration() -> None:
     await db.conn.commit()
 
 
-async def run_report_migration() -> None:
+async def run_review_migration() -> None:
     """
-    Enforce report lifecycle rules safely.
+    Enforce review uniqueness safely.
 
-    Only one PENDING report is allowed for each user/target pair.
-    APPROVED and REJECTED reports remain in history.
+    A user may review a seller once and each product once.
+    Seller reviews and product reviews are separate targets.
 
-    Separate partial unique indexes are used because seller_id and
-    product_id are nullable and SQLite treats NULL values as distinct.
+    Older databases may already contain duplicate review rows.
+    Keep the newest review in each duplicate group before creating
+    the unique indexes.
     """
 
     seller_duplicate_rows = await db.fetchall(
@@ -485,10 +486,9 @@ async def run_report_migration() -> None:
         SELECT
             user_id,
             seller_id,
-            COUNT(*) AS report_count
-        FROM reports
-        WHERE status = 'PENDING'
-          AND seller_id IS NOT NULL
+            COUNT(*) AS review_count
+        FROM reviews
+        WHERE seller_id IS NOT NULL
           AND product_id IS NULL
         GROUP BY user_id, seller_id
         HAVING COUNT(*) > 1;
@@ -498,15 +498,13 @@ async def run_report_migration() -> None:
     if seller_duplicate_rows:
         await db.conn.execute(
             """
-            DELETE FROM reports
-            WHERE status = 'PENDING'
-              AND seller_id IS NOT NULL
+            DELETE FROM reviews
+            WHERE seller_id IS NOT NULL
               AND product_id IS NULL
               AND id NOT IN (
                   SELECT MAX(id)
-                  FROM reports
-                  WHERE status = 'PENDING'
-                    AND seller_id IS NOT NULL
+                  FROM reviews
+                  WHERE seller_id IS NOT NULL
                     AND product_id IS NULL
                   GROUP BY user_id, seller_id
               );
@@ -514,7 +512,7 @@ async def run_report_migration() -> None:
         )
 
         logger.warning(
-            "Deduplicated %d pending seller report groups.",
+            "Deduplicated %d seller review groups.",
             len(seller_duplicate_rows),
         )
 
@@ -523,10 +521,9 @@ async def run_report_migration() -> None:
         SELECT
             user_id,
             product_id,
-            COUNT(*) AS report_count
-        FROM reports
-        WHERE status = 'PENDING'
-          AND product_id IS NOT NULL
+            COUNT(*) AS review_count
+        FROM reviews
+        WHERE product_id IS NOT NULL
           AND seller_id IS NULL
         GROUP BY user_id, product_id
         HAVING COUNT(*) > 1;
@@ -536,15 +533,13 @@ async def run_report_migration() -> None:
     if product_duplicate_rows:
         await db.conn.execute(
             """
-            DELETE FROM reports
-            WHERE status = 'PENDING'
-              AND product_id IS NOT NULL
+            DELETE FROM reviews
+            WHERE product_id IS NOT NULL
               AND seller_id IS NULL
               AND id NOT IN (
                   SELECT MAX(id)
-                  FROM reports
-                  WHERE status = 'PENDING'
-                    AND product_id IS NOT NULL
+                  FROM reviews
+                  WHERE product_id IS NOT NULL
                     AND seller_id IS NULL
                   GROUP BY user_id, product_id
               );
@@ -552,17 +547,16 @@ async def run_report_migration() -> None:
         )
 
         logger.warning(
-            "Deduplicated %d pending product report groups.",
+            "Deduplicated %d product review groups.",
             len(product_duplicate_rows),
         )
 
     await db.conn.execute(
         """
         CREATE UNIQUE INDEX IF NOT EXISTS
-            idx_reports_user_seller_pending_unique
-        ON reports(user_id, seller_id)
-        WHERE status = 'PENDING'
-          AND seller_id IS NOT NULL
+            idx_reviews_user_seller_unique
+        ON reviews(user_id, seller_id)
+        WHERE seller_id IS NOT NULL
           AND product_id IS NULL;
         """
     )
@@ -570,10 +564,9 @@ async def run_report_migration() -> None:
     await db.conn.execute(
         """
         CREATE UNIQUE INDEX IF NOT EXISTS
-            idx_reports_user_product_pending_unique
-        ON reports(user_id, product_id)
-        WHERE status = 'PENDING'
-          AND product_id IS NOT NULL
+            idx_reviews_user_product_unique
+        ON reviews(user_id, product_id)
+        WHERE product_id IS NOT NULL
           AND seller_id IS NULL;
         """
     )
