@@ -1224,20 +1224,49 @@ async def create_report(
     target_id: int,
     reason: str,
 ) -> bool:
-    seller_id = (
-        target_id
-        if target_type == "seller"
-        else None
-    )
-
-    product_id = (
-        target_id
-        if target_type == "product"
-        else None
-    )
-
-    if seller_id is None and product_id is None:
+    if target_id < 1:
         return False
+
+    if target_type not in {"seller", "product"}:
+        return False
+
+    if not reason or not reason.strip():
+        return False
+
+    seller_id: Optional[int] = None
+    product_id: Optional[int] = None
+
+    if target_type == "seller":
+        seller = await db.fetchone(
+            """
+            SELECT id
+            FROM sellers
+            WHERE id = ?
+            LIMIT 1;
+            """,
+            (target_id,),
+        )
+
+        if seller is None:
+            return False
+
+        seller_id = target_id
+
+    else:
+        product = await db.fetchone(
+            """
+            SELECT id
+            FROM products
+            WHERE id = ?
+            LIMIT 1;
+            """,
+            (target_id,),
+        )
+
+        if product is None:
+            return False
+
+        product_id = target_id
 
     await db.execute(
         """
@@ -1255,7 +1284,7 @@ async def create_report(
             user_id,
             seller_id,
             product_id,
-            reason,
+            reason.strip(),
             now_iso(),
         ),
     )
