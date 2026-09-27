@@ -6,9 +6,6 @@ Test extraction helper for the modular architecture.
 This helper lets offline tests extract selected constants, classes and
 pure/helper functions directly from the real modular source files without
 importing the whole Telegram application.
-
-The old project stored most test targets in bot.py. The project is now
-modular, so extraction must resolve names from their actual modules.
 """
 
 from __future__ import annotations
@@ -38,8 +35,10 @@ MODULE_PATHS = {
     "compare": PROJECT_ROOT / "bot" / "handlers" / "compare.py",
     "notifications": PROJECT_ROOT / "bot" / "services" / "notifications.py",
     "referrals": PROJECT_ROOT / "bot" / "services" / "referrals.py",
+    "tasks": PROJECT_ROOT / "bot" / "services" / "tasks.py",
     "admin": PROJECT_ROOT / "bot" / "handlers" / "admin.py",
     "account": PROJECT_ROOT / "bot" / "handlers" / "account.py",
+    "ads": PROJECT_ROOT / "bot" / "handlers" / "ads.py",
 }
 
 
@@ -52,6 +51,7 @@ SAFE_GLOBALS = {
     "dataclass": dataclass,
     "field": field,
     "logging": logging,
+    "__name__": "tests._extract",
 }
 
 
@@ -135,6 +135,14 @@ NAME_MODULES = {
     # repositories
     # ------------------------------------------------------------------
     "ORDER_STATUSES": "repositories",
+    "REQUEST_STATUS_LABELS": "repositories",
+    "has_open_report": "repositories",
+    "has_open_request": "repositories",
+    "create_request": "repositories",
+    "list_my_requests": "repositories",
+    "get_referral_count": "repositories",
+    "get_sellers_owned_by_user": "repositories",
+    "now_iso": "utils",
 
     # ------------------------------------------------------------------
     # search
@@ -149,9 +157,11 @@ NAME_MODULES = {
     "_convert_number_unit": "search",
     "_remove_stopwords": "search",
     "plain_keyword_search": "search",
+    "score_search_candidate": "search",
+    "resolve_category_ids": "search",
+    "resolve_city_id": "search",
     "ALT_CITY_SPELLINGS": "search",
     "CATEGORY_SYNONYMS": "search",
-    "REFERRAL_DEEP_LINK_RE": "search",
     "_DIGIT_LETTER_MAP": "search",
     "_PERSIAN_DIGITS": "search",
     "_ARABIC_DIGITS": "search",
@@ -200,8 +210,23 @@ NAME_MODULES = {
     # ------------------------------------------------------------------
     # referrals
     # ------------------------------------------------------------------
+    "REFERRAL_REWARD_RULES": "referrals",
+    "REFERRAL_DEEP_LINK_RE": "referrals",
+    "build_referral_link": "referrals",
     "get_referral_count": "referrals",
+    "next_referral_milestone": "referrals",
+    "record_referral_if_new": "referrals",
     "get_sellers_owned_by_user": "referrals",
+
+    # ------------------------------------------------------------------
+    # tasks
+    # ------------------------------------------------------------------
+    "expire_overdue_ads": "tasks",
+
+    # ------------------------------------------------------------------
+    # ads
+    # ------------------------------------------------------------------
+    "AD_KIND_LABELS": "ads",
 }
 
 
@@ -209,10 +234,14 @@ def _parse_module(module_name: str) -> ast.Module:
     path = MODULE_PATHS.get(module_name)
 
     if path is None:
-        raise AssertionError(f"Unknown source module: {module_name}")
+        raise AssertionError(
+            f"Unknown source module: {module_name}"
+        )
 
     if not path.exists():
-        raise AssertionError(f"Source module does not exist: {path}")
+        raise AssertionError(
+            f"Source module does not exist: {path}"
+        )
 
     return ast.parse(
         path.read_text(encoding="utf-8"),
@@ -220,7 +249,9 @@ def _parse_module(module_name: str) -> ast.Module:
     )
 
 
-def _top_level_nodes(module_name: str) -> dict[str, ast.AST]:
+def _top_level_nodes(
+    module_name: str,
+) -> dict[str, ast.AST]:
     tree = _parse_module(module_name)
     result: dict[str, ast.AST] = {}
 
@@ -247,7 +278,9 @@ def _top_level_nodes(module_name: str) -> dict[str, ast.AST]:
     return result
 
 
-def _find_owner(name: str) -> str | None:
+def _find_owner(
+    name: str,
+) -> str | None:
     explicit = NAME_MODULES.get(name)
 
     if explicit is not None:
@@ -260,7 +293,9 @@ def _find_owner(name: str) -> str | None:
     return None
 
 
-def _module_imports(module_name: str) -> dict[str, tuple[str, str]]:
+def _module_imports(
+    module_name: str,
+) -> dict[str, tuple[str, str]]:
     """
     Resolve project-local imports used by extracted nodes.
     """
@@ -273,30 +308,48 @@ def _module_imports(module_name: str) -> dict[str, tuple[str, str]]:
 
         module = node.module or ""
 
-        if "constants" in module:
+        if module.endswith(".constants") or module == "constants":
             source_module = "constants"
-        elif "database" in module:
+
+        elif module.endswith(".database") or module == "database":
             source_module = "database"
-        elif "repositories" in module:
+
+        elif module.endswith(".repositories") or module == "repositories":
             source_module = "repositories"
+
         elif module.endswith(".utils") or module == "utils":
             source_module = "utils"
+
         elif module.endswith(".search") or module == "search":
             source_module = "search"
+
         elif module.endswith(".notifications"):
             source_module = "notifications"
+
         elif module.endswith(".referrals"):
             source_module = "referrals"
+
+        elif module.endswith(".tasks"):
+            source_module = "tasks"
+
         elif module.endswith(".admin"):
             source_module = "admin"
+
         elif module.endswith(".account"):
             source_module = "account"
+
         elif module.endswith(".navigation"):
             source_module = "navigation"
+
         elif module.endswith(".products"):
             source_module = "products"
+
         elif module.endswith(".compare"):
             source_module = "compare"
+
+        elif module.endswith(".ads"):
+            source_module = "ads"
+
         else:
             continue
 
@@ -305,6 +358,7 @@ def _module_imports(module_name: str) -> dict[str, tuple[str, str]]:
                 continue
 
             local_name = alias.asname or alias.name
+
             result[local_name] = (
                 source_module,
                 alias.name,
@@ -351,6 +405,7 @@ def _extract_from_module(
     node = nodes.get(name)
 
     if node is None:
+        visiting.remove(key)
         return False
 
     imports = _module_imports(module_name)
@@ -364,20 +419,23 @@ def _extract_from_module(
     for referenced_name in referenced_names:
         imported = imports.get(referenced_name)
 
-        if imported is None or referenced_name in namespace:
+        if imported is None:
             continue
 
         source_module, source_name = imported
 
-        _extract_from_module(
+        if referenced_name in namespace:
+            continue
+
+        if _extract_from_module(
             source_module,
             source_name,
             namespace,
             visiting,
-        )
-
-        if source_name in namespace:
-            namespace[referenced_name] = namespace[source_name]
+        ):
+            namespace[referenced_name] = namespace[
+                source_name
+            ]
 
     _compile_node(
         node,
@@ -385,18 +443,21 @@ def _extract_from_module(
         namespace,
     )
 
+    visiting.remove(key)
+
     return name in namespace
 
 
-def extract_names(names) -> dict:
+def extract_names(
+    names,
+) -> dict:
     """
     Extract selected names from the modular project.
     """
 
     wanted = list(dict.fromkeys(names))
-    namespace = dict(SAFE_GLOBALS)
 
-    namespace.setdefault("datetime", datetime.datetime)
+    namespace = dict(SAFE_GLOBALS)
 
     missing = []
 
@@ -421,13 +482,16 @@ def extract_names(names) -> dict:
     if missing:
         raise AssertionError(
             "Could not find or extract the following names "
-            f"from the modular source tree: {sorted(missing)}"
+            "from the modular source tree: "
+            f"{sorted(missing)}"
         )
 
     return namespace
 
 
-def get_source_text(module_name: str = "utils") -> str:
+def get_source_text(
+    module_name: str = "utils",
+) -> str:
     """
     Return source text for a real modular source file.
     """
@@ -435,12 +499,18 @@ def get_source_text(module_name: str = "utils") -> str:
     path = MODULE_PATHS.get(module_name)
 
     if path is None:
-        raise AssertionError(f"Unknown source module: {module_name}")
+        raise AssertionError(
+            f"Unknown source module: {module_name}"
+        )
 
-    return path.read_text(encoding="utf-8")
+    return path.read_text(
+        encoding="utf-8"
+    )
 
 
-def get_module_path(module_name: str) -> Path:
+def get_module_path(
+    module_name: str,
+) -> Path:
     """
     Return the filesystem path of a registered project module.
     """
@@ -448,6 +518,8 @@ def get_module_path(module_name: str) -> Path:
     path = MODULE_PATHS.get(module_name)
 
     if path is None:
-        raise AssertionError(f"Unknown source module: {module_name}")
+        raise AssertionError(
+            f"Unknown source module: {module_name}"
+        )
 
     return path
