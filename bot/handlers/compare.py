@@ -4,6 +4,8 @@ ArzanKadeh AI
 Product comparison handlers
 """
 
+from html import escape
+
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton
@@ -31,6 +33,12 @@ from ..utils import (
 
 
 router = Router(name="compare")
+
+
+def _html(value) -> str:
+    if value is None:
+        return ""
+    return escape(str(value), quote=False)
 
 
 @router.callback_query(F.data == "compare")
@@ -169,8 +177,8 @@ async def handle_compare_list(
             builder.row(
                 InlineKeyboardButton(
                     text=(
-                        f"❌ حذف "
-                        f"{product['name']}"
+                        "❌ حذف "
+                        f"{_html(product['name'])}"
                     ),
                     callback_data=(
                         f"comparedrop:{product['id']}"
@@ -184,7 +192,7 @@ async def handle_compare_list(
         )
 
         selected_names = "\n".join(
-            f"• {product['name']}"
+            f"• {_html(product['name'])}"
             for product in products
         )
 
@@ -221,11 +229,18 @@ async def handle_compare_list(
         products,
         start=1,
     ):
+        product_name = _html(
+            product["name"]
+        )
+        seller_name = _html(
+            product["seller_name"]
+        )
+
         lines.extend(
             [
-                f"<b>{index}. {product['name']}</b>",
+                f"<b>{index}. {product_name}</b>",
                 (
-                    f"💰 قیمت: "
+                    "💰 قیمت: "
                     f"{format_price(product['price'])}"
                 ),
                 (
@@ -234,8 +249,8 @@ async def handle_compare_list(
                     f" ({product['review_count']} نظر)"
                 ),
                 (
-                    f"🏪 فروشنده: "
-                    f"{product['seller_name']}"
+                    "🏪 فروشنده: "
+                    f"{seller_name}"
                 ),
                 "",
             ]
@@ -243,7 +258,7 @@ async def handle_compare_list(
 
         builder.row(
             InlineKeyboardButton(
-                text=f"🛍️ {product['name']}",
+                text=f"🛍️ {product_name}",
                 callback_data=(
                     f"product:{product['id']}"
                 ),
