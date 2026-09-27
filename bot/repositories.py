@@ -1150,6 +1150,44 @@ async def create_review(
     rating: int,
     comment: Optional[str],
 ) -> bool:
+    # Rating must always be within the canonical 1–5 range.
+    if not 1 <= rating <= 5:
+        return False
+
+    # The seller must exist.
+    seller = await db.fetchone(
+        """
+        SELECT id
+        FROM sellers
+        WHERE id = ?
+        LIMIT 1;
+        """,
+        (seller_id,),
+    )
+
+    if seller is None:
+        return False
+
+    # If the review targets a product, that product must belong
+    # to the same seller supplied for the review.
+    if product_id is not None:
+        product = await db.fetchone(
+            """
+            SELECT id
+            FROM products
+            WHERE id = ?
+              AND seller_id = ?
+            LIMIT 1;
+            """,
+            (
+                product_id,
+                seller_id,
+            ),
+        )
+
+        if product is None:
+            return False
+
     await db.execute(
         """
         INSERT INTO reviews (
