@@ -3040,6 +3040,8 @@ async def handle_product_stock_set(
 
     await db.execute(
         """
+    cursor = await db.execute(
+        """
         UPDATE products
         SET stock_status = ?,
             updated_at = ?
@@ -3051,6 +3053,14 @@ async def handle_product_stock_set(
             product_id,
         ),
     )
+
+    if cursor.rowcount != 1:
+        await callback.answer(
+            "⚠️ وضعیت موجودی تغییر نکرد. "
+            "ممکن است محصول قبلاً تغییر کرده یا حذف شده باشد.",
+            show_alert=True,
+        )
+        return
 
     await log_audit(
         user_id,
