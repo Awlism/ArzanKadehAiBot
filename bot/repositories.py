@@ -1492,7 +1492,7 @@ async def mark_notification_read(
     notification_id: int,
     user_id: int,
 ) -> bool:
-    await db.execute(
+    cursor = await db.execute(
         """
         UPDATE notifications
         SET is_read = 1
@@ -1505,7 +1505,7 @@ async def mark_notification_read(
         ),
     )
 
-    return True
+    return cursor.rowcount == 1
 
 
 # ============================================================================
