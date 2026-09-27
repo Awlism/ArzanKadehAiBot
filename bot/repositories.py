@@ -174,7 +174,7 @@ async def set_active_mode(
             "Admin mode is restricted to the configured admin user."
         )
 
-    await db.execute(
+    cursor = await db.execute(
         """
         UPDATE users
         SET active_mode = ?,
@@ -189,7 +189,7 @@ async def set_active_mode(
         ),
     )
 
-    return True
+    return cursor.rowcount == 1
 
 
 async def is_admin_user_id(
