@@ -608,6 +608,7 @@ async def init_schema() -> None:
     await run_column_migrations()
     await run_seller_claim_migration()
     await run_report_migration()
+    await run_review_migration()
 
     for stmt in INDEX_STATEMENTS:
         await db.conn.execute(stmt)
