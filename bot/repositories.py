@@ -1285,7 +1285,7 @@ async def update_report_status(
     report_id: int,
     status: str,
 ) -> bool:
-    await db.execute(
+    cursor = await db.execute(
         """
         UPDATE reports
         SET status = ?
@@ -1297,7 +1297,7 @@ async def update_report_status(
         ),
     )
 
-    return True
+    return cursor.rowcount == 1
 
 
 # ============================================================================
@@ -1447,7 +1447,7 @@ async def update_request_status(
     request_id: int,
     status: str,
 ) -> bool:
-    await db.execute(
+    cursor = await db.execute(
         """
         UPDATE requests
         SET status = ?,
@@ -1461,7 +1461,7 @@ async def update_request_status(
         ),
     )
 
-    return True
+    return cursor.rowcount == 1
 
 
 # ============================================================================
@@ -1705,7 +1705,7 @@ async def update_order_status(
     if status not in ORDER_STATUSES:
         return False
 
-    await db.execute(
+    cursor = await db.execute(
         """
         UPDATE orders
         SET status = ?,
@@ -1719,7 +1719,7 @@ async def update_order_status(
         ),
     )
 
-    return True
+    return cursor.rowcount == 1
 
 
 # ============================================================================
