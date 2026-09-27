@@ -3038,8 +3038,6 @@ async def handle_product_stock_set(
         )
         return
 
-    await db.execute(
-        """
     cursor = await db.execute(
         """
         UPDATE products
