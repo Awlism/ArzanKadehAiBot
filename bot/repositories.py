@@ -1680,6 +1680,7 @@ async def update_request_status(
         "APPROVED",
         "REJECTED",
         "ACTIVE",
+        "EXPIRED",
         "COMPLETED",
         "CANCELLED",
     }
