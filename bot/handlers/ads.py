@@ -4,6 +4,7 @@ ArzanKadeh AI
 Advertising handlers
 """
 
+from html import escape
 from typing import Optional
 
 from aiogram import F, Router
@@ -30,7 +31,14 @@ from ..utils import (
     website_url,
 )
 
+
 router = Router(name="ads")
+
+
+def _html(value) -> str:
+    if value is None:
+        return ""
+    return escape(str(value), quote=False)
 
 
 AD_TYPES = {
@@ -118,7 +126,10 @@ async def handle_ads(
         )
     )
 
-    kb_add_back(builder, "account")
+    kb_add_back(
+        builder,
+        "account",
+    )
 
     await safe_edit(
         callback,
@@ -212,7 +223,9 @@ async def handle_ad_confirm(
         )
         return
 
-    sellers = await get_sellers_owned_by_user(user_id)
+    sellers = await get_sellers_owned_by_user(
+        user_id
+    )
 
     seller_id = (
         sellers[0]["id"]
@@ -240,17 +253,21 @@ async def handle_ad_confirm(
     builder.row(
         InlineKeyboardButton(
             text="🟢 تأیید درخواست",
-            callback_data=f"adminreq:approve:{request_id}",
+            callback_data=(
+                f"adminreq:approve:{request_id}"
+            ),
         ),
         InlineKeyboardButton(
             text="🔴 رد درخواست",
-            callback_data=f"adminreq:reject:{request_id}",
+            callback_data=(
+                f"adminreq:reject:{request_id}"
+            ),
         ),
     )
 
     admin_text = (
         "📢 درخواست تبلیغات جدید\n"
-        f"نوع: {topic}\n"
+        f"نوع: {_html(topic)}\n"
         f"(کاربر داخلی #{user_id}"
         + (
             f"، فروشگاه #{seller_id}"
@@ -276,7 +293,8 @@ async def handle_ad_confirm(
     await safe_edit(
         callback,
         (
-            f"✅ درخواست «{topic}» ثبت شد.\n\n"
+            "✅ درخواست "
+            f"«{_html(topic)}» ثبت شد.\n\n"
             "💬 برای قیمت و هماهنگی پرداخت با "
             "پشتیبانی ارزانکده در ارتباط باش.\n"
             "می‌تونی وضعیت درخواستت رو از "
@@ -453,15 +471,22 @@ async def handle_public_ad_kind(
     await callback.answer()
 
 
-@router.message(StateFilter(GeneralAdStates.waiting_title))
+@router.message(
+    StateFilter(GeneralAdStates.waiting_title)
+)
 async def handle_public_ad_title(
     message: Message,
     state: FSMContext,
 ) -> None:
-    if await restart_requested(message, state):
+    if await restart_requested(
+        message,
+        state,
+    ):
         return
 
-    title = (message.text or "").strip()
+    title = (
+        message.text or ""
+    ).strip()
 
     if not title:
         await message.answer(
@@ -500,15 +525,22 @@ async def handle_public_ad_title(
     )
 
 
-@router.message(StateFilter(GeneralAdStates.waiting_description))
+@router.message(
+    StateFilter(GeneralAdStates.waiting_description)
+)
 async def handle_public_ad_description(
     message: Message,
     state: FSMContext,
 ) -> None:
-    if await restart_requested(message, state):
+    if await restart_requested(
+        message,
+        state,
+    ):
         return
 
-    description = (message.text or "").strip()
+    description = (
+        message.text or ""
+    ).strip()
 
     if len(description) > 1000:
         await message.answer(
@@ -541,15 +573,22 @@ async def handle_public_ad_description(
     )
 
 
-@router.message(StateFilter(GeneralAdStates.waiting_image_url))
+@router.message(
+    StateFilter(GeneralAdStates.waiting_image_url)
+)
 async def handle_public_ad_image(
     message: Message,
     state: FSMContext,
 ) -> None:
-    if await restart_requested(message, state):
+    if await restart_requested(
+        message,
+        state,
+    ):
         return
 
-    raw_url = (message.text or "").strip()
+    raw_url = (
+        message.text or ""
+    ).strip()
 
     if len(raw_url) > 2048:
         await message.answer(
@@ -592,15 +631,22 @@ async def handle_public_ad_image(
     )
 
 
-@router.message(StateFilter(GeneralAdStates.waiting_link))
+@router.message(
+    StateFilter(GeneralAdStates.waiting_link)
+)
 async def handle_public_ad_link(
     message: Message,
     state: FSMContext,
 ) -> None:
-    if await restart_requested(message, state):
+    if await restart_requested(
+        message,
+        state,
+    ):
         return
 
-    raw_url = (message.text or "").strip()
+    raw_url = (
+        message.text or ""
+    ).strip()
 
     if len(raw_url) > 2048:
         await message.answer(
@@ -717,7 +763,9 @@ async def handle_public_ad_skip_link(
     )
 
 
-@router.callback_query(F.data.startswith("pubadskip:"))
+@router.callback_query(
+    F.data.startswith("pubadskip:")
+)
 async def handle_public_ad_skip_invalid(
     callback: CallbackQuery,
 ) -> None:
@@ -742,7 +790,11 @@ async def _finish_public_ad(
     kind = data.get("pubad_kind")
     title = data.get("pubad_title")
 
-    if not kind or not title or kind not in AD_KIND_LABELS:
+    if (
+        not kind
+        or not title
+        or kind not in AD_KIND_LABELS
+    ):
         text = (
             "⚠️ اطلاعات تبلیغ ناقص است. "
             "لطفاً دوباره از "
@@ -844,20 +896,24 @@ async def _finish_public_ad(
     builder.row(
         InlineKeyboardButton(
             text="🟢 تأیید تبلیغ",
-            callback_data=f"adminreq:approve:{request_id}",
+            callback_data=(
+                f"adminreq:approve:{request_id}"
+            ),
         ),
         InlineKeyboardButton(
             text="🔴 رد تبلیغ",
-            callback_data=f"adminreq:reject:{request_id}",
+            callback_data=(
+                f"adminreq:reject:{request_id}"
+            ),
         ),
     )
 
     ad_summary = (
         "📢 تبلیغ عمومی جدید\n"
-        f"نوع: {AD_KIND_LABELS[kind]}\n"
-        f"عنوان: {title}\n"
-        f"توضیح: {data.get('pubad_description') or '—'}\n"
-        f"لینک: {data.get('pubad_link') or '—'}\n"
+        f"نوع: {_html(AD_KIND_LABELS[kind])}\n"
+        f"عنوان: {_html(title)}\n"
+        f"توضیح: {_html(data.get('pubad_description') or '—')}\n"
+        f"لینک: {_html(data.get('pubad_link') or '—')}\n"
         f"(کاربر داخلی #{user_id}, "
         f"درخواست #{request_id})"
     )
