@@ -1472,6 +1472,7 @@ REQUEST_STATUS_LABELS = {
     "APPROVED": "تأیید شده",
     "REJECTED": "رد شده",
     "ACTIVE": "فعال",
+    "EXPIRED": "منقضی شده",
     "COMPLETED": "تکمیل شده",
     "CANCELLED": "لغو شده",
 }
