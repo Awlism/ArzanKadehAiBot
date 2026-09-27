@@ -1369,7 +1369,7 @@ async def handle_admin_report_decision(
         else "REJECTED"
     )
 
-    await db.execute(
+    cursor = await db.execute(
         """
         UPDATE reports
         SET status = ?
@@ -1381,6 +1381,37 @@ async def handle_admin_report_decision(
             report_id,
         ),
     )
+
+    if cursor.rowcount != 1:
+        current_report = await db.fetchone(
+            """
+            SELECT status
+            FROM reports
+            WHERE id = ?;
+            """,
+            (report_id,),
+        )
+
+        if not current_report:
+            await callback.answer(
+                "⚠️ این گزارش دیگر یافت نشد.",
+                show_alert=True,
+            )
+            return
+
+        current_status = REQUEST_STATUS_LABELS.get(
+            current_report["status"],
+            current_report["status"],
+        )
+
+        await callback.answer(
+            (
+                "⚠️ این گزارش قبلاً تعیین‌تکلیف شده: "
+                f"{_html(current_status)}"
+            ),
+            show_alert=True,
+        )
+        return
 
     audit_action = (
         "report_approved"
