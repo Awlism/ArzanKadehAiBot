@@ -1974,14 +1974,29 @@ async def handle_ads_admin_panel(
         """
     )
 
-    now = now_iso()
+    now = datetime.now(timezone.utc)
+    soon_limit = now + timedelta(hours=24)
 
-    soon_expiring = [
-        row
-        for row in active
-        if row["ad_expires_at"]
-        and row["ad_expires_at"] <= now
-    ]
+    soon_expiring = []
+
+    for row in active:
+        expires_at = row["ad_expires_at"]
+
+        if not expires_at:
+            continue
+
+        try:
+            expires_dt = datetime.fromisoformat(
+                expires_at
+            )
+
+            if (
+                now < expires_dt <= soon_limit
+            ):
+                soon_expiring.append(row)
+
+        except (TypeError, ValueError):
+            continue
 
     lines = [
         "📢 <b>تبلیغات</b>",
