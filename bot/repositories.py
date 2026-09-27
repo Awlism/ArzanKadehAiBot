@@ -88,7 +88,7 @@ async def update_user_role(
     if role not in VALID_MODES:
         return False
 
-    await db.execute(
+    cursor = await db.execute(
         """
         UPDATE users
         SET active_mode = ?,
@@ -103,7 +103,7 @@ async def update_user_role(
         ),
     )
 
-    return True
+    return cursor.rowcount == 1
 
 
 async def user_has_any_seller(
