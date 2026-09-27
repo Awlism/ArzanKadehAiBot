@@ -429,7 +429,10 @@ async def create_product_record(
 async def delete_product_record(
     product_id: int,
 ) -> bool:
-    await db.execute(
+    if product_id < 1:
+        return False
+
+    cursor = await db.execute(
         """
         DELETE FROM products
         WHERE id = ?;
@@ -437,7 +440,7 @@ async def delete_product_record(
         (product_id,),
     )
 
-    return True
+    return cursor.rowcount == 1
 
 
 async def increment_product_views(
