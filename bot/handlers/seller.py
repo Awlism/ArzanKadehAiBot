@@ -2839,7 +2839,7 @@ async def handle_product_field_edit_value(
         )
         return
 
-    await db.execute(
+    cursor = await db.execute(
         query,
         (
             value,
@@ -2847,6 +2847,13 @@ async def handle_product_field_edit_value(
             product_id,
         ),
     )
+
+    if cursor.rowcount != 1:
+        await message.answer(
+            "⚠️ تغییر محصول انجام نشد. "
+            "ممکن است محصول قبلاً تغییر کرده یا حذف شده باشد."
+        )
+        return
 
     await log_audit(
         user_id,
