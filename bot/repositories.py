@@ -1433,6 +1433,20 @@ async def update_report_status(
     report_id: int,
     status: str,
 ) -> bool:
+    valid_statuses = {
+        "PENDING",
+        "APPROVED",
+        "REJECTED",
+        "COMPLETED",
+        "CANCELLED",
+    }
+
+    if report_id < 1:
+        return False
+
+    if status not in valid_statuses:
+        return False
+
     cursor = await db.execute(
         """
         UPDATE reports
