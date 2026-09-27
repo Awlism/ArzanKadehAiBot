@@ -505,6 +505,346 @@ async def get_seller_statistics(
 
 
 # ============================================================================
+# SELLER CLAIMS
+# ============================================================================
+
+
+async def get_seller_claim(
+    claim_id: int,
+) -> Optional[dict[str, Any]]:
+    return await db.fetchone(
+        """
+        SELECT
+            sc.*,
+            s.name AS seller_name,
+            s.status AS seller_status,
+            s.owner_user_id,
+            s.created_by_user_id,
+            u.telegram_id AS claimant_telegram_id,
+            u.username AS claimant_username,
+            u.first_name AS claimant_first_name
+        FROM seller_claims sc
+        JOIN sellers s
+            ON s.id = sc.seller_id
+        JOIN users u
+            ON u.id = sc.user_id
+        WHERE sc.id = ?
+        LIMIT 1;
+        """,
+        (claim_id,),
+    )
+
+
+async def get_pending_seller_claims(
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    if limit < 1:
+        return []
+
+    return await db.fetchall(
+        """
+        SELECT
+            sc.*,
+            s.name AS seller_name,
+            s.status AS seller_status,
+            s.owner_user_id,
+            s.created_by_user_id,
+            u.telegram_id AS claimant_telegram_id,
+            u.username AS claimant_username,
+            u.first_name AS claimant_first_name
+        FROM seller_claims sc
+        JOIN sellers s
+            ON s.id = sc.seller_id
+        JOIN users u
+            ON u.id = sc.user_id
+        WHERE sc.status = 'PENDING'
+        ORDER BY sc.created_at ASC, sc.id ASC
+        LIMIT ?;
+        """,
+        (limit,),
+    )
+
+
+async def get_seller_claims_for_seller(
+    seller_id: int,
+) -> list[dict[str, Any]]:
+    return await db.fetchall(
+        """
+        SELECT
+            sc.*,
+            s.name AS seller_name,
+            s.status AS seller_status,
+            u.telegram_id AS claimant_telegram_id,
+            u.username AS claimant_username,
+            u.first_name AS claimant_first_name
+        FROM seller_claims sc
+        JOIN sellers s
+            ON s.id = sc.seller_id
+        JOIN users u
+            ON u.id = sc.user_id
+        WHERE sc.seller_id = ?
+        ORDER BY sc.created_at DESC, sc.id DESC;
+        """,
+        (seller_id,),
+    )
+
+
+async def get_user_seller_claims(
+    user_id: int,
+) -> list[dict[str, Any]]:
+    return await db.fetchall(
+        """
+        SELECT
+            sc.*,
+            s.name AS seller_name,
+            s.status AS seller_status
+        FROM seller_claims sc
+        JOIN sellers s
+            ON s.id = sc.seller_id
+        WHERE sc.user_id = ?
+        ORDER BY sc.created_at DESC, sc.id DESC;
+        """,
+        (user_id,),
+    )
+
+
+async def create_seller_claim(
+    seller_id: int,
+    user_id: int,
+) -> Optional[int]:
+    seller = await db.fetchone(
+        """
+        SELECT
+            id,
+            status,
+            owner_user_id,
+            created_by_user_id
+        FROM sellers
+        WHERE id = ?
+        LIMIT 1;
+        """,
+        (seller_id,),
+    )
+
+    if not seller:
+        return None
+
+    if seller["status"] != "UNCLAIMED":
+        return None
+
+    if user_id in (
+        seller["owner_user_id"],
+        seller["created_by_user_id"],
+    ):
+        return None
+
+    existing = await db.fetchone(
+        """
+        SELECT id, status
+        FROM seller_claims
+        WHERE seller_id = ?
+          AND user_id = ?
+        ORDER BY id DESC
+        LIMIT 1;
+        """,
+        (
+            seller_id,
+            user_id,
+        ),
+    )
+
+    if existing:
+        if existing["status"] == "PENDING":
+            return int(existing["id"])
+
+        return None
+
+    now = now_iso()
+
+    cursor = await db.execute(
+        """
+        INSERT INTO seller_claims (
+            seller_id,
+            user_id,
+            status,
+            created_at,
+            updated_at
+        )
+        VALUES (?, ?, 'PENDING', ?, ?);
+        """,
+        (
+            seller_id,
+            user_id,
+            now,
+            now,
+        ),
+    )
+
+    if cursor.lastrowid is None:
+        return None
+
+    return int(cursor.lastrowid)
+
+
+async def approve_seller_claim(
+    claim_id: int,
+    admin_user_id: int,
+) -> bool:
+    if not await is_admin_user_id(admin_user_id):
+        raise PermissionError(
+            "Only the configured admin can approve seller claims."
+        )
+
+    if db.conn is None:
+        raise RuntimeError(
+            "Database is not connected."
+        )
+
+    now = now_iso()
+
+    try:
+        await db.conn.execute("BEGIN")
+
+        claim_cursor = await db.conn.execute(
+            """
+            SELECT
+                id,
+                seller_id,
+                user_id,
+                status
+            FROM seller_claims
+            WHERE id = ?
+            LIMIT 1;
+            """,
+            (claim_id,),
+        )
+        claim_row = await claim_cursor.fetchone()
+        await claim_cursor.close()
+
+        if not claim_row:
+            await db.conn.rollback()
+            return False
+
+        if claim_row["status"] != "PENDING":
+            await db.conn.rollback()
+            return False
+
+        seller_cursor = await db.conn.execute(
+            """
+            SELECT
+                id,
+                status,
+                owner_user_id,
+                created_by_user_id
+            FROM sellers
+            WHERE id = ?
+            LIMIT 1;
+            """,
+            (claim_row["seller_id"],),
+        )
+        seller_row = await seller_cursor.fetchone()
+        await seller_cursor.close()
+
+        if not seller_row:
+            await db.conn.rollback()
+            return False
+
+        if seller_row["status"] != "UNCLAIMED":
+            await db.conn.rollback()
+            return False
+
+        if (
+            seller_row["owner_user_id"] is not None
+            and seller_row["owner_user_id"] != claim_row["user_id"]
+        ):
+            await db.conn.rollback()
+            return False
+
+        if (
+            seller_row["created_by_user_id"] is not None
+            and seller_row["created_by_user_id"] != claim_row["user_id"]
+        ):
+            await db.conn.rollback()
+            return False
+
+        claim_update = await db.conn.execute(
+            """
+            UPDATE seller_claims
+            SET
+                status = 'APPROVED',
+                updated_at = ?
+            WHERE id = ?
+              AND status = 'PENDING';
+            """,
+            (
+                now,
+                claim_id,
+            ),
+        )
+
+        if claim_update.rowcount != 1:
+            await db.conn.rollback()
+            return False
+
+        seller_update = await db.conn.execute(
+            """
+            UPDATE sellers
+            SET
+                owner_user_id = ?,
+                status = 'CLAIMED',
+                updated_at = ?
+            WHERE id = ?
+              AND status = 'UNCLAIMED';
+            """,
+            (
+                claim_row["user_id"],
+                now,
+                claim_row["seller_id"],
+            ),
+        )
+
+        if seller_update.rowcount != 1:
+            await db.conn.rollback()
+            return False
+
+        await db.conn.commit()
+        return True
+
+    except Exception:
+        await db.conn.rollback()
+        raise
+
+
+async def reject_seller_claim(
+    claim_id: int,
+    admin_user_id: int,
+) -> bool:
+    if not await is_admin_user_id(admin_user_id):
+        raise PermissionError(
+            "Only the configured admin can reject seller claims."
+        )
+
+    now = now_iso()
+
+    cursor = await db.execute(
+        """
+        UPDATE seller_claims
+        SET
+            status = 'REJECTED',
+            updated_at = ?
+        WHERE id = ?
+          AND status = 'PENDING';
+        """,
+        (
+            now,
+            claim_id,
+        ),
+    )
+
+    return cursor.rowcount == 1
+
+
+# ============================================================================
 # PRODUCT FAVORITES
 # ============================================================================
 
