@@ -1733,6 +1733,10 @@ async def create_order(
         if cursor and cursor.lastrowid is not None
         else None
     )
+        int(cursor.lastrowid)
+        if cursor and cursor.lastrowid is not None
+        else None
+    )
     if quantity < 1:
         return None
 
