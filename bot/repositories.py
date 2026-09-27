@@ -1429,6 +1429,33 @@ async def create_request(
     title: str,
     description: Optional[str] = None,
 ) -> Optional[int]:
+    if user_id < 1:
+        return None
+
+    if request_type not in {"support", "ad"}:
+        return None
+
+    title = (title or "").strip()
+
+    if not title:
+        return None
+
+    if description is not None:
+        description = description.strip()
+
+    user = await db.fetchone(
+        """
+        SELECT id
+        FROM users
+        WHERE id = ?
+        LIMIT 1;
+        """,
+        (user_id,),
+    )
+
+    if user is None:
+        return None
+
     now = now_iso()
 
     cursor = await db.execute(
