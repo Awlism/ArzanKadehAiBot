@@ -4,6 +4,7 @@ ArzanKadeh AI
 Product handlers
 """
 
+from html import escape
 from typing import Optional
 
 import aiosqlite
@@ -65,6 +66,12 @@ REQUEST_STATUS_LABELS = {
     "ACTIVE": "🟢 فعال",
     "EXPIRED": "⚪ منقضی شده",
 }
+
+
+def _html(value) -> str:
+    if value is None:
+        return ""
+    return escape(str(value), quote=False)
 
 
 def _is_admin(callback: CallbackQuery) -> bool:
@@ -163,19 +170,19 @@ async def _render_product_detail(
     )
 
     lines = [
-        f"{EMOJI_PRODUCT} <b>{product['name']}</b>",
+        f"{EMOJI_PRODUCT} <b>{_html(product['name'])}</b>",
         "",
-        product["description"] or "بدون توضیحات",
+        _html(product["description"] or "بدون توضیحات"),
         "",
         f"{EMOJI_PRICE} {format_price(product['price'])}",
-        f"🏪 {product['seller_name']}",
-        f"{EMOJI_CITY} {product['city_name'] or 'نامشخص'}",
+        f"🏪 {_html(product['seller_name'])}",
+        f"{EMOJI_CITY} {_html(product['city_name'] or 'نامشخص')}",
         (
             f"{EMOJI_RATING} "
             f"{product['rating']:.1f} "
             f"({product['review_count']} نظر)"
         ),
-        status_badge(product["seller_status"]),
+        _html(status_badge(product["seller_status"])),
     ]
 
     if product["stock_status"] == "OUT_OF_STOCK":
@@ -450,7 +457,7 @@ async def handle_favorites_list(
             InlineKeyboardButton(
                 text=(
                     f"{EMOJI_PRODUCT} "
-                    f"{product['name']}"
+                    f"{_html(product['name'])}"
                 ),
                 callback_data=(
                     f"product:{product['id']}"
@@ -1138,11 +1145,11 @@ async def _save_report(
             bot,
             (
                 f"🚨 گزارش جدید "
-                f"({target_label} #{target_id})\n"
+                f"({_html(target_label)} #{report_id})\n"
                 f"دلیل: "
-                f"{REPORT_REASONS.get(reason_code, reason_code)}\n"
+                f"{_html(REPORT_REASONS.get(reason_code, reason_code))}\n"
                 f"توضیح: "
-                f"{description or '—'}"
+                f"{_html(description or '—')}"
             ),
             reply_markup=builder.as_markup(),
         )
@@ -1364,7 +1371,7 @@ async def handle_admin_report_decision(
             (
                 f"{callback.message.text}\n\n"
                 f"— تصمیم ثبت شد: "
-                f"{REQUEST_STATUS_LABELS[new_status]}"
+                f"{_html(REQUEST_STATUS_LABELS[new_status])}"
             )
         )
     except TelegramBadRequest:
