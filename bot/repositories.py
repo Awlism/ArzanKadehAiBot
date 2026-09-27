@@ -1887,62 +1887,6 @@ async def create_order(
         if cursor and cursor.lastrowid is not None
         else None
     )
-        int(cursor.lastrowid)
-        if cursor and cursor.lastrowid is not None
-        else None
-    )
-    if quantity < 1:
-        return None
-
-    if unit_price is None:
-        product = await db.fetchone(
-            """
-            SELECT price
-            FROM products
-            WHERE id = ?
-            LIMIT 1;
-            """,
-            (product_id,),
-        )
-
-        if not product or product["price"] is None:
-            return None
-
-        unit_price = int(product["price"])
-
-    total_price = int(unit_price) * int(quantity)
-    now = now_iso()
-
-    cursor = await db.execute(
-        """
-        INSERT INTO orders (
-            buyer_user_id,
-            seller_id,
-            product_id,
-            quantity,
-            total_price,
-            status,
-            created_at,
-            updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?);
-        """,
-        (
-            buyer_user_id,
-            seller_id,
-            product_id,
-            quantity,
-            total_price,
-            now,
-            now,
-        ),
-    )
-
-    return (
-        int(cursor.lastrowid)
-        if cursor and cursor.lastrowid is not None
-        else None
-    )
 
 
 async def get_order(
