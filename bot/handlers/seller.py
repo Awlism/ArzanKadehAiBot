@@ -5,9 +5,10 @@ Seller browsing, favorites, contacts, shop management,
 product management, statistics and seller registration.
 """
 
+from html import escape
 from typing import Optional
 
-from aiogram import F, Bot, Router
+from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.filters import StateFilter
 from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
@@ -16,12 +17,10 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from ..config import ADMIN_CHAT_ID
 from ..constants import (
     EMOJI_CITY,
-    EMOJI_CLAIM,
     EMOJI_FAVORITES,
     EMOJI_LINK,
     EMOJI_PRICE,
     EMOJI_RATING,
-    EMOJI_REPORT,
     EMOJI_SELLERS,
     PAGE_SIZE_LIST,
     PRODUCT_EDITABLE_FIELDS,
@@ -32,7 +31,6 @@ from ..constants import (
 from ..database import db
 from ..keyboards import kb_add_back, kb_pagination_row
 from ..repositories import (
-    count_seller_favorites,
     create_product_record,
     delete_product_record,
     get_product_by_id,
@@ -42,9 +40,7 @@ from ..repositories import (
     get_sellers_owned_by_user,
     is_seller_favorite,
     toggle_seller_favorite,
-    user_has_any_seller,
 )
-from ..services.referrals import referral_stats_text
 from ..states import (
     ProductAddStates,
     ProductEditStates,
@@ -72,32 +68,147 @@ router = Router(name="seller")
 
 
 # ============================================================================
-# CALLBACK PARSING HELPERS
+# HELPERS
 # ============================================================================
 
 
-def _parse_non_negative_page(data: str) -> int | None:
+def _html(value) -> str:
+    if value is None:
+        return ""
+
+    return escape(
+        str(value),
+        quote=False,
+    )
+
+
+def _parse_non_negative_page(
+    data: str,
+) -> int | None:
     parts = data.split(":", 1)
+
     if len(parts) != 2:
         return None
 
     page = parse_int(parts[1])
+
     if page is None or page < 0:
         return None
 
     return page
 
 
-def _parse_positive_callback_id(data: str) -> int | None:
+def _parse_positive_callback_id(
+    data: str,
+) -> int | None:
     parts = data.split(":", 1)
+
     if len(parts) != 2:
         return None
 
     value = parse_int(parts[1])
+
     if value is None or value < 1:
         return None
 
     return value
+
+
+def _seller_name(
+    seller: dict,
+) -> str:
+    return seller.get("name") or "فروشگاه"
+
+
+async def _check_seller_ownership(
+    user_id: int,
+    seller_id: int,
+) -> Optional[dict]:
+    seller = await get_seller_by_id(seller_id)
+
+    if not seller:
+        return None
+
+    if user_id not in (
+        seller["owner_user_id"],
+        seller["created_by_user_id"],
+    ):
+        return None
+
+    return seller
+
+
+async def _get_owned_seller_or_answer(
+    callback: CallbackQuery,
+    seller_id: int,
+) -> Optional[dict]:
+    user_id = await ensure_user(
+        callback.from_user
+    )
+
+    seller = await _check_seller_ownership(
+        user_id,
+        seller_id,
+    )
+
+    if not seller:
+        await callback.answer(
+            "⚠️ دسترسی به این فروشگاه مجاز نیست.",
+            show_alert=True,
+        )
+        return None
+
+    return seller
+
+
+async def resolve_single_seller_or_show_picker(
+    callback: CallbackQuery,
+    user_id: int,
+    prefix: str,
+) -> Optional[int]:
+    sellers = await get_sellers_owned_by_user(
+        user_id
+    )
+
+    if not sellers:
+        await callback.answer(
+            "⚠️ هنوز فروشگاهی ثبت نکرده‌ای.",
+            show_alert=True,
+        )
+        return None
+
+    if len(sellers) == 1:
+        return sellers[0]["id"]
+
+    builder = InlineKeyboardBuilder()
+
+    for seller in sellers:
+        builder.row(
+            InlineKeyboardButton(
+                text=(
+                    f"{EMOJI_SELLERS} "
+                    f"{_html(seller['name'])}"
+                ),
+                callback_data=(
+                    f"{prefix}:{seller['id']}"
+                ),
+            )
+        )
+
+    kb_add_back(
+        builder,
+        "account",
+    )
+
+    await safe_edit(
+        callback,
+        "🏪 کدوم فروشگاهت رو می‌خوای مدیریت کنی؟",
+        builder.as_markup(),
+    )
+
+    await callback.answer()
+
+    return None
 
 
 # ============================================================================
@@ -105,14 +216,18 @@ def _parse_positive_callback_id(data: str) -> int | None:
 # ============================================================================
 
 
-@router.callback_query(F.data.startswith("sellers:"))
+@router.callback_query(
+    F.data.startswith("sellers:")
+)
 async def handle_sellers_list(
     callback: CallbackQuery,
     state: FSMContext,
 ) -> None:
     await state.clear()
 
-    page = _parse_non_negative_page(callback.data)
+    page = _parse_non_negative_page(
+        callback.data
+    )
 
     if page is None:
         await callback.answer(
@@ -121,7 +236,9 @@ async def handle_sellers_list(
         )
         return
 
-    await ensure_user(callback.from_user)
+    await ensure_user(
+        callback.from_user
+    )
 
     sellers = await db.fetchall(
         """
@@ -133,26 +250,48 @@ async def handle_sellers_list(
 
     if not sellers:
         builder = InlineKeyboardBuilder()
-        kb_add_back(builder, "main")
+
+        kb_add_back(
+            builder,
+            "main",
+        )
 
         await safe_edit(
             callback,
-            f"{EMOJI_SELLERS} فعلاً فروشگاهی ثبت نشده است.",
+            (
+                f"{EMOJI_SELLERS} "
+                "فعلاً فروشگاهی ثبت نشده است."
+            ),
             builder.as_markup(),
         )
+
         await callback.answer()
         return
 
     offset = page * PAGE_SIZE_LIST
-    page_rows = sellers[offset:offset + PAGE_SIZE_LIST]
-    has_next = offset + PAGE_SIZE_LIST < len(sellers)
+
+    page_rows = sellers[
+        offset:offset + PAGE_SIZE_LIST
+    ]
+
+    has_next = (
+        offset + PAGE_SIZE_LIST
+        < len(sellers)
+    )
 
     builder = InlineKeyboardBuilder()
 
     for seller in page_rows:
+        status = str(
+            seller.get("status") or ""
+        ).upper()
+
         badge = (
             "🟢"
-            if seller["status"] == "CLAIMED"
+            if status in (
+                "CLAIMED",
+                "APPROVED",
+            )
             else "⚪"
         )
 
@@ -161,9 +300,11 @@ async def handle_sellers_list(
                 text=(
                     f"{EMOJI_SELLERS} "
                     f"{badge} "
-                    f"{seller['name']}"
+                    f"{_html(seller['name'])}"
                 ),
-                callback_data=f"seller:{seller['id']}",
+                callback_data=(
+                    f"seller:{seller['id']}"
+                ),
             )
         )
 
@@ -173,17 +314,24 @@ async def handle_sellers_list(
         page,
         has_next,
     )
-    kb_add_back(builder, "main")
+
+    kb_add_back(
+        builder,
+        "main",
+    )
 
     await safe_edit(
         callback,
         f"{EMOJI_SELLERS} <b>فروشگاه‌ها</b>",
         builder.as_markup(),
     )
+
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("seller:"))
+@router.callback_query(
+    F.data.startswith("seller:")
+)
 async def handle_seller_detail(
     callback: CallbackQuery,
     state: FSMContext,
@@ -239,7 +387,7 @@ async def _render_seller_detail(
     await db.execute(
         """
         UPDATE sellers
-        SET views = views + 1
+        SET views = COALESCE(views, 0) + 1
         WHERE id = ?;
         """,
         (seller_id,),
@@ -255,24 +403,38 @@ async def _render_seller_detail(
     rating = seller["rating"] or 0
     review_count = seller["review_count"] or 0
 
+    status = str(
+        seller.get("status") or ""
+    ).upper()
+
     lines = [
-        f"{EMOJI_SELLERS} <b>{seller['name']}</b>",
+        (
+            f"{EMOJI_SELLERS} "
+            f"<b>{_html(seller['name'])}</b>"
+        ),
         "",
-        seller["description"] or "بدون توضیحات",
+        (
+            _html(seller["description"])
+            if seller["description"]
+            else "بدون توضیحات"
+        ),
         "",
-        f"{EMOJI_CITY} {seller['city_name'] or 'نامشخص'}",
+        (
+            f"{EMOJI_CITY} "
+            f"{_html(seller['city_name'] or 'نامشخص')}"
+        ),
         (
             f"{EMOJI_RATING} "
             f"{float(rating):.1f} "
-            f"({review_count} نظر)"
+            f"({_html(review_count)} نظر)"
         ),
-        status_badge(seller["status"]),
+        status_badge(status),
     ]
 
-    if seller["status"] == "UNCLAIMED":
+    if status == "UNCLAIMED":
         lines.append(
-            "\nاین صفحه هنوز توسط صاحب کسب‌وکار "
-            "تأیید نشده است."
+            "\nاین صفحه هنوز توسط صاحب "
+            "کسب‌وکار تأیید نشده است."
         )
 
     is_owner = user_id in (
@@ -297,27 +459,35 @@ async def _render_seller_detail(
     instagram = instagram_url(
         seller["instagram"]
     )
+
     telegram = telegram_url(
         seller["telegram"]
     )
+
     website = website_url(
         seller["website"]
     )
+
     whatsapp = whatsapp_url(
         seller["whatsapp"]
     )
+
     support_telegram = telegram_url(
         seller["telegram_support"]
     )
 
-    show_contacts = is_active or is_owner
+    show_contacts = (
+        is_active or is_owner
+    )
 
     if show_contacts:
         if instagram:
             builder.row(
                 InlineKeyboardButton(
                     text="📸 اینستاگرام",
-                    callback_data=f"igclick:{seller_id}",
+                    callback_data=(
+                        f"igclick:{seller_id}"
+                    ),
                 )
             )
 
@@ -325,7 +495,9 @@ async def _render_seller_detail(
             builder.row(
                 InlineKeyboardButton(
                     text="✈️ تلگرام",
-                    callback_data=f"tgclick:{seller_id}",
+                    callback_data=(
+                        f"tgclick:{seller_id}"
+                    ),
                 )
             )
 
@@ -333,14 +505,18 @@ async def _render_seller_detail(
             builder.row(
                 InlineKeyboardButton(
                     text="🟢 واتساپ",
-                    callback_data=f"waclick:{seller_id}",
+                    callback_data=(
+                        f"waclick:{seller_id}"
+                    ),
                 )
             )
 
         if website:
             builder.row(
                 InlineKeyboardButton(
-                    text=f"{EMOJI_LINK} وبسایت",
+                    text=(
+                        f"{EMOJI_LINK} وبسایت"
+                    ),
                     url=website,
                 )
             )
@@ -377,14 +553,13 @@ async def _render_seller_detail(
         )
     )
 
-    if seller["status"] == "UNCLAIMED":
+    if status == "UNCLAIMED":
         builder.row(
             InlineKeyboardButton(
-                text=(
-                    f"{EMOJI_CLAIM} "
-                    "درخواست مالکیت فروشگاه"
+                text="👤 درخواست مالکیت فروشگاه",
+                callback_data=(
+                    f"claim:{seller_id}"
                 ),
-                callback_data=f"claim:{seller_id}",
             )
         )
 
@@ -399,7 +574,7 @@ async def _render_seller_detail(
 
     builder.row(
         InlineKeyboardButton(
-            text=f"{EMOJI_REPORT} گزارش",
+            text="⚠️ گزارش",
             callback_data=(
                 f"report:seller:{seller_id}"
             ),
@@ -407,16 +582,16 @@ async def _render_seller_detail(
     )
 
     if is_owner:
-        whatsapp_label = (
-            "🟢 ویرایش واتساپ"
-            if whatsapp
-            else "🟢 افزودن واتساپ"
-        )
-
         builder.row(
             InlineKeyboardButton(
-                text=whatsapp_label,
-                callback_data=f"waedit:{seller_id}",
+                text=(
+                    "🟢 ویرایش واتساپ"
+                    if whatsapp
+                    else "🟢 افزودن واتساپ"
+                ),
+                callback_data=(
+                    f"waedit:{seller_id}"
+                ),
             )
         )
 
@@ -445,7 +620,9 @@ async def _render_seller_detail(
 # ============================================================================
 
 
-@router.callback_query(F.data.startswith("sfav:"))
+@router.callback_query(
+    F.data.startswith("sfav:")
+)
 async def handle_seller_favorite_add(
     callback: CallbackQuery,
 ) -> None:
@@ -476,14 +653,20 @@ async def handle_seller_favorite_add(
         )
         return
 
-    await toggle_seller_favorite(
-        user_id,
-        seller_id,
+    is_now_favorite = (
+        await toggle_seller_favorite(
+            user_id,
+            seller_id,
+        )
     )
 
     await log_event(
         user_id,
-        "favorite_add",
+        (
+            "favorite_add"
+            if is_now_favorite
+            else "favorite_remove"
+        ),
         "seller",
         seller_id,
     )
@@ -492,13 +675,16 @@ async def handle_seller_favorite_add(
         callback,
         seller_id,
         answer_text=(
-            "❤️ ذخیره شد! هر وقت خواستی از بخش "
-            "علاقه‌مندی‌ها پیداش می‌کنی."
+            "❤️ ذخیره شد!"
+            if is_now_favorite
+            else "از علاقه‌مندی‌ها حذف شد 💔"
         ),
     )
 
 
-@router.callback_query(F.data.startswith("sunfav:"))
+@router.callback_query(
+    F.data.startswith("sunfav:")
+)
 async def handle_seller_favorite_remove(
     callback: CallbackQuery,
 ) -> None:
@@ -534,10 +720,19 @@ async def handle_seller_favorite_remove(
         seller_id,
     )
 
+    await log_event(
+        user_id,
+        "favorite_remove",
+        "seller",
+        seller_id,
+    )
+
     await _render_seller_detail(
         callback,
         seller_id,
-        answer_text="از علاقه‌مندی‌ها حذف شد 💔",
+        answer_text=(
+            "از علاقه‌مندی‌ها حذف شد 💔"
+        ),
     )
 
 
@@ -546,7 +741,59 @@ async def handle_seller_favorite_remove(
 # ============================================================================
 
 
-@router.callback_query(F.data.startswith("igclick:"))
+async def _handle_seller_url_click(
+    callback: CallbackQuery,
+    seller_id: int,
+    field: str,
+    builder,
+    event_type: str,
+) -> None:
+    user_id = await ensure_user(
+        callback.from_user
+    )
+
+    seller = await db.fetchone(
+        f"""
+        SELECT {field}
+        FROM sellers
+        WHERE id = ?;
+        """,
+        (seller_id,),
+    )
+
+    if not seller:
+        await callback.answer(
+            "⚠️ فروشگاه پیدا نشد.",
+            show_alert=True,
+        )
+        return
+
+    value = seller[field]
+
+    link = builder(value)
+
+    if not link:
+        await callback.answer(
+            "⚠️ این لینک در دسترس نیست.",
+            show_alert=True,
+        )
+        return
+
+    await log_event(
+        user_id,
+        event_type,
+        "seller",
+        seller_id,
+    )
+
+    await callback.answer(
+        url=link
+    )
+
+
+@router.callback_query(
+    F.data.startswith("igclick:")
+)
 async def handle_instagram_click(
     callback: CallbackQuery,
 ) -> None:
@@ -561,39 +808,18 @@ async def handle_instagram_click(
         )
         return
 
-    user_id = await ensure_user(
-        callback.from_user
-    )
-
-    seller = await db.fetchone(
-        "SELECT instagram FROM sellers WHERE id = ?;",
-        (seller_id,),
-    )
-
-    link = (
-        instagram_url(seller["instagram"])
-        if seller
-        else None
-    )
-
-    if not link:
-        await callback.answer(
-            "⚠️ این لینک در دسترس نیست.",
-            show_alert=True,
-        )
-        return
-
-    await log_event(
-        user_id,
-        "instagram_click",
-        "seller",
+    await _handle_seller_url_click(
+        callback,
         seller_id,
+        "instagram",
+        instagram_url,
+        "instagram_click",
     )
 
-    await callback.answer(url=link)
 
-
-@router.callback_query(F.data.startswith("tgclick:"))
+@router.callback_query(
+    F.data.startswith("tgclick:")
+)
 async def handle_telegram_click(
     callback: CallbackQuery,
 ) -> None:
@@ -608,39 +834,18 @@ async def handle_telegram_click(
         )
         return
 
-    user_id = await ensure_user(
-        callback.from_user
-    )
-
-    seller = await db.fetchone(
-        "SELECT telegram FROM sellers WHERE id = ?;",
-        (seller_id,),
-    )
-
-    link = (
-        telegram_url(seller["telegram"])
-        if seller
-        else None
-    )
-
-    if not link:
-        await callback.answer(
-            "⚠️ این لینک در دسترس نیست.",
-            show_alert=True,
-        )
-        return
-
-    await log_event(
-        user_id,
-        "telegram_click",
-        "seller",
+    await _handle_seller_url_click(
+        callback,
         seller_id,
+        "telegram",
+        telegram_url,
+        "telegram_click",
     )
 
-    await callback.answer(url=link)
 
-
-@router.callback_query(F.data.startswith("waclick:"))
+@router.callback_query(
+    F.data.startswith("waclick:")
+)
 async def handle_whatsapp_click(
     callback: CallbackQuery,
 ) -> None:
@@ -655,36 +860,13 @@ async def handle_whatsapp_click(
         )
         return
 
-    user_id = await ensure_user(
-        callback.from_user
-    )
-
-    seller = await db.fetchone(
-        "SELECT whatsapp FROM sellers WHERE id = ?;",
-        (seller_id,),
-    )
-
-    link = (
-        whatsapp_url(seller["whatsapp"])
-        if seller
-        else None
-    )
-
-    if not link:
-        await callback.answer(
-            "⚠️ این لینک در دسترس نیست.",
-            show_alert=True,
-        )
-        return
-
-    await log_event(
-        user_id,
-        "whatsapp_click",
-        "seller",
+    await _handle_seller_url_click(
+        callback,
         seller_id,
+        "whatsapp",
+        whatsapp_url,
+        "whatsapp_click",
     )
-
-    await callback.answer(url=link)
 
 
 # ============================================================================
@@ -692,7 +874,9 @@ async def handle_whatsapp_click(
 # ============================================================================
 
 
-@router.callback_query(F.data.startswith("waedit:"))
+@router.callback_query(
+    F.data.startswith("waedit:")
+)
 async def handle_whatsapp_edit_start(
     callback: CallbackQuery,
     state: FSMContext,
@@ -714,7 +898,10 @@ async def handle_whatsapp_edit_start(
 
     seller = await db.fetchone(
         """
-        SELECT id, owner_user_id, created_by_user_id
+        SELECT
+            id,
+            owner_user_id,
+            created_by_user_id
         FROM sellers
         WHERE id = ?;
         """,
@@ -726,11 +913,13 @@ async def handle_whatsapp_edit_start(
         seller["created_by_user_id"],
     ):
         await callback.answer(
-            "⚠️ این عملیات فقط برای صاحب فروشگاه "
-            "در دسترس است.",
+            "⚠️ این عملیات فقط برای صاحب "
+            "فروشگاه در دسترس است.",
             show_alert=True,
         )
         return
+
+    await state.clear()
 
     await state.update_data(
         whatsapp_seller_id=seller_id
@@ -741,6 +930,7 @@ async def handle_whatsapp_edit_start(
     )
 
     builder = InlineKeyboardBuilder()
+
     kb_add_back(
         builder,
         f"seller:{seller_id}",
@@ -748,8 +938,11 @@ async def handle_whatsapp_edit_start(
 
     await safe_edit(
         callback,
-        "🟢 شماره واتساپ فروشگاه رو با کد کشور "
-        "بفرست (مثلاً 989123456789 یا 09123456789):",
+        (
+            "🟢 شماره واتساپ فروشگاه رو با کد کشور "
+            "بفرست "
+            "(مثلاً 989123456789 یا 09123456789):"
+        ),
         builder.as_markup(),
     )
 
@@ -767,11 +960,16 @@ async def handle_whatsapp_edit_value(
 ) -> None:
     if (message.text or "").strip() == "/start":
         await state.clear()
-        await ensure_user(message.from_user)
+        await ensure_user(
+            message.from_user
+        )
         return
 
     data = await state.get_data()
-    seller_id = data.get("whatsapp_seller_id")
+
+    seller_id = data.get(
+        "whatsapp_seller_id"
+    )
 
     await state.clear()
 
@@ -788,7 +986,11 @@ async def handle_whatsapp_edit_value(
 
     seller = await db.fetchone(
         """
-        SELECT id, owner_user_id, created_by_user_id, name
+        SELECT
+            id,
+            owner_user_id,
+            created_by_user_id,
+            name
         FROM sellers
         WHERE id = ?;
         """,
@@ -800,8 +1002,8 @@ async def handle_whatsapp_edit_value(
         seller["created_by_user_id"],
     ):
         await message.answer(
-            "⚠️ این عملیات فقط برای صاحب فروشگاه "
-            "در دسترس است."
+            "⚠️ این عملیات فقط برای صاحب "
+            "فروشگاه در دسترس است."
         )
         return
 
@@ -812,14 +1014,15 @@ async def handle_whatsapp_edit_value(
     if not whatsapp_url(raw_number):
         await message.answer(
             "⚠️ شماره معتبر نیست. لطفاً فقط شماره "
-            "همراه با کد کشور بفرست."
+            "معتبر همراه با کد کشور بفرست."
         )
         return
 
     await db.execute(
         """
         UPDATE sellers
-        SET whatsapp = ?, updated_at = ?
+        SET whatsapp = ?,
+            updated_at = ?
         WHERE id = ?;
         """,
         (
@@ -837,13 +1040,17 @@ async def handle_whatsapp_edit_value(
     )
 
     builder = InlineKeyboardBuilder()
+
     kb_add_back(
         builder,
         f"seller:{seller_id}",
     )
 
     await message.answer(
-        f"✅ شماره واتساپ «{seller['name']}» ذخیره شد.",
+        (
+            f"✅ شماره واتساپ "
+            f"«{_html(seller['name'])}» ذخیره شد."
+        ),
         reply_markup=builder.as_markup(),
     )
 
@@ -853,7 +1060,9 @@ async def handle_whatsapp_edit_value(
 # ============================================================================
 
 
-@router.callback_query(F.data.startswith("claim:"))
+@router.callback_query(
+    F.data.startswith("claim:")
+)
 async def handle_claim(
     callback: CallbackQuery,
 ) -> None:
@@ -905,8 +1114,8 @@ async def handle_claim(
         seller["created_by_user_id"],
     ):
         await callback.answer(
-            "ℹ️ این فروشگاه همین حالا به حساب شما "
-            "متصل است.",
+            "ℹ️ این فروشگاه همین حالا به حساب "
+            "شما متصل است.",
             show_alert=True,
         )
         return
@@ -928,8 +1137,8 @@ async def handle_claim(
 
     if existing:
         await callback.answer(
-            "⏳ درخواست مالکیت شما قبلاً ثبت شده و "
-            "در انتظار بررسی است.",
+            "⏳ درخواست مالکیت شما قبلاً ثبت شده "
+            "و در انتظار بررسی است.",
             show_alert=True,
         )
         return
@@ -961,11 +1170,13 @@ async def handle_claim(
     if ADMIN_CHAT_ID:
         try:
             bot: Bot = callback.bot
+
             await bot.send_message(
                 ADMIN_CHAT_ID,
                 (
                     "📩 <b>درخواست مالکیت جدید</b>\n\n"
-                    f"🏪 فروشگاه: {seller['name']}\n"
+                    f"🏪 فروشگاه: "
+                    f"{_html(seller['name'])}\n"
                     f"🆔 Seller ID: {seller_id}\n"
                     f"👤 User ID: {user_id}"
                 ),
@@ -978,73 +1189,6 @@ async def handle_claim(
         "بعد از بررسی بهت خبر می‌دیم.",
         show_alert=True,
     )
-# ============================================================================
-# COMMON SELLER HELPERS
-# ============================================================================
-
-
-async def resolve_single_seller_or_show_picker(
-    callback: CallbackQuery,
-    user_id: int,
-    prefix: str,
-) -> Optional[int]:
-    sellers = await get_sellers_owned_by_user(user_id)
-
-    if not sellers:
-        await callback.answer(
-            "⚠️ هنوز فروشگاهی ثبت نکرده‌ای.",
-            show_alert=True,
-        )
-        return None
-
-    if len(sellers) == 1:
-        return sellers[0]["id"]
-
-    builder = InlineKeyboardBuilder()
-
-    for seller in sellers:
-        builder.row(
-            InlineKeyboardButton(
-                text=(
-                    f"{EMOJI_SELLERS} "
-                    f"{seller['name']}"
-                ),
-                callback_data=f"{prefix}:{seller['id']}",
-            )
-        )
-
-    kb_add_back(builder, "account")
-
-    await safe_edit(
-        callback,
-        "🏪 کدوم فروشگاهت رو می‌خوای مدیریت کنی؟",
-        builder.as_markup(),
-    )
-    await callback.answer()
-
-    return None
-
-
-async def _check_seller_ownership(
-    user_id: int,
-    seller_id: int,
-) -> Optional[dict]:
-    seller = await get_seller_by_id(seller_id)
-
-    if not seller:
-        return None
-
-    if user_id not in (
-        seller["owner_user_id"],
-        seller["created_by_user_id"],
-    ):
-        return None
-
-    return seller
-
-
-def _seller_name(seller: dict) -> str:
-    return seller.get("name") or "فروشگاه"
 
 
 # ============================================================================
@@ -1052,19 +1196,25 @@ def _seller_name(seller: dict) -> str:
 # ============================================================================
 
 
-@router.callback_query(F.data == "storestatus")
+@router.callback_query(
+    F.data == "storestatus"
+)
 async def handle_store_status(
     callback: CallbackQuery,
     state: FSMContext,
 ) -> None:
     await state.clear()
 
-    user_id = await ensure_user(callback.from_user)
+    user_id = await ensure_user(
+        callback.from_user
+    )
 
-    seller_id = await resolve_single_seller_or_show_picker(
-        callback,
-        user_id,
-        "storestatuspick",
+    seller_id = (
+        await resolve_single_seller_or_show_picker(
+            callback,
+            user_id,
+            "storestatuspick",
+        )
     )
 
     if seller_id is not None:
@@ -1074,7 +1224,9 @@ async def handle_store_status(
         )
 
 
-@router.callback_query(F.data.startswith("storestatuspick:"))
+@router.callback_query(
+    F.data.startswith("storestatuspick:")
+)
 async def handle_store_status_picked(
     callback: CallbackQuery,
 ) -> None:
@@ -1089,18 +1241,12 @@ async def handle_store_status_picked(
         )
         return
 
-    user_id = await ensure_user(callback.from_user)
-
-    seller = await _check_seller_ownership(
-        user_id,
+    seller = await _get_owned_seller_or_answer(
+        callback,
         seller_id,
     )
 
     if not seller:
-        await callback.answer(
-            "⚠️ دسترسی به این فروشگاه مجاز نیست.",
-            show_alert=True,
-        )
         return
 
     await _render_store_status(
@@ -1114,7 +1260,9 @@ async def _render_store_status(
     seller_id: int,
     answer_text: str | None = None,
 ) -> None:
-    seller = await get_seller_by_id(seller_id)
+    seller = await get_seller_by_id(
+        seller_id
+    )
 
     if not seller:
         await callback.answer(
@@ -1138,25 +1286,34 @@ async def _render_store_status(
                 if active
                 else "🟢 فعال کردن فروشگاه"
             ),
-            callback_data=f"storetoggle:{seller_id}",
+            callback_data=(
+                f"storetoggle:{seller_id}"
+            ),
         )
     )
 
-    kb_add_back(builder, "account")
+    kb_add_back(
+        builder,
+        "account",
+    )
 
     status_text = (
         "🟢 فروشگاه در حال حاضر <b>فعال</b> است."
         if active
-        else "🔴 فروشگاه در حال حاضر <b>غیرفعال</b> است."
+        else (
+            "🔴 فروشگاه در حال حاضر "
+            "<b>غیرفعال</b> است."
+        )
     )
 
     await safe_edit(
         callback,
         (
-            f"🏪 <b>{_seller_name(seller)}</b>\n\n"
+            f"🏪 <b>{_html(_seller_name(seller))}</b>\n\n"
             f"{status_text}\n\n"
             "وقتی فروشگاه غیرفعال باشد، "
-            "ارتباطات جدید برای کاربران نمایش داده نمی‌شود."
+            "ارتباطات جدید برای کاربران نمایش "
+            "داده نمی‌شود."
         ),
         builder.as_markup(),
     )
@@ -1170,7 +1327,9 @@ async def _render_store_status(
         await callback.answer()
 
 
-@router.callback_query(F.data.startswith("storetoggle:"))
+@router.callback_query(
+    F.data.startswith("storetoggle:")
+)
 async def handle_store_toggle_active(
     callback: CallbackQuery,
 ) -> None:
@@ -1185,18 +1344,12 @@ async def handle_store_toggle_active(
         )
         return
 
-    user_id = await ensure_user(callback.from_user)
-
-    seller = await _check_seller_ownership(
-        user_id,
+    seller = await _get_owned_seller_or_answer(
+        callback,
         seller_id,
     )
 
     if not seller:
-        await callback.answer(
-            "⚠️ دسترسی به این فروشگاه مجاز نیست.",
-            show_alert=True,
-        )
         return
 
     current = (
@@ -1217,6 +1370,10 @@ async def handle_store_toggle_active(
             now_iso(),
             seller_id,
         ),
+    )
+
+    user_id = await ensure_user(
+        callback.from_user
     )
 
     await log_audit(
@@ -1242,19 +1399,25 @@ async def handle_store_toggle_active(
 # ============================================================================
 
 
-@router.callback_query(F.data == "myshop")
+@router.callback_query(
+    F.data == "myshop"
+)
 async def handle_my_shop(
     callback: CallbackQuery,
     state: FSMContext,
 ) -> None:
     await state.clear()
 
-    user_id = await ensure_user(callback.from_user)
+    user_id = await ensure_user(
+        callback.from_user
+    )
 
-    seller_id = await resolve_single_seller_or_show_picker(
-        callback,
-        user_id,
-        "shopview",
+    seller_id = (
+        await resolve_single_seller_or_show_picker(
+            callback,
+            user_id,
+            "shopview",
+        )
     )
 
     if seller_id is not None:
@@ -1264,7 +1427,9 @@ async def handle_my_shop(
         )
 
 
-@router.callback_query(F.data.startswith("shopview:"))
+@router.callback_query(
+    F.data.startswith("shopview:")
+)
 async def handle_shop_view_picked(
     callback: CallbackQuery,
 ) -> None:
@@ -1279,18 +1444,12 @@ async def handle_shop_view_picked(
         )
         return
 
-    user_id = await ensure_user(callback.from_user)
-
-    seller = await _check_seller_ownership(
-        user_id,
+    seller = await _get_owned_seller_or_answer(
+        callback,
         seller_id,
     )
 
     if not seller:
-        await callback.answer(
-            "⚠️ دسترسی به این فروشگاه مجاز نیست.",
-            show_alert=True,
-        )
         return
 
     await _render_shop_view(
@@ -1304,7 +1463,9 @@ async def _render_shop_view(
     seller_id: int,
     answer_text: str | None = None,
 ) -> None:
-    seller = await get_seller_by_id(seller_id)
+    seller = await get_seller_by_id(
+        seller_id
+    )
 
     if not seller:
         await callback.answer(
@@ -1324,21 +1485,27 @@ async def _render_shop_view(
     builder.row(
         InlineKeyboardButton(
             text="✏️ ویرایش فروشگاه",
-            callback_data=f"shopedit:{seller_id}",
+            callback_data=(
+                f"shopedit:{seller_id}"
+            ),
         )
     )
 
     builder.row(
         InlineKeyboardButton(
             text="📦 محصولات من",
-            callback_data=f"products:{seller_id}",
+            callback_data=(
+                f"products:{seller_id}"
+            ),
         )
     )
 
     builder.row(
         InlineKeyboardButton(
             text="📊 آمار فروشگاه",
-            callback_data=f"stats:{seller_id}",
+            callback_data=(
+                f"stats:{seller_id}"
+            ),
         )
     )
 
@@ -1349,19 +1516,33 @@ async def _render_shop_view(
                 if active
                 else "🟢 فعال کردن"
             ),
-            callback_data=f"storetoggle:{seller_id}",
+            callback_data=(
+                f"storetoggle:{seller_id}"
+            ),
         )
     )
 
-    kb_add_back(builder, "account")
+    kb_add_back(
+        builder,
+        "account",
+    )
+
+    city_text = seller.get(
+        "city_id"
+    ) or "نامشخص"
+
+    description = (
+        seller.get("description")
+        or "بدون توضیحات"
+    )
 
     await safe_edit(
         callback,
         (
-            f"🏪 <b>{_seller_name(seller)}</b>\n\n"
-            f"{seller['description'] or 'بدون توضیحات'}\n\n"
+            f"🏪 <b>{_html(_seller_name(seller))}</b>\n\n"
+            f"{_html(description)}\n\n"
             f"{EMOJI_CITY} شهر: "
-            f"{seller.get('city_id') or 'نامشخص'}\n"
+            f"{_html(city_text)}\n"
             f"{status_badge(seller['status'])}"
         ),
         builder.as_markup(),
@@ -1381,7 +1562,9 @@ async def _render_shop_view(
 # ============================================================================
 
 
-@router.callback_query(F.data.startswith("shopedit:"))
+@router.callback_query(
+    F.data.startswith("shopedit:")
+)
 async def handle_shop_edit_menu(
     callback: CallbackQuery,
     state: FSMContext,
@@ -1397,18 +1580,12 @@ async def handle_shop_edit_menu(
         )
         return
 
-    user_id = await ensure_user(callback.from_user)
-
-    seller = await _check_seller_ownership(
-        user_id,
+    seller = await _get_owned_seller_or_answer(
+        callback,
         seller_id,
     )
 
     if not seller:
-        await callback.answer(
-            "⚠️ دسترسی به این فروشگاه مجاز نیست.",
-            show_alert=True,
-        )
         return
 
     await state.clear()
@@ -1419,14 +1596,18 @@ async def handle_shop_edit_menu(
         builder.row(
             InlineKeyboardButton(
                 text=f"✏️ {title}",
-                callback_data=f"shopfield:{seller_id}:{field}",
+                callback_data=(
+                    f"shopfield:{seller_id}:{field}"
+                ),
             )
         )
 
     builder.row(
         InlineKeyboardButton(
             text="📍 تغییر شهر",
-            callback_data=f"shopcity:{seller_id}",
+            callback_data=(
+                f"shopcity:{seller_id}"
+            ),
         )
     )
 
@@ -1437,20 +1618,29 @@ async def handle_shop_edit_menu(
 
     await safe_edit(
         callback,
-        f"✏️ <b>ویرایش {_seller_name(seller)}</b>\n\n"
-        "قسمتی که می‌خوای تغییر بدی رو انتخاب کن:",
+        (
+            f"✏️ <b>ویرایش "
+            f"{_html(_seller_name(seller))}</b>\n\n"
+            "قسمتی که می‌خوای تغییر بدی رو "
+            "انتخاب کن:"
+        ),
         builder.as_markup(),
     )
 
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("shopfield:"))
+@router.callback_query(
+    F.data.startswith("shopfield:")
+)
 async def handle_shop_edit_start(
     callback: CallbackQuery,
     state: FSMContext,
 ) -> None:
-    parts = callback.data.split(":", 2)
+    parts = callback.data.split(
+        ":",
+        2,
+    )
 
     if len(parts) != 3:
         await callback.answer(
@@ -1459,7 +1649,10 @@ async def handle_shop_edit_start(
         )
         return
 
-    seller_id = parse_int(parts[1])
+    seller_id = parse_int(
+        parts[1]
+    )
+
     field = parts[2]
 
     if (
@@ -1473,18 +1666,12 @@ async def handle_shop_edit_start(
         )
         return
 
-    user_id = await ensure_user(callback.from_user)
-
-    seller = await _check_seller_ownership(
-        user_id,
+    seller = await _get_owned_seller_or_answer(
+        callback,
         seller_id,
     )
 
     if not seller:
-        await callback.answer(
-            "⚠️ دسترسی به این فروشگاه مجاز نیست.",
-            show_alert=True,
-        )
         return
 
     await state.update_data(
@@ -1497,19 +1684,24 @@ async def handle_shop_edit_start(
     )
 
     builder = InlineKeyboardBuilder()
+
     kb_add_back(
         builder,
         f"shopedit:{seller_id}",
     )
 
-    current_value = seller.get(field)
+    current_value = seller.get(
+        field
+    )
 
     await safe_edit(
         callback,
         (
-            f"✏️ <b>{SHOP_EDITABLE_FIELDS[field]}</b>\n\n"
-            f"مقدار فعلی:\n"
-            f"{current_value or 'ثبت نشده'}\n\n"
+            f"✏️ <b>"
+            f"{_html(SHOP_EDITABLE_FIELDS[field])}"
+            f"</b>\n\n"
+            "مقدار فعلی:\n"
+            f"{_html(current_value or 'ثبت نشده')}\n\n"
             "مقدار جدید رو بفرست:"
         ),
         builder.as_markup(),
@@ -1518,7 +1710,9 @@ async def handle_shop_edit_start(
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("shopcity:"))
+@router.callback_query(
+    F.data.startswith("shopcity:")
+)
 async def handle_shop_city_start(
     callback: CallbackQuery,
     state: FSMContext,
@@ -1534,18 +1728,12 @@ async def handle_shop_city_start(
         )
         return
 
-    user_id = await ensure_user(callback.from_user)
-
-    seller = await _check_seller_ownership(
-        user_id,
+    seller = await _get_owned_seller_or_answer(
+        callback,
         seller_id,
     )
 
     if not seller:
-        await callback.answer(
-            "⚠️ دسترسی به این فروشگاه مجاز نیست.",
-            show_alert=True,
-        )
         return
 
     cities = await db.fetchall(
@@ -1561,8 +1749,15 @@ async def handle_shop_city_start(
     for city in cities:
         builder.row(
             InlineKeyboardButton(
-                text=f"{EMOJI_CITY} {city['name']}",
-                callback_data=f"shopcitypick:{seller_id}:{city['id']}",
+                text=(
+                    f"{EMOJI_CITY} "
+                    f"{_html(city['name'])}"
+                ),
+                callback_data=(
+                    f"shopcitypick:"
+                    f"{seller_id}:"
+                    f"{city['id']}"
+                ),
             )
         )
 
@@ -1580,11 +1775,16 @@ async def handle_shop_city_start(
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("shopcitypick:"))
+@router.callback_query(
+    F.data.startswith("shopcitypick:")
+)
 async def handle_shop_edit_city_pick(
     callback: CallbackQuery,
 ) -> None:
-    parts = callback.data.split(":", 2)
+    parts = callback.data.split(
+        ":",
+        2,
+    )
 
     if len(parts) != 3:
         await callback.answer(
@@ -1593,8 +1793,13 @@ async def handle_shop_edit_city_pick(
         )
         return
 
-    seller_id = parse_int(parts[1])
-    city_id = parse_int(parts[2])
+    seller_id = parse_int(
+        parts[1]
+    )
+
+    city_id = parse_int(
+        parts[2]
+    )
 
     if (
         seller_id is None
@@ -1608,22 +1813,20 @@ async def handle_shop_edit_city_pick(
         )
         return
 
-    user_id = await ensure_user(callback.from_user)
-
-    seller = await _check_seller_ownership(
-        user_id,
+    seller = await _get_owned_seller_or_answer(
+        callback,
         seller_id,
     )
 
     if not seller:
-        await callback.answer(
-            "⚠️ دسترسی مجاز نیست.",
-            show_alert=True,
-        )
         return
 
     city = await db.fetchone(
-        "SELECT id, name FROM cities WHERE id = ?;",
+        """
+        SELECT id, name
+        FROM cities
+        WHERE id = ?;
+        """,
         (city_id,),
     )
 
@@ -1633,6 +1836,10 @@ async def handle_shop_edit_city_pick(
             show_alert=True,
         )
         return
+
+    user_id = await ensure_user(
+        callback.from_user
+    )
 
     await db.execute(
         """
@@ -1658,7 +1865,9 @@ async def handle_shop_edit_city_pick(
     await _render_shop_view(
         callback,
         seller_id,
-        answer_text="شهر فروشگاه تغییر کرد ✅",
+        answer_text=(
+            "شهر فروشگاه تغییر کرد ✅"
+        ),
     )
 
 
@@ -1673,23 +1882,35 @@ async def handle_shop_edit_value(
 ) -> None:
     if (message.text or "").strip() == "/start":
         await state.clear()
-        await ensure_user(message.from_user)
+        await ensure_user(
+            message.from_user
+        )
         return
 
     data = await state.get_data()
 
-    seller_id = data.get("shop_seller_id")
-    field = data.get("shop_field")
+    seller_id = data.get(
+        "shop_seller_id"
+    )
+
+    field = data.get(
+        "shop_field"
+    )
 
     await state.clear()
 
-    if not seller_id or field not in SHOP_EDITABLE_FIELDS:
+    if (
+        not seller_id
+        or field not in SHOP_EDITABLE_FIELDS
+    ):
         await message.answer(
             "⚠️ فرآیند ویرایش منقضی شده."
         )
         return
 
-    user_id = await ensure_user(message.from_user)
+    user_id = await ensure_user(
+        message.from_user
+    )
 
     seller = await _check_seller_ownership(
         user_id,
@@ -1703,9 +1924,7 @@ async def handle_shop_edit_value(
         return
 
     value = (
-        message.text
-        if message.text is not None
-        else ""
+        message.text or ""
     ).strip()
 
     if not value:
@@ -1714,7 +1933,37 @@ async def handle_shop_edit_value(
         )
         return
 
-    query = SHOP_UPDATE_QUERIES.get(field)
+    if field in (
+        "instagram",
+        "telegram",
+        "telegram_support",
+        "website",
+        "logo_url",
+    ):
+        validator = {
+            "instagram": instagram_url,
+            "telegram": telegram_url,
+            "telegram_support": telegram_url,
+            "website": website_url,
+            "logo_url": website_url,
+        }[field]
+
+        if not validator(value):
+            await message.answer(
+                "⚠️ لینک یا شناسه واردشده معتبر نیست."
+            )
+            return
+
+    if field == "whatsapp":
+        if not whatsapp_url(value):
+            await message.answer(
+                "⚠️ شماره واتساپ معتبر نیست."
+            )
+            return
+
+    query = SHOP_UPDATE_QUERIES.get(
+        field
+    )
 
     if not query:
         await message.answer(
@@ -1739,47 +1988,18 @@ async def handle_shop_edit_value(
     )
 
     builder = InlineKeyboardBuilder()
+
     kb_add_back(
         builder,
         f"shopview:{seller_id}",
     )
 
     await message.answer(
-        f"✅ {SHOP_EDITABLE_FIELDS[field]} با موفقیت "
-        "به‌روزرسانی شد.",
-        reply_markup=builder.as_markup(),
-    )
-    if not query:
-        await message.answer(
-            "⚠️ این فیلد قابل ویرایش نیست."
-        )
-        return
-
-    await db.execute(
-        query,
         (
-            value,
-            now_iso(),
-            seller_id,
+            f"✅ "
+            f"{_html(SHOP_EDITABLE_FIELDS[field])} "
+            "با موفقیت تغییر کرد."
         ),
-    )
-
-    await log_audit(
-        user_id,
-        "seller_field_updated",
-        "seller",
-        seller_id,
-    )
-
-    builder = InlineKeyboardBuilder()
-    kb_add_back(
-        builder,
-        f"shopview:{seller_id}",
-    )
-
-    await message.answer(
-        f"✅ {SHOP_EDITABLE_FIELDS[field]} فروشگاه "
-        "با موفقیت تغییر کرد.",
         reply_markup=builder.as_markup(),
     )
 
@@ -1789,7 +2009,9 @@ async def handle_shop_edit_value(
 # ============================================================================
 
 
-@router.callback_query(F.data.startswith("products:"))
+@router.callback_query(
+    F.data.startswith("products:")
+)
 async def handle_my_products(
     callback: CallbackQuery,
 ) -> None:
@@ -1804,18 +2026,12 @@ async def handle_my_products(
         )
         return
 
-    user_id = await ensure_user(callback.from_user)
-
-    seller = await _check_seller_ownership(
-        user_id,
+    seller = await _get_owned_seller_or_answer(
+        callback,
         seller_id,
     )
 
     if not seller:
-        await callback.answer(
-            "⚠️ دسترسی مجاز نیست.",
-            show_alert=True,
-        )
         return
 
     await _render_product_list(
@@ -1824,7 +2040,9 @@ async def handle_my_products(
     )
 
 
-@router.callback_query(F.data.startswith("productlist:"))
+@router.callback_query(
+    F.data.startswith("productlist:")
+)
 async def handle_product_list_picked(
     callback: CallbackQuery,
 ) -> None:
@@ -1839,18 +2057,12 @@ async def handle_product_list_picked(
         )
         return
 
-    user_id = await ensure_user(callback.from_user)
-
-    seller = await _check_seller_ownership(
-        user_id,
+    seller = await _get_owned_seller_or_answer(
+        callback,
         seller_id,
     )
 
     if not seller:
-        await callback.answer(
-            "⚠️ دسترسی مجاز نیست.",
-            show_alert=True,
-        )
         return
 
     await _render_product_list(
@@ -1864,7 +2076,9 @@ async def _render_product_list(
     seller_id: int,
     answer_text: str | None = None,
 ) -> None:
-    seller = await get_seller_by_id(seller_id)
+    seller = await get_seller_by_id(
+        seller_id
+    )
 
     if not seller:
         await callback.answer(
@@ -1885,31 +2099,37 @@ async def _render_product_list(
 
     builder = InlineKeyboardBuilder()
 
-    if products:
-        for product in products:
-            price = format_price(product["price"])
-
-            builder.row(
-                InlineKeyboardButton(
-                    text=(
-                        f"📦 {product['name']} "
-                        f"— {price}"
-                    ),
-                    callback_data=f"productedit:{product['id']}",
-                )
+    for product in products:
+        builder.row(
+            InlineKeyboardButton(
+                text=(
+                    f"📦 "
+                    f"{_html(product['name'])} "
+                    f"— "
+                    f"{_html(format_price(product['price']))}"
+                ),
+                callback_data=(
+                    f"productedit:{product['id']}"
+                ),
             )
-    else:
+        )
+
+    if not products:
         builder.row(
             InlineKeyboardButton(
                 text="📦 هنوز محصولی نداری",
-                callback_data=f"productadd:{seller_id}",
+                callback_data=(
+                    f"productadd:{seller_id}"
+                ),
             )
         )
 
     builder.row(
         InlineKeyboardButton(
             text="➕ افزودن محصول",
-            callback_data=f"productadd:{seller_id}",
+            callback_data=(
+                f"productadd:{seller_id}"
+            ),
         )
     )
 
@@ -1921,7 +2141,8 @@ async def _render_product_list(
     await safe_edit(
         callback,
         (
-            f"📦 <b>محصولات {_seller_name(seller)}</b>\n\n"
+            f"📦 <b>محصولات "
+            f"{_html(_seller_name(seller))}</b>\n\n"
             f"تعداد محصولات: {len(products)}"
         ),
         builder.as_markup(),
@@ -1941,7 +2162,9 @@ async def _render_product_list(
 # ============================================================================
 
 
-@router.callback_query(F.data.startswith("productadd:"))
+@router.callback_query(
+    F.data.startswith("productadd:")
+)
 async def handle_product_add_start(
     callback: CallbackQuery,
     state: FSMContext,
@@ -1957,29 +2180,26 @@ async def handle_product_add_start(
         )
         return
 
-    user_id = await ensure_user(callback.from_user)
-
-    seller = await _check_seller_ownership(
-        user_id,
+    seller = await _get_owned_seller_or_answer(
+        callback,
         seller_id,
     )
 
     if not seller:
-        await callback.answer(
-            "⚠️ دسترسی مجاز نیست.",
-            show_alert=True,
-        )
         return
 
     await state.clear()
+
     await state.update_data(
         product_seller_id=seller_id
     )
+
     await state.set_state(
         ProductAddStates.waiting_name
     )
 
     builder = InlineKeyboardBuilder()
+
     kb_add_back(
         builder,
         f"products:{seller_id}",
@@ -1987,8 +2207,10 @@ async def handle_product_add_start(
 
     await safe_edit(
         callback,
-        "📦 <b>افزودن محصول</b>\n\n"
-        "اسم محصول رو بفرست:",
+        (
+            "📦 <b>افزودن محصول</b>\n\n"
+            "اسم محصول رو بفرست:"
+        ),
         builder.as_markup(),
     )
 
@@ -2006,9 +2228,14 @@ async def handle_product_add_name(
 ) -> None:
     if (message.text or "").strip() == "/start":
         await state.clear()
+        await ensure_user(
+            message.from_user
+        )
         return
 
-    name = (message.text or "").strip()
+    name = (
+        message.text or ""
+    ).strip()
 
     if not name:
         await message.answer(
@@ -2019,6 +2246,7 @@ async def handle_product_add_name(
     await state.update_data(
         product_name=name
     )
+
     await state.set_state(
         ProductAddStates.waiting_description
     )
@@ -2038,7 +2266,9 @@ async def handle_product_add_description(
     message: Message,
     state: FSMContext,
 ) -> None:
-    description = (message.text or "").strip()
+    description = (
+        message.text or ""
+    ).strip()
 
     if description == "ندارد":
         description = ""
@@ -2046,12 +2276,16 @@ async def handle_product_add_description(
     await state.update_data(
         product_description=description
     )
+
     await state.set_state(
         ProductAddStates.waiting_price
     )
 
     await message.answer(
-        f"{EMOJI_PRICE} قیمت محصول رو به تومان بفرست:"
+        (
+            f"{EMOJI_PRICE} "
+            "قیمت محصول رو به تومان بفرست:"
+        )
     )
 
 
@@ -2065,7 +2299,8 @@ async def handle_product_add_price(
     state: FSMContext,
 ) -> None:
     price = parse_int(
-        (message.text or "").replace(",", "")
+        (message.text or "")
+        .replace(",", "")
     )
 
     if price is None or price < 0:
@@ -2077,6 +2312,7 @@ async def handle_product_add_price(
     await state.update_data(
         product_price=price
     )
+
     await state.set_state(
         ProductAddStates.waiting_old_price
     )
@@ -2096,7 +2332,9 @@ async def handle_product_add_old_price(
     message: Message,
     state: FSMContext,
 ) -> None:
-    raw = (message.text or "").strip()
+    raw = (
+        message.text or ""
+    ).strip()
 
     old_price = None
 
@@ -2110,7 +2348,10 @@ async def handle_product_add_old_price(
             raw.replace(",", "")
         )
 
-        if old_price is None or old_price < 0:
+        if (
+            old_price is None
+            or old_price < 0
+        ):
             await message.answer(
                 "⚠️ قیمت قبلی معتبر نیست."
             )
@@ -2119,6 +2360,7 @@ async def handle_product_add_old_price(
     await state.update_data(
         product_old_price=old_price
     )
+
     await state.set_state(
         ProductAddStates.waiting_image_url
     )
@@ -2138,7 +2380,9 @@ async def handle_product_add_image(
     message: Message,
     state: FSMContext,
 ) -> None:
-    raw = (message.text or "").strip()
+    raw = (
+        message.text or ""
+    ).strip()
 
     image_url = None
 
@@ -2148,30 +2392,17 @@ async def handle_product_add_image(
         "-",
         "ندارم",
     ):
+        if not website_url(raw):
+            await message.answer(
+                "⚠️ لینک تصویر معتبر نیست. "
+                "یک لینک http/https بفرست."
+            )
+            return
+
         image_url = raw
 
     await state.update_data(
         product_image_url=image_url
-    )
-
-    await _finish_product_add(
-        message,
-        state,
-    )
-
-
-@router.message(
-    StateFilter(
-        ProductAddStates.waiting_image_url
-    ),
-    F.text.in_({"ندارد", "-", "ندارم"}),
-)
-async def handle_product_add_skip(
-    message: Message,
-    state: FSMContext,
-) -> None:
-    await state.update_data(
-        product_image_url=None
     )
 
     await _finish_product_add(
@@ -2185,9 +2416,12 @@ async def _finish_product_add(
     state: FSMContext,
 ) -> None:
     data = await state.get_data()
+
     await state.clear()
 
-    seller_id = data.get("product_seller_id")
+    seller_id = data.get(
+        "product_seller_id"
+    )
 
     if not seller_id:
         await message.answer(
@@ -2195,7 +2429,9 @@ async def _finish_product_add(
         )
         return
 
-    user_id = await ensure_user(message.from_user)
+    user_id = await ensure_user(
+        message.from_user
+    )
 
     seller = await _check_seller_ownership(
         user_id,
@@ -2211,10 +2447,18 @@ async def _finish_product_add(
     product_id = await create_product_record(
         seller_id=seller_id,
         name=data["product_name"],
-        description=data.get("product_description"),
-        price=data.get("product_price"),
-        old_price=data.get("product_old_price"),
-        image_url=data.get("product_image_url"),
+        description=data.get(
+            "product_description"
+        ),
+        price=data.get(
+            "product_price"
+        ),
+        old_price=data.get(
+            "product_old_price"
+        ),
+        image_url=data.get(
+            "product_image_url"
+        ),
     )
 
     await log_audit(
@@ -2229,12 +2473,18 @@ async def _finish_product_add(
     builder.row(
         InlineKeyboardButton(
             text="📦 مشاهده محصولات",
-            callback_data=f"products:{seller_id}",
+            callback_data=(
+                f"products:{seller_id}"
+            ),
         )
     )
 
     await message.answer(
-        f"✅ محصول «{data['product_name']}» با موفقیت اضافه شد.",
+        (
+            f"✅ محصول "
+            f"«{_html(data['product_name'])}» "
+            "با موفقیت اضافه شد."
+        ),
         reply_markup=builder.as_markup(),
     )
 
@@ -2244,7 +2494,9 @@ async def _finish_product_add(
 # ============================================================================
 
 
-@router.callback_query(F.data.startswith("productedit:"))
+@router.callback_query(
+    F.data.startswith("productedit:")
+)
 async def handle_product_edit_menu(
     callback: CallbackQuery,
     answer_text: str | None = None,
@@ -2260,9 +2512,13 @@ async def handle_product_edit_menu(
         )
         return
 
-    user_id = await ensure_user(callback.from_user)
+    user_id = await ensure_user(
+        callback.from_user
+    )
 
-    product = await get_product_by_id(product_id)
+    product = await get_product_by_id(
+        product_id
+    )
 
     if not product:
         await callback.answer(
@@ -2289,21 +2545,29 @@ async def handle_product_edit_menu(
         builder.row(
             InlineKeyboardButton(
                 text=f"✏️ {title}",
-                callback_data=f"productfield:{product_id}:{field}",
+                callback_data=(
+                    f"productfield:"
+                    f"{product_id}:"
+                    f"{field}"
+                ),
             )
         )
 
     builder.row(
         InlineKeyboardButton(
             text="📦 وضعیت موجودی",
-            callback_data=f"productstock:{product_id}",
+            callback_data=(
+                f"productstock:{product_id}"
+            ),
         )
     )
 
     builder.row(
         InlineKeyboardButton(
             text="🗑 حذف محصول",
-            callback_data=f"productdelete:{product_id}",
+            callback_data=(
+                f"productdelete:{product_id}"
+            ),
         )
     )
 
@@ -2315,9 +2579,11 @@ async def handle_product_edit_menu(
     await safe_edit(
         callback,
         (
-            f"📦 <b>{product['name']}</b>\n\n"
-            f"قیمت: {format_price(product['price'])}\n"
-            f"وضعیت: {product['stock_status']}"
+            f"📦 <b>{_html(product['name'])}</b>\n\n"
+            f"قیمت: "
+            f"{_html(format_price(product['price']))}\n"
+            f"وضعیت: "
+            f"{_html(product['stock_status'])}"
         ),
         builder.as_markup(),
     )
@@ -2329,82 +2595,19 @@ async def handle_product_edit_menu(
         )
     else:
         await callback.answer()
-            "⚠️ شناسه نامعتبر است.",
-            show_alert=True,
-        )
-        return
-
-    user_id = await ensure_user(callback.from_user)
-
-    product = await get_product_by_id(product_id)
-
-    if not product:
-        await callback.answer(
-            "⚠️ محصول پیدا نشد.",
-            show_alert=True,
-        )
-        return
-
-    seller = await _check_seller_ownership(
-        user_id,
-        product["seller_id"],
-    )
-
-    if not seller:
-        await callback.answer(
-            "⚠️ دسترسی مجاز نیست.",
-            show_alert=True,
-        )
-        return
-
-    builder = InlineKeyboardBuilder()
-
-    for field, title in PRODUCT_EDITABLE_FIELDS.items():
-        builder.row(
-            InlineKeyboardButton(
-                text=f"✏️ {title}",
-                callback_data=f"productfield:{product_id}:{field}",
-            )
-        )
-
-    builder.row(
-        InlineKeyboardButton(
-            text="📦 وضعیت موجودی",
-            callback_data=f"productstock:{product_id}",
-        )
-    )
-
-    builder.row(
-        InlineKeyboardButton(
-            text="🗑 حذف محصول",
-            callback_data=f"productdelete:{product_id}",
-        )
-    )
-
-    kb_add_back(
-        builder,
-        f"products:{product['seller_id']}",
-    )
-
-    await safe_edit(
-        callback,
-        (
-            f"📦 <b>{product['name']}</b>\n\n"
-            f"قیمت: {format_price(product['price'])}\n"
-            f"وضعیت: {product['stock_status']}"
-        ),
-        builder.as_markup(),
-    )
-
-    await callback.answer()
 
 
-@router.callback_query(F.data.startswith("productfield:"))
+@router.callback_query(
+    F.data.startswith("productfield:")
+)
 async def handle_product_field_edit_start(
     callback: CallbackQuery,
     state: FSMContext,
 ) -> None:
-    parts = callback.data.split(":", 2)
+    parts = callback.data.split(
+        ":",
+        2,
+    )
 
     if len(parts) != 3:
         await callback.answer(
@@ -2413,7 +2616,10 @@ async def handle_product_field_edit_start(
         )
         return
 
-    product_id = parse_int(parts[1])
+    product_id = parse_int(
+        parts[1]
+    )
+
     field = parts[2]
 
     if (
@@ -2427,9 +2633,13 @@ async def handle_product_field_edit_start(
         )
         return
 
-    user_id = await ensure_user(callback.from_user)
+    user_id = await ensure_user(
+        callback.from_user
+    )
 
-    product = await get_product_by_id(product_id)
+    product = await get_product_by_id(
+        product_id
+    )
 
     if not product:
         await callback.answer(
@@ -2460,19 +2670,34 @@ async def handle_product_field_edit_start(
     )
 
     builder = InlineKeyboardBuilder()
+
     kb_add_back(
         builder,
         f"productedit:{product_id}",
     )
 
-    current_value = product.get(field)
+    current_value = product.get(
+        field
+    )
+
+    if field in (
+        "price",
+        "old_price",
+    ):
+        current_value = (
+            format_price(current_value)
+            if current_value is not None
+            else "ثبت نشده"
+        )
 
     await safe_edit(
         callback,
         (
-            f"✏️ <b>{PRODUCT_EDITABLE_FIELDS[field]}</b>\n\n"
-            f"مقدار فعلی:\n"
-            f"{current_value or 'ثبت نشده'}\n\n"
+            f"✏️ <b>"
+            f"{_html(PRODUCT_EDITABLE_FIELDS[field])}"
+            f"</b>\n\n"
+            "مقدار فعلی:\n"
+            f"{_html(current_value or 'ثبت نشده')}\n\n"
             "مقدار جدید رو بفرست:"
         ),
         builder.as_markup(),
@@ -2492,23 +2717,39 @@ async def handle_product_field_edit_value(
 ) -> None:
     if (message.text or "").strip() == "/start":
         await state.clear()
+        await ensure_user(
+            message.from_user
+        )
         return
 
     data = await state.get_data()
-    product_id = data.get("product_id")
-    field = data.get("product_field")
+
+    product_id = data.get(
+        "product_id"
+    )
+
+    field = data.get(
+        "product_field"
+    )
 
     await state.clear()
 
-    if not product_id or field not in PRODUCT_EDITABLE_FIELDS:
+    if (
+        not product_id
+        or field not in PRODUCT_EDITABLE_FIELDS
+    ):
         await message.answer(
             "⚠️ فرآیند ویرایش منقضی شده."
         )
         return
 
-    user_id = await ensure_user(message.from_user)
+    user_id = await ensure_user(
+        message.from_user
+    )
 
-    product = await get_product_by_id(product_id)
+    product = await get_product_by_id(
+        product_id
+    )
 
     if not product:
         await message.answer(
@@ -2527,7 +2768,9 @@ async def handle_product_field_edit_value(
         )
         return
 
-    value = (message.text or "").strip()
+    value = (
+        message.text or ""
+    ).strip()
 
     if not value:
         await message.answer(
@@ -2535,12 +2778,18 @@ async def handle_product_field_edit_value(
         )
         return
 
-    if field in ("price", "old_price"):
+    if field in (
+        "price",
+        "old_price",
+    ):
         parsed = parse_int(
             value.replace(",", "")
         )
 
-        if parsed is None or parsed < 0:
+        if (
+            parsed is None
+            or parsed < 0
+        ):
             await message.answer(
                 "⚠️ قیمت معتبر نیست."
             )
@@ -2548,7 +2797,16 @@ async def handle_product_field_edit_value(
 
         value = parsed
 
-    query = PRODUCT_UPDATE_QUERIES.get(field)
+    if field == "image_url":
+        if not website_url(value):
+            await message.answer(
+                "⚠️ لینک تصویر معتبر نیست."
+            )
+            return
+
+    query = PRODUCT_UPDATE_QUERIES.get(
+        field
+    )
 
     if not query:
         await message.answer(
@@ -2580,8 +2838,11 @@ async def handle_product_field_edit_value(
     )
 
     await message.answer(
-        f"✅ {PRODUCT_EDITABLE_FIELDS[field]} "
-        "با موفقیت تغییر کرد.",
+        (
+            f"✅ "
+            f"{_html(PRODUCT_EDITABLE_FIELDS[field])} "
+            "با موفقیت تغییر کرد."
+        ),
         reply_markup=builder.as_markup(),
     )
 
@@ -2591,7 +2852,9 @@ async def handle_product_field_edit_value(
 # ============================================================================
 
 
-@router.callback_query(F.data.startswith("productstock:"))
+@router.callback_query(
+    F.data.startswith("productstock:")
+)
 async def handle_product_stock_menu(
     callback: CallbackQuery,
 ) -> None:
@@ -2606,9 +2869,13 @@ async def handle_product_stock_menu(
         )
         return
 
-    user_id = await ensure_user(callback.from_user)
+    user_id = await ensure_user(
+        callback.from_user
+    )
 
-    product = await get_product_by_id(product_id)
+    product = await get_product_by_id(
+        product_id
+    )
 
     if not product:
         await callback.answer(
@@ -2631,26 +2898,32 @@ async def handle_product_stock_menu(
 
     builder = InlineKeyboardBuilder()
 
-    builder.row(
-        InlineKeyboardButton(
-            text="🟢 موجود",
-            callback_data=f"stockset:{product_id}:IN_STOCK",
-        )
+    statuses = (
+        (
+            "🟢 موجود",
+            "IN_STOCK",
+        ),
+        (
+            "🟡 کمبود موجودی",
+            "LOW_STOCK",
+        ),
+        (
+            "🔴 ناموجود",
+            "OUT_OF_STOCK",
+        ),
     )
 
-    builder.row(
-        InlineKeyboardButton(
-            text="🟡 کمبود موجودی",
-            callback_data=f"stockset:{product_id}:LOW_STOCK",
+    for label, value in statuses:
+        builder.row(
+            InlineKeyboardButton(
+                text=label,
+                callback_data=(
+                    f"stockset:"
+                    f"{product_id}:"
+                    f"{value}"
+                ),
+            )
         )
-    )
-
-    builder.row(
-        InlineKeyboardButton(
-            text="🔴 ناموجود",
-            callback_data=f"stockset:{product_id}:OUT_OF_STOCK",
-        )
-    )
 
     kb_add_back(
         builder,
@@ -2660,9 +2933,11 @@ async def handle_product_stock_menu(
     await safe_edit(
         callback,
         (
-            f"📦 <b>وضعیت موجودی</b>\n\n"
-            f"محصول: {product['name']}\n"
-            f"وضعیت فعلی: {product['stock_status']}"
+            "📦 <b>وضعیت موجودی</b>\n\n"
+            f"محصول: "
+            f"{_html(product['name'])}\n"
+            f"وضعیت فعلی: "
+            f"{_html(product['stock_status'])}"
         ),
         builder.as_markup(),
     )
@@ -2670,11 +2945,16 @@ async def handle_product_stock_menu(
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("stockset:"))
+@router.callback_query(
+    F.data.startswith("stockset:")
+)
 async def handle_product_stock_set(
     callback: CallbackQuery,
 ) -> None:
-    parts = callback.data.split(":", 2)
+    parts = callback.data.split(
+        ":",
+        2,
+    )
 
     if len(parts) != 3:
         await callback.answer(
@@ -2683,7 +2963,10 @@ async def handle_product_stock_set(
         )
         return
 
-    product_id = parse_int(parts[1])
+    product_id = parse_int(
+        parts[1]
+    )
+
     stock_status = parts[2]
 
     allowed_statuses = {
@@ -2703,9 +2986,13 @@ async def handle_product_stock_set(
         )
         return
 
-    user_id = await ensure_user(callback.from_user)
+    user_id = await ensure_user(
+        callback.from_user
+    )
 
-    product = await get_product_by_id(product_id)
+    product = await get_product_by_id(
+        product_id
+    )
 
     if not product:
         await callback.answer(
@@ -2747,24 +3034,29 @@ async def handle_product_stock_set(
         product_id,
     )
 
-    status_labels = {
+    labels = {
         "IN_STOCK": "🟢 موجود",
         "LOW_STOCK": "🟡 کمبود موجودی",
         "OUT_OF_STOCK": "🔴 ناموجود",
     }
 
-    await callback.answer(
-        f"وضعیت موجودی تغییر کرد: "
-        f"{status_labels[stock_status]}",
-        show_alert=True,
-    )
-
     await handle_product_edit_menu(
         callback,
+        answer_text=(
+            "وضعیت موجودی تغییر کرد: "
+            f"{labels[stock_status]}"
+        ),
     )
 
 
-@router.callback_query(F.data.startswith("productdelete:"))
+# ============================================================================
+# PRODUCT DELETE
+# ============================================================================
+
+
+@router.callback_query(
+    F.data.startswith("productdelete:")
+)
 async def handle_product_delete_start(
     callback: CallbackQuery,
 ) -> None:
@@ -2779,9 +3071,13 @@ async def handle_product_delete_start(
         )
         return
 
-    user_id = await ensure_user(callback.from_user)
+    user_id = await ensure_user(
+        callback.from_user
+    )
 
-    product = await get_product_by_id(product_id)
+    product = await get_product_by_id(
+        product_id
+    )
 
     if not product:
         await callback.answer(
@@ -2807,22 +3103,28 @@ async def handle_product_delete_start(
     builder.row(
         InlineKeyboardButton(
             text="❌ بله، حذف شود",
-            callback_data=f"productdeleteconfirm:{product_id}",
+            callback_data=(
+                f"productdeleteconfirm:"
+                f"{product_id}"
+            ),
         )
     )
 
     builder.row(
         InlineKeyboardButton(
             text="↩️ انصراف",
-            callback_data=f"productedit:{product_id}",
+            callback_data=(
+                f"productedit:{product_id}"
+            ),
         )
     )
 
     await safe_edit(
         callback,
         (
-            f"🗑 <b>حذف محصول</b>\n\n"
-            f"مطمئنی می‌خوای «{product['name']}» "
+            "🗑 <b>حذف محصول</b>\n\n"
+            f"مطمئنی می‌خوای "
+            f"«{_html(product['name'])}» "
             "رو حذف کنی؟\n\n"
             "این عملیات قابل بازگشت نیست."
         ),
@@ -2832,239 +3134,11 @@ async def handle_product_delete_start(
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("productdeleteconfirm:"))
-async def handle_product_delete_confirmed(
-    callback: CallbackQuery,
-) -> None:
-    product_id = _parse_positive_callback_id(
-        callback.data
+@router.callback_query(
+    F.data.startswith(
+        "productdeletecancel:"
     )
-
-    if product_id is None:
-        await callback.answer(
-            "⚠️ شناسه نامعتبر است.",
-            show_alert=True,
-        )
-        return
-
-    user_id = await ensure_user(callback.from_user)
-
-    product = await get_product_by_id(product_id)
-
-    if not product:
-        await callback.answer(
-            "⚠️ محصول پیدا نشد.",
-            show_alert=True,
-        )
-        return
-
-    seller = await _check_seller_ownership(
-        user_id,
-        product["seller_id"],
-    )
-
-    if not seller:
-        await callback.answer(
-            "⚠️ دسترسی مجاز نیست.",
-            show_alert=True,
-        )
-        return
-
-    seller_id = product["seller_id"]
-
-    await delete_product_record(
-        product_id,
-    )
-
-    await log_audit(
-        user_id,
-        "product_deleted",
-        "product",
-        product_id,
-    )
-
-    await _render_product_list(
-        callback,
-        seller_id,
-        answer_text="محصول با موفقیت حذف شد 🗑️",
-    )
-    builder.row(
-        InlineKeyboardButton(
-            text="🔴 ناموجود",
-            callback_data=f"stockset:{product_id}:OUT_OF_STOCK",
-        )
-    )
-
-    kb_add_back(
-        builder,
-        f"productedit:{product_id}",
-    )
-
-    await safe_edit(
-        callback,
-        (
-            f"📦 وضعیت موجودی «{product['name']}»\n\n"
-            f"وضعیت فعلی: {product['stock_status']}"
-        ),
-        builder.as_markup(),
-    )
-
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("stockset:"))
-async def handle_product_stock_set(
-    callback: CallbackQuery,
-) -> None:
-    parts = callback.data.split(":")
-
-    if len(parts) != 3:
-        await callback.answer(
-            "⚠️ اطلاعات نامعتبر است.",
-            show_alert=True,
-        )
-        return
-
-    product_id = parse_int(parts[1])
-    stock_status = parts[2]
-
-    if (
-        product_id is None
-        or product_id < 1
-        or stock_status not in (
-            "AVAILABLE",
-            "OUT_OF_STOCK",
-        )
-    ):
-        await callback.answer(
-            "⚠️ وضعیت نامعتبر است.",
-            show_alert=True,
-        )
-        return
-
-    user_id = await ensure_user(callback.from_user)
-
-    product = await get_product_by_id(product_id)
-
-    if not product:
-        await callback.answer(
-            "⚠️ محصول پیدا نشد.",
-            show_alert=True,
-        )
-        return
-
-    seller = await _check_seller_ownership(
-        user_id,
-        product["seller_id"],
-    )
-
-    if not seller:
-        await callback.answer(
-            "⚠️ دسترسی مجاز نیست.",
-            show_alert=True,
-        )
-        return
-
-    await db.execute(
-        """
-        UPDATE products
-        SET stock_status = ?,
-            updated_at = ?
-        WHERE id = ?;
-        """,
-        (
-            stock_status,
-            now_iso(),
-            product_id,
-        ),
-    )
-
-    await log_audit(
-        user_id,
-        "product_stock_updated",
-        "product",
-        product_id,
-    )
-
-    await handle_product_edit_menu(
-        callback,
-        answer_text="وضعیت موجودی تغییر کرد ✅",
-    )
-
-
-# ============================================================================
-# PRODUCT DELETE
-# ============================================================================
-
-
-@router.callback_query(F.data.startswith("productdelete:"))
-async def handle_product_delete_confirm_screen(
-    callback: CallbackQuery,
-) -> None:
-    product_id = _parse_positive_callback_id(
-        callback.data
-    )
-
-    if product_id is None:
-        await callback.answer(
-            "⚠️ شناسه نامعتبر است.",
-            show_alert=True,
-        )
-        return
-
-    user_id = await ensure_user(callback.from_user)
-
-    product = await get_product_by_id(product_id)
-
-    if not product:
-        await callback.answer(
-            "⚠️ محصول پیدا نشد.",
-            show_alert=True,
-        )
-        return
-
-    seller = await _check_seller_ownership(
-        user_id,
-        product["seller_id"],
-    )
-
-    if not seller:
-        await callback.answer(
-            "⚠️ دسترسی مجاز نیست.",
-            show_alert=True,
-        )
-        return
-
-    builder = InlineKeyboardBuilder()
-
-    builder.row(
-        InlineKeyboardButton(
-            text="❌ بله، حذف شود",
-            callback_data=f"productdeleteconfirm:{product_id}",
-        )
-    )
-
-    builder.row(
-        InlineKeyboardButton(
-            text="↩️ لغو",
-            callback_data=f"productedit:{product_id}",
-        )
-    )
-
-    await safe_edit(
-        callback,
-        (
-            f"🗑 <b>حذف محصول</b>\n\n"
-            f"مطمئنی می‌خوای «{product['name']}» رو حذف کنی؟\n\n"
-            "این عملیات قابل بازگشت نیست."
-        ),
-        builder.as_markup(),
-    )
-
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("productdeletecancel:"))
+)
 async def handle_product_delete_cancel(
     callback: CallbackQuery,
 ) -> None:
@@ -3084,7 +3158,11 @@ async def handle_product_delete_cancel(
     )
 
 
-@router.callback_query(F.data.startswith("productdeleteconfirm:"))
+@router.callback_query(
+    F.data.startswith(
+        "productdeleteconfirm:"
+    )
+)
 async def handle_product_delete_confirmed(
     callback: CallbackQuery,
 ) -> None:
@@ -3099,9 +3177,13 @@ async def handle_product_delete_confirmed(
         )
         return
 
-    user_id = await ensure_user(callback.from_user)
+    user_id = await ensure_user(
+        callback.from_user
+    )
 
-    product = await get_product_by_id(product_id)
+    product = await get_product_by_id(
+        product_id
+    )
 
     if not product:
         await callback.answer(
@@ -3122,7 +3204,13 @@ async def handle_product_delete_confirmed(
         )
         return
 
-    await delete_product_record(product_id)
+    seller_id = product[
+        "seller_id"
+    ]
+
+    await delete_product_record(
+        product_id
+    )
 
     await log_audit(
         user_id,
@@ -3133,8 +3221,10 @@ async def handle_product_delete_confirmed(
 
     await _render_product_list(
         callback,
-        product["seller_id"],
-        answer_text="محصول حذف شد 🗑️",
+        seller_id,
+        answer_text=(
+            "محصول با موفقیت حذف شد 🗑️"
+        ),
     )
 
 
@@ -3143,7 +3233,9 @@ async def handle_product_delete_confirmed(
 # ============================================================================
 
 
-@router.callback_query(F.data.startswith("stats:"))
+@router.callback_query(
+    F.data.startswith("stats:")
+)
 async def handle_my_stats(
     callback: CallbackQuery,
 ) -> None:
@@ -3158,18 +3250,12 @@ async def handle_my_stats(
         )
         return
 
-    user_id = await ensure_user(callback.from_user)
-
-    seller = await _check_seller_ownership(
-        user_id,
+    seller = await _get_owned_seller_or_answer(
+        callback,
         seller_id,
     )
 
     if not seller:
-        await callback.answer(
-            "⚠️ دسترسی مجاز نیست.",
-            show_alert=True,
-        )
         return
 
     await _render_stats_home(
@@ -3178,7 +3264,9 @@ async def handle_my_stats(
     )
 
 
-@router.callback_query(F.data.startswith("statspick:"))
+@router.callback_query(
+    F.data.startswith("statspick:")
+)
 async def handle_stats_home_picked(
     callback: CallbackQuery,
 ) -> None:
@@ -3203,7 +3291,9 @@ async def _render_stats_home(
     callback: CallbackQuery,
     seller_id: int,
 ) -> None:
-    user_id = await ensure_user(callback.from_user)
+    user_id = await ensure_user(
+        callback.from_user
+    )
 
     seller = await _check_seller_ownership(
         user_id,
@@ -3221,7 +3311,12 @@ async def _render_stats_home(
         seller_id
     )
 
-    builder = InlineKeyboardBuilder()
+    if not stats:
+        await callback.answer(
+            "⚠️ آمار فروشگاه در دسترس نیست.",
+            show_alert=True,
+        )
+        return
 
     products = await db.fetchall(
         """
@@ -3233,11 +3328,19 @@ async def _render_stats_home(
         (seller_id,),
     )
 
+    builder = InlineKeyboardBuilder()
+
     for product in products:
         builder.row(
             InlineKeyboardButton(
-                text=f"📦 {product['name']}",
-                callback_data=f"statsproduct:{product['id']}",
+                text=(
+                    f"📦 "
+                    f"{_html(product['name'])}"
+                ),
+                callback_data=(
+                    f"statsproduct:"
+                    f"{product['id']}"
+                ),
             )
         )
 
@@ -3249,17 +3352,16 @@ async def _render_stats_home(
     await safe_edit(
         callback,
         (
-            f"📊 <b>آمار {_seller_name(seller)}</b>\n\n"
-            f"👁 بازدید فروشگاه: {stats['views']}\n"
-            f"📦 تعداد محصولات: {stats['product_count']}\n"
-            f"🟢 محصولات موجود: {stats['active_product_count']}\n"
-            f"👁 بازدید محصولات: {stats['total_product_views']}\n"
-            f"❤️ علاقه‌مندی‌ها: {stats['favorite_count']}\n"
-            f"📨 درخواست‌ها: {stats['request_count']}\n"
-            f"🛒 سفارش‌های تکمیل‌شده: "
-            f"{stats['completed_order_count']}\n"
-            f"💰 درآمد تکمیل‌شده: "
-            f"{format_price(stats['completed_order_revenue'])}"
+            f"📊 <b>آمار "
+            f"{_html(_seller_name(seller))}</b>\n\n"
+            f"👁 بازدید فروشگاه: "
+            f"{stats.get('views', 0) or 0}\n"
+            f"📦 تعداد محصولات: "
+            f"{stats.get('product_count', 0) or 0}\n"
+            f"❤️ علاقه‌مندی‌ها: "
+            f"{stats.get('favorite_count', 0) or 0}\n"
+            f"🛒 سفارش‌ها: "
+            f"{stats.get('order_count', 0) or 0}"
         ),
         builder.as_markup(),
     )
@@ -3267,7 +3369,9 @@ async def _render_stats_home(
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("statsproduct:"))
+@router.callback_query(
+    F.data.startswith("statsproduct:")
+)
 async def handle_stats_product(
     callback: CallbackQuery,
 ) -> None:
@@ -3282,9 +3386,13 @@ async def handle_stats_product(
         )
         return
 
-    user_id = await ensure_user(callback.from_user)
+    user_id = await ensure_user(
+        callback.from_user
+    )
 
-    product = await get_product_by_id(product_id)
+    product = await get_product_by_id(
+        product_id
+    )
 
     if not product:
         await callback.answer(
@@ -3309,6 +3417,13 @@ async def handle_stats_product(
         product_id
     )
 
+    if not stats:
+        await callback.answer(
+            "⚠️ آمار محصول در دسترس نیست.",
+            show_alert=True,
+        )
+        return
+
     builder = InlineKeyboardBuilder()
 
     kb_add_back(
@@ -3319,13 +3434,16 @@ async def handle_stats_product(
     await safe_edit(
         callback,
         (
-            f"📊 <b>آمار {product['name']}</b>\n\n"
-            f"👁 بازدید: {stats['views']}\n"
-            f"❤️ علاقه‌مندی‌ها: {stats['favorite_count']}\n"
-            f"🛒 سفارش تکمیل‌شده: "
-            f"{stats['completed_order_count']}\n"
-            f"📦 تعداد فروخته‌شده: "
-            f"{stats['completed_units_sold']}"
+            f"📊 <b>آمار "
+            f"{_html(product['name'])}</b>\n\n"
+            f"👁 بازدید: "
+            f"{stats.get('views', 0) or 0}\n"
+            f"⭐ امتیاز: "
+            f"{float(stats.get('rating') or 0):.1f}\n"
+            f"❤️ علاقه‌مندی‌ها: "
+            f"{stats.get('favorite_count', 0) or 0}\n"
+            f"🛒 سفارش‌ها: "
+            f"{stats.get('order_count', 0) or 0}"
         ),
         builder.as_markup(),
     )
@@ -3338,7 +3456,9 @@ async def handle_stats_product(
 # ============================================================================
 
 
-@router.callback_query(F.data == "registerseller")
+@router.callback_query(
+    F.data == "registerseller"
+)
 async def handle_register_seller_start(
     callback: CallbackQuery,
     state: FSMContext,
@@ -3350,12 +3470,18 @@ async def handle_register_seller_start(
     )
 
     builder = InlineKeyboardBuilder()
-    kb_add_back(builder, "account")
+
+    kb_add_back(
+        builder,
+        "account",
+    )
 
     await safe_edit(
         callback,
-        "🏪 <b>ثبت فروشگاه</b>\n\n"
-        "اسم فروشگاهت رو بفرست:",
+        (
+            "🏪 <b>ثبت فروشگاه</b>\n\n"
+            "اسم فروشگاهت رو بفرست:"
+        ),
         builder.as_markup(),
     )
 
@@ -3371,7 +3497,16 @@ async def handle_register_name(
     message: Message,
     state: FSMContext,
 ) -> None:
-    name = (message.text or "").strip()
+    if (message.text or "").strip() == "/start":
+        await state.clear()
+        await ensure_user(
+            message.from_user
+        )
+        return
+
+    name = (
+        message.text or ""
+    ).strip()
 
     if not name:
         await message.answer(
@@ -3402,7 +3537,9 @@ async def handle_register_description(
     message: Message,
     state: FSMContext,
 ) -> None:
-    description = (message.text or "").strip()
+    description = (
+        message.text or ""
+    ).strip()
 
     if description == "ندارد":
         description = ""
@@ -3428,8 +3565,13 @@ async def handle_register_description(
     for city in cities:
         builder.row(
             InlineKeyboardButton(
-                text=f"{EMOJI_CITY} {city['name']}",
-                callback_data=f"registercity:{city['id']}",
+                text=(
+                    f"{EMOJI_CITY} "
+                    f"{_html(city['name'])}"
+                ),
+                callback_data=(
+                    f"registercity:{city['id']}"
+                ),
             )
         )
 
@@ -3439,7 +3581,9 @@ async def handle_register_description(
     )
 
 
-@router.callback_query(F.data.startswith("registercity:"))
+@router.callback_query(
+    F.data.startswith("registercity:")
+)
 async def handle_pick_city(
     callback: CallbackQuery,
     state: FSMContext,
@@ -3456,7 +3600,11 @@ async def handle_pick_city(
         return
 
     city = await db.fetchone(
-        "SELECT id, name FROM cities WHERE id = ?;",
+        """
+        SELECT id, name
+        FROM cities
+        WHERE id = ?;
+        """,
         (city_id,),
     )
 
@@ -3480,13 +3628,18 @@ async def handle_pick_city(
     builder.row(
         InlineKeyboardButton(
             text="⏭ رد کردن",
-            callback_data="registerskip:instagram",
+            callback_data=(
+                "registerskip:instagram"
+            ),
         )
     )
 
     await safe_edit(
         callback,
-        "📸 آیدی یا لینک اینستاگرام فروشگاه رو بفرست:",
+        (
+            "📸 آیدی یا لینک اینستاگرام "
+            "فروشگاه رو بفرست:"
+        ),
         builder.as_markup(),
     )
 
@@ -3502,7 +3655,18 @@ async def handle_register_instagram(
     message: Message,
     state: FSMContext,
 ) -> None:
-    value = (message.text or "").strip()
+    value = (
+        message.text or ""
+    ).strip()
+
+    if value:
+        if not instagram_url(value):
+            await message.answer(
+                "⚠️ آیدی یا لینک اینستاگرام معتبر نیست."
+            )
+            return
+    else:
+        value = None
 
     await state.update_data(
         register_instagram=value
@@ -3517,12 +3681,15 @@ async def handle_register_instagram(
     builder.row(
         InlineKeyboardButton(
             text="⏭ رد کردن",
-            callback_data="registerskip:telegram",
+            callback_data=(
+                "registerskip:telegram"
+            ),
         )
     )
 
     await message.answer(
-        "✈️ آیدی یا لینک تلگرام فروشگاه رو بفرست:",
+        "✈️ آیدی یا لینک تلگرام "
+        "فروشگاه رو بفرست:",
         reply_markup=builder.as_markup(),
     )
 
@@ -3536,7 +3703,18 @@ async def handle_register_telegram(
     message: Message,
     state: FSMContext,
 ) -> None:
-    value = (message.text or "").strip()
+    value = (
+        message.text or ""
+    ).strip()
+
+    if value:
+        if not telegram_url(value):
+            await message.answer(
+                "⚠️ آیدی یا لینک تلگرام معتبر نیست."
+            )
+            return
+    else:
+        value = None
 
     await state.update_data(
         register_telegram=value
@@ -3551,7 +3729,9 @@ async def handle_register_telegram(
     builder.row(
         InlineKeyboardButton(
             text="⏭ رد کردن",
-            callback_data="registerskip:website",
+            callback_data=(
+                "registerskip:website"
+            ),
         )
     )
 
@@ -3570,7 +3750,18 @@ async def handle_register_website(
     message: Message,
     state: FSMContext,
 ) -> None:
-    value = (message.text or "").strip()
+    value = (
+        message.text or ""
+    ).strip()
+
+    if value:
+        if not website_url(value):
+            await message.answer(
+                "⚠️ لینک وب‌سایت معتبر نیست."
+            )
+            return
+    else:
+        value = None
 
     await state.update_data(
         register_website=value
@@ -3582,12 +3773,17 @@ async def handle_register_website(
     )
 
 
-@router.callback_query(F.data.startswith("registerskip:"))
+@router.callback_query(
+    F.data.startswith("registerskip:")
+)
 async def handle_register_skip(
     callback: CallbackQuery,
     state: FSMContext,
 ) -> None:
-    parts = callback.data.split(":", 1)
+    parts = callback.data.split(
+        ":",
+        1,
+    )
 
     if len(parts) != 2:
         await callback.answer(
@@ -3602,21 +3798,28 @@ async def handle_register_skip(
         await state.update_data(
             register_instagram=None
         )
+
         await state.set_state(
             RegisterSellerStates.telegram
         )
 
         builder = InlineKeyboardBuilder()
+
         builder.row(
             InlineKeyboardButton(
                 text="⏭ رد کردن",
-                callback_data="registerskip:telegram",
+                callback_data=(
+                    "registerskip:telegram"
+                ),
             )
         )
 
         await safe_edit(
             callback,
-            "✈️ آیدی یا لینک تلگرام فروشگاه رو بفرست:",
+            (
+                "✈️ آیدی یا لینک تلگرام "
+                "فروشگاه رو بفرست:"
+            ),
             builder.as_markup(),
         )
 
@@ -3624,15 +3827,19 @@ async def handle_register_skip(
         await state.update_data(
             register_telegram=None
         )
+
         await state.set_state(
             RegisterSellerStates.website
         )
 
         builder = InlineKeyboardBuilder()
+
         builder.row(
             InlineKeyboardButton(
                 text="⏭ رد کردن",
-                callback_data="registerskip:website",
+                callback_data=(
+                    "registerskip:website"
+                ),
             )
         )
 
@@ -3667,6 +3874,7 @@ async def _finish_register_seller(
     state: FSMContext,
 ) -> None:
     data = await state.get_data()
+
     await state.clear()
 
     user_id = await ensure_user(
@@ -3698,7 +3906,7 @@ async def _finish_register_seller(
 
     now = now_iso()
 
-    cur = await db.execute(
+    cursor = await db.execute(
         """
         INSERT INTO sellers (
             name,
@@ -3718,8 +3926,14 @@ async def _finish_register_seller(
             updated_at
         )
         VALUES (
-            ?, ?, ?, ?, ?, ?, ?,
-            ?, 'UNCLAIMED', 1, 0, 0, 0, ?, ?
+            ?, ?, ?, ?, ?, ?, ?, ?,
+            'UNCLAIMED',
+            1,
+            0,
+            0,
+            0,
+            ?,
+            ?
         );
         """,
         (
@@ -3736,30 +3950,26 @@ async def _finish_register_seller(
         ),
     )
 
-    seller_id = cur.lastrowid
+    seller_id = cursor.lastrowid
+
+    if seller_id is None:
+        await message.answer(
+            "⚠️ ثبت فروشگاه انجام نشد. دوباره تلاش کن."
+        )
+        return
 
     await log_audit(
         user_id,
         "seller_created",
         "seller",
-        seller_id,
+        int(seller_id),
     )
 
     await message.answer(
-        "🎉 <b>فروشگاهت با موفقیت ثبت شد!</b>\n\n"
-        f"🏪 {data.get('register_name')}\n\n"
-        "حالا می‌تونی محصولاتت رو اضافه کنی و "
-        "فروشگاهت رو مدیریت کنی."
-    )
-
-    try:
-        stats_text = await referral_stats_text(
-            seller_id
+        (
+            "🎉 <b>فروشگاهت با موفقیت ثبت شد!</b>\n\n"
+            f"🏪 {_html(data.get('register_name'))}\n\n"
+            "حالا می‌تونی محصولاتت رو اضافه کنی "
+            "و فروشگاهت رو مدیریت کنی."
         )
-
-        if stats_text:
-            await message.answer(
-                stats_text
-            )
-    except Exception:
-        pass
+    )
