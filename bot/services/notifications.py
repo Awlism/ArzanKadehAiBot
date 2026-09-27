@@ -85,24 +85,27 @@ async def mark_notification_read(
     user_id: int,
 ) -> bool:
     try:
-        await db.execute(
+        cursor = await db.execute(
             """
             UPDATE notifications
             SET is_read = 1
             WHERE id = ?
-              AND user_id = ?;
+              AND user_id = ?
+              AND is_read = 0;
             """,
             (
                 notification_id,
                 user_id,
             ),
         )
-        return True
+
+        return cursor.rowcount == 1
 
     except Exception as exc:
         logger.error(
-            "Failed to mark notification %s as read: %s",
+            "Failed to mark notification %s as read for user %s: %s",
             notification_id,
+            user_id,
             exc,
         )
         return False
@@ -127,6 +130,5 @@ async def mark_all_notifications_read(
         logger.error(
             "Failed to mark all notifications as read for user %s",
             user_id,
-            exc,
         )
         return False
