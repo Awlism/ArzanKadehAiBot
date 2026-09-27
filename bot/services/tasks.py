@@ -182,7 +182,10 @@ async def expire_overdue_ads() -> int:
     """
     Expire active advertisement requests whose display period ended.
 
-    Returns the number of expired requests.
+    Only requests that are still ACTIVE at the moment of the UPDATE
+    are transitioned to EXPIRED.
+
+    Returns the number of successfully expired requests.
     Never raises.
     """
 
@@ -203,21 +206,30 @@ async def expire_overdue_ads() -> int:
             (now,),
         )
 
-        for row in rows:
-            updated_at = now_iso()
+        expired_count = 0
 
-            await db.execute(
+        for row in rows:
+            cursor = await db.execute(
                 """
                 UPDATE requests
                 SET status = 'EXPIRED',
                     updated_at = ?
-                WHERE id = ?;
+                WHERE id = ?
+                  AND status = 'ACTIVE'
+                  AND ad_expires_at IS NOT NULL
+                  AND ad_expires_at <= ?;
                 """,
                 (
-                    updated_at,
+                    now,
                     row["id"],
+                    now,
                 ),
             )
+
+            if cursor.rowcount != 1:
+                continue
+
+            expired_count += 1
 
             if row["request_type"] == "general_ad":
                 title = "تبلیغ در ارزانکده"
@@ -235,7 +247,7 @@ async def expire_overdue_ads() -> int:
                 ),
             )
 
-        return len(rows)
+        return expired_count
 
     except Exception as exc:
         logger.error(
