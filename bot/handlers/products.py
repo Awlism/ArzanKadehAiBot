@@ -1209,30 +1209,42 @@ async def _save_report(
     ):
         return False
 
-    cursor = await db.execute(
-        """
-        INSERT INTO reports (
-            user_id,
-            seller_id,
-            product_id,
-            reason,
-            description,
-            status,
-            created_at
+    try:
+        cursor = await db.execute(
+            """
+            INSERT INTO reports (
+                user_id,
+                seller_id,
+                product_id,
+                reason,
+                description,
+                status,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, 'PENDING', ?);
+            """,
+            (
+                user_id,
+                seller_id,
+                product_id,
+                reason_code,
+                description,
+                now_iso(),
+            ),
         )
-        VALUES (?, ?, ?, ?, ?, 'PENDING', ?);
-        """,
-        (
-            user_id,
-            seller_id,
-            product_id,
-            reason_code,
-            description,
-            now_iso(),
-        ),
-    )
+
+    except aiosqlite.IntegrityError:
+        # The database-level partial unique index protects
+        # against a concurrent duplicate PENDING report.
+        return False
+
+    if cursor.rowcount != 1:
+        return False
 
     report_id = cursor.lastrowid
+
+    if report_id is None:
+        return False
 
     await log_event(
         user_id,
@@ -1287,7 +1299,6 @@ async def _save_report(
         )
 
     return True
-
 
 @router.callback_query(
     F.data == "reportskip",
