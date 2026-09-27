@@ -1606,6 +1606,9 @@ async def list_my_requests(
 async def get_pending_requests(
     limit: int = 50,
 ) -> list[dict[str, Any]]:
+    if limit < 1:
+        return []
+
     return await db.fetchall(
         """
         SELECT *
