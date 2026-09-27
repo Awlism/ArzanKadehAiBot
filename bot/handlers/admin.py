@@ -50,6 +50,7 @@ router = Router(name="admin")
 
 PAGE_SIZE_LIST = 10
 AD_REQUEST_TYPES = ("ad", "general_ad")
+AD_EDITABLE_STATUSES = ("PENDING", "APPROVED")
 
 
 def _html(value) -> str:
@@ -1371,6 +1372,21 @@ async def handle_admin_ad_set_price_start(
         )
         return
 
+    if req["status"] not in AD_EDITABLE_STATUSES:
+        status_label = REQUEST_STATUS_LABELS.get(
+            req["status"],
+            req["status"],
+        )
+
+        await callback.answer(
+            (
+                "⚠️ این درخواست دیگر قابل تنظیم نیست.\n"
+                f"وضعیت فعلی: {_html(status_label)}"
+            ),
+            show_alert=True,
+        )
+        return
+
     await state.update_data(
         adminad_request_id=request_id
     )
@@ -1439,10 +1455,7 @@ async def handle_admin_ad_set_price_value(
         )
         return
 
-    if req["status"] not in (
-        "PENDING",
-        "APPROVED",
-    ):
+    if req["status"] not in AD_EDITABLE_STATUSES:
         status_label = REQUEST_STATUS_LABELS.get(
             req["status"],
             req["status"],
@@ -1454,13 +1467,14 @@ async def handle_admin_ad_set_price_value(
         )
         return
 
-    await db.execute(
+    cursor = await db.execute(
         """
         UPDATE requests
         SET ad_price = ?,
             updated_at = ?
         WHERE id = ?
-          AND request_type IN ('ad', 'general_ad');
+          AND request_type IN ('ad', 'general_ad')
+          AND status IN ('PENDING', 'APPROVED');
         """,
         (
             price,
@@ -1468,6 +1482,28 @@ async def handle_admin_ad_set_price_value(
             request_id,
         ),
     )
+
+    if cursor.rowcount != 1:
+        current_req = await _get_ad_request(
+            request_id
+        )
+
+        if not current_req:
+            await message.answer(
+                "⚠️ درخواست تبلیغاتی دیگر وجود ندارد."
+            )
+            return
+
+        status_label = REQUEST_STATUS_LABELS.get(
+            current_req["status"],
+            current_req["status"],
+        )
+
+        await message.answer(
+            "⚠️ این درخواست دیگر قابل تنظیم نیست.\n"
+            f"وضعیت فعلی: {_html(status_label)}"
+        )
+        return
 
     admin_user_id = await ensure_user(
         message.from_user
@@ -1520,6 +1556,21 @@ async def handle_admin_ad_set_duration_start(
     if not req:
         await callback.answer(
             "⚠️ درخواست تبلیغاتی یافت نشد.",
+            show_alert=True,
+        )
+        return
+
+    if req["status"] not in AD_EDITABLE_STATUSES:
+        status_label = REQUEST_STATUS_LABELS.get(
+            req["status"],
+            req["status"],
+        )
+
+        await callback.answer(
+            (
+                "⚠️ این درخواست دیگر قابل تنظیم نیست.\n"
+                f"وضعیت فعلی: {_html(status_label)}"
+            ),
             show_alert=True,
         )
         return
@@ -1590,10 +1641,7 @@ async def handle_admin_ad_set_duration_value(
         )
         return
 
-    if req["status"] not in (
-        "PENDING",
-        "APPROVED",
-    ):
+    if req["status"] not in AD_EDITABLE_STATUSES:
         status_label = REQUEST_STATUS_LABELS.get(
             req["status"],
             req["status"],
@@ -1605,13 +1653,14 @@ async def handle_admin_ad_set_duration_value(
         )
         return
 
-    await db.execute(
+    cursor = await db.execute(
         """
         UPDATE requests
         SET ad_duration_days = ?,
             updated_at = ?
         WHERE id = ?
-          AND request_type IN ('ad', 'general_ad');
+          AND request_type IN ('ad', 'general_ad')
+          AND status IN ('PENDING', 'APPROVED');
         """,
         (
             days,
@@ -1619,6 +1668,28 @@ async def handle_admin_ad_set_duration_value(
             request_id,
         ),
     )
+
+    if cursor.rowcount != 1:
+        current_req = await _get_ad_request(
+            request_id
+        )
+
+        if not current_req:
+            await message.answer(
+                "⚠️ درخواست تبلیغاتی دیگر وجود ندارد."
+            )
+            return
+
+        status_label = REQUEST_STATUS_LABELS.get(
+            current_req["status"],
+            current_req["status"],
+        )
+
+        await message.answer(
+            "⚠️ این درخواست دیگر قابل تنظیم نیست.\n"
+            f"وضعیت فعلی: {_html(status_label)}"
+        )
+        return
 
     admin_user_id = await ensure_user(
         message.from_user
@@ -1632,9 +1703,8 @@ async def handle_admin_ad_set_duration_value(
         details=str(days),
     )
 
-    req = await db.fetchone(
-        "SELECT * FROM requests WHERE id = ?;",
-        (request_id,),
+    req = await _get_ad_request(
+        request_id
     )
 
     if req and req["status"] == "APPROVED":
@@ -1645,7 +1715,7 @@ async def handle_admin_ad_set_duration_value(
             timespec="seconds"
         )
 
-                cursor = await db.execute(
+        activation_cursor = await db.execute(
             """
             UPDATE requests
             SET status = 'ACTIVE',
@@ -1662,7 +1732,7 @@ async def handle_admin_ad_set_duration_value(
             ),
         )
 
-        if cursor.rowcount == 1:
+        if activation_cursor.rowcount == 1:
             await notify_user(
                 req["user_id"],
                 (
@@ -1675,19 +1745,6 @@ async def handle_admin_ad_set_duration_value(
                     f"{days} روز نمایش داده می‌شه."
                 ),
             )
-
-        await notify_user(
-            req["user_id"],
-            (
-                "تبلیغ در ارزانکده"
-                if req["request_type"] == "general_ad"
-                else "درخواست تبلیغات"
-            ),
-            (
-                f"✅ تبلیغت فعال شد و برای "
-                f"{days} روز نمایش داده می‌شه."
-            ),
-        )
 
     await message.answer(
         f"✅ مدت درخواست #{request_id} ثبت شد: "
@@ -1728,6 +1785,21 @@ async def handle_admin_ad_set_placement_start(
     if not req:
         await callback.answer(
             "⚠️ درخواست تبلیغاتی یافت نشد.",
+            show_alert=True,
+        )
+        return
+
+    if req["status"] not in AD_EDITABLE_STATUSES:
+        status_label = REQUEST_STATUS_LABELS.get(
+            req["status"],
+            req["status"],
+        )
+
+        await callback.answer(
+            (
+                "⚠️ این درخواست دیگر قابل تنظیم نیست.\n"
+                f"وضعیت فعلی: {_html(status_label)}"
+            ),
             show_alert=True,
         )
         return
@@ -1798,10 +1870,7 @@ async def handle_admin_ad_set_placement_value(
         )
         return
 
-    if req["status"] not in (
-        "PENDING",
-        "APPROVED",
-    ):
+    if req["status"] not in AD_EDITABLE_STATUSES:
         status_label = REQUEST_STATUS_LABELS.get(
             req["status"],
             req["status"],
@@ -1813,13 +1882,14 @@ async def handle_admin_ad_set_placement_value(
         )
         return
 
-    await db.execute(
+    cursor = await db.execute(
         """
         UPDATE requests
         SET ad_placement = ?,
             updated_at = ?
         WHERE id = ?
-          AND request_type IN ('ad', 'general_ad');
+          AND request_type IN ('ad', 'general_ad')
+          AND status IN ('PENDING', 'APPROVED');
         """,
         (
             placement,
@@ -1827,6 +1897,28 @@ async def handle_admin_ad_set_placement_value(
             request_id,
         ),
     )
+
+    if cursor.rowcount != 1:
+        current_req = await _get_ad_request(
+            request_id
+        )
+
+        if not current_req:
+            await message.answer(
+                "⚠️ درخواست تبلیغاتی دیگر وجود ندارد."
+            )
+            return
+
+        status_label = REQUEST_STATUS_LABELS.get(
+            current_req["status"],
+            current_req["status"],
+        )
+
+        await message.answer(
+            "⚠️ این درخواست دیگر قابل تنظیم نیست.\n"
+            f"وضعیت فعلی: {_html(status_label)}"
+        )
+        return
 
     admin_user_id = await ensure_user(
         message.from_user
@@ -2057,32 +2149,33 @@ async def handle_ads_admin_detail(
             ),
         )
 
-    builder.row(
-        InlineKeyboardButton(
-            text="💰 تعیین هزینه",
-            callback_data=(
-                f"adsetprice:{req['id']}"
-            ),
+    if req["status"] in AD_EDITABLE_STATUSES:
+        builder.row(
+            InlineKeyboardButton(
+                text="💰 تعیین هزینه",
+                callback_data=(
+                    f"adsetprice:{req['id']}"
+                ),
+            )
         )
-    )
 
-    builder.row(
-        InlineKeyboardButton(
-            text="⏰ تعیین مدت",
-            callback_data=(
-                f"adsetduration:{req['id']}"
-            ),
+        builder.row(
+            InlineKeyboardButton(
+                text="⏰ تعیین مدت",
+                callback_data=(
+                    f"adsetduration:{req['id']}"
+                ),
+            )
         )
-    )
 
-    builder.row(
-        InlineKeyboardButton(
-            text="📍 انتخاب محل نمایش",
-            callback_data=(
-                f"adsetplacement:{req['id']}"
-            ),
+        builder.row(
+            InlineKeyboardButton(
+                text="📍 انتخاب محل نمایش",
+                callback_data=(
+                    f"adsetplacement:{req['id']}"
+                ),
+            )
         )
-    )
 
     kb_add_back(
         builder,
