@@ -32,6 +32,7 @@ from ..database import db
 from ..keyboards import kb_add_back, kb_pagination_row
 from ..repositories import (
     create_product_record,
+    create_seller_claim,
     delete_product_record,
     get_product_by_id,
     get_product_statistics,
