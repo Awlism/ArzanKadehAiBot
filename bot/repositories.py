@@ -2010,6 +2010,9 @@ async def create_audit_log(
 async def get_audit_logs(
     limit: int = 100,
 ) -> list[dict[str, Any]]:
+    if limit < 1:
+        return []
+
     return await db.fetchall(
         """
         SELECT *
