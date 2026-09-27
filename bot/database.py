@@ -337,20 +337,30 @@ async def ensure_column(
     identifier_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
     if not identifier_re.fullmatch(table):
-        raise ValueError(f"Invalid table identifier: {table!r}")
+        raise ValueError(
+            f"Invalid table identifier: {table!r}"
+        )
 
     if not identifier_re.fullmatch(column):
-        raise ValueError(f"Invalid column identifier: {column!r}")
+        raise ValueError(
+            f"Invalid column identifier: {column!r}"
+        )
 
     if (
         ";" in sql_type_and_default
         or "--" in sql_type_and_default
         or "/*" in sql_type_and_default
     ):
-        raise ValueError("Invalid SQL type/default fragment.")
+        raise ValueError(
+            "Invalid SQL type/default fragment."
+        )
 
-    quoted_table = '"' + table.replace('"', '""') + '"'
-    quoted_column = '"' + column.replace('"', '""') + '"'
+    quoted_table = (
+        '"' + table.replace('"', '""') + '"'
+    )
+    quoted_column = (
+        '"' + column.replace('"', '""') + '"'
+    )
 
     cur = await db.conn.execute(
         "SELECT name FROM pragma_table_info(?)",
@@ -359,7 +369,10 @@ async def ensure_column(
     rows = await cur.fetchall()
     await cur.close()
 
-    existing_columns = {row[0] for row in rows}
+    existing_columns = {
+        row[0]
+        for row in rows
+    }
 
     if column in existing_columns:
         return
@@ -382,7 +395,11 @@ async def ensure_column(
 
 
 async def run_column_migrations() -> None:
-    for table, column, sql_type_and_default in COLUMN_MIGRATIONS:
+    for (
+        table,
+        column,
+        sql_type_and_default,
+    ) in COLUMN_MIGRATIONS:
         await ensure_column(
             table,
             column,
@@ -394,18 +411,22 @@ async def run_column_migrations() -> None:
 
 async def run_seller_claim_migration() -> None:
     """
-    Make seller claims unique per seller/user pair.
+    Enforce seller-claim lifecycle rules safely.
 
-    Existing databases may already contain duplicate claims because
-    older versions did not enforce this constraint. Before creating the
-    unique index, keep only the newest row (highest id) for each
-    seller_id/user_id pair.
+    Only one PENDING claim is allowed for each seller/user pair.
+    REJECTED claims remain in history and may be followed by a new
+    claim from the same user while the seller is still UNCLAIMED.
+
+    Older databases may already contain the previous full unique index
+    on (seller_id, user_id). That index is removed and replaced with
+    a partial unique index that applies only to PENDING claims.
     """
 
     duplicate_rows = await db.fetchall(
         """
         SELECT seller_id, user_id, COUNT(*) AS claim_count
         FROM seller_claims
+        WHERE status = 'PENDING'
         GROUP BY seller_id, user_id
         HAVING COUNT(*) > 1;
         """
@@ -415,24 +436,33 @@ async def run_seller_claim_migration() -> None:
         await db.conn.execute(
             """
             DELETE FROM seller_claims
-            WHERE id NOT IN (
-                SELECT MAX(id)
-                FROM seller_claims
-                GROUP BY seller_id, user_id
-            );
+            WHERE status = 'PENDING'
+              AND id NOT IN (
+                  SELECT MAX(id)
+                  FROM seller_claims
+                  WHERE status = 'PENDING'
+                  GROUP BY seller_id, user_id
+              );
             """
         )
 
         logger.warning(
-            "Deduplicated %d seller claim groups.",
+            "Deduplicated %d pending seller claim groups.",
             len(duplicate_rows),
         )
 
     await db.conn.execute(
         """
+        DROP INDEX IF EXISTS idx_claims_seller_user_unique;
+        """
+    )
+
+    await db.conn.execute(
+        """
         CREATE UNIQUE INDEX IF NOT EXISTS
-            idx_claims_seller_user_unique
-        ON seller_claims(seller_id, user_id);
+            idx_claims_seller_user_pending_unique
+        ON seller_claims(seller_id, user_id)
+        WHERE status = 'PENDING';
         """
     )
 
