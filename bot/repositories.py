@@ -1531,7 +1531,7 @@ async def create_request(
     if user_id < 1:
         return None
 
-    if request_type not in {"support", "ad"}:
+    if request_type not in {"support", "ad", "general_ad"}:
         return None
 
     # Support both the newer explicit topic/message names and
