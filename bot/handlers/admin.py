@@ -998,6 +998,11 @@ async def handle_seller_claims_admin(
     await callback.answer()
 
 
+# ======================================================================
+# SELLER CLAIM DETAIL / DECISION
+# ======================================================================
+
+
 @router.callback_query(
     F.data.startswith("sellerclaimdetail:")
 )
@@ -1429,22 +1434,25 @@ async def handle_admin_ad_set_price_value(
     )
 
     if not req:
-    await message.answer(
-        "⚠️ درخواست تبلیغاتی پیدا نشد."
-    )
-    return
+        await message.answer(
+            "⚠️ درخواست تبلیغاتی پیدا نشد."
+        )
+        return
 
-if req["status"] not in ("PENDING", "APPROVED"):
-    status_label = REQUEST_STATUS_LABELS.get(
-        req["status"],
-        req["status"],
-    )
+    if req["status"] not in (
+        "PENDING",
+        "APPROVED",
+    ):
+        status_label = REQUEST_STATUS_LABELS.get(
+            req["status"],
+            req["status"],
+        )
 
-    await message.answer(
-        "⚠️ این درخواست دیگر قابل تنظیم نیست.\n"
-        f"وضعیت فعلی: {_html(status_label)}"
-    )
-    return
+        await message.answer(
+            "⚠️ این درخواست دیگر قابل تنظیم نیست.\n"
+            f"وضعیت فعلی: {_html(status_label)}"
+        )
+        return
 
     await db.execute(
         """
@@ -1577,22 +1585,25 @@ async def handle_admin_ad_set_duration_value(
     )
 
     if not req:
-    await message.answer(
-        "⚠️ درخواست تبلیغاتی پیدا نشد."
-    )
-    return
+        await message.answer(
+            "⚠️ درخواست تبلیغاتی پیدا نشد."
+        )
+        return
 
-if req["status"] not in ("PENDING", "APPROVED"):
-    status_label = REQUEST_STATUS_LABELS.get(
-        req["status"],
-        req["status"],
-    )
+    if req["status"] not in (
+        "PENDING",
+        "APPROVED",
+    ):
+        status_label = REQUEST_STATUS_LABELS.get(
+            req["status"],
+            req["status"],
+        )
 
-    await message.answer(
-        "⚠️ این درخواست دیگر قابل تنظیم نیست.\n"
-        f"وضعیت فعلی: {_html(status_label)}"
-    )
-    return
+        await message.answer(
+            "⚠️ این درخواست دیگر قابل تنظیم نیست.\n"
+            f"وضعیت فعلی: {_html(status_label)}"
+        )
+        return
 
     await db.execute(
         """
@@ -1770,6 +1781,21 @@ async def handle_admin_ad_set_placement_value(
     if not req:
         await message.answer(
             "⚠️ درخواست تبلیغاتی پیدا نشد."
+        )
+        return
+
+    if req["status"] not in (
+        "PENDING",
+        "APPROVED",
+    ):
+        status_label = REQUEST_STATUS_LABELS.get(
+            req["status"],
+            req["status"],
+        )
+
+        await message.answer(
+            "⚠️ این درخواست دیگر قابل تنظیم نیست.\n"
+            f"وضعیت فعلی: {_html(status_label)}"
         )
         return
 
