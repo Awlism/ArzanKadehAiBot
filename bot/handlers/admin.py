@@ -19,7 +19,11 @@ from ..database import db
 from ..keyboards import kb_add_back, kb_pagination_row
 from ..repositories import (
     REQUEST_STATUS_LABELS,
+    approve_seller_claim,
     get_active_mode,
+    get_pending_seller_claims,
+    get_seller_claim,
+    reject_seller_claim,
 )
 from ..services.notifications import notify_user
 from ..services.referrals import (
@@ -99,6 +103,7 @@ def _parse_callback_int(
 # ======================================================================
 # ADMIN REQUEST DECISION
 # ======================================================================
+
 
 @router.callback_query(F.data.startswith("adminreq:"))
 async def handle_admin_request_decision(
@@ -343,6 +348,7 @@ async def handle_admin_request_decision(
 # ADMIN HOME
 # ======================================================================
 
+
 async def _render_admin_home(
     callback: CallbackQuery,
 ) -> None:
@@ -354,6 +360,13 @@ async def _render_admin_home(
         InlineKeyboardButton(
             text="👥 کاربران",
             callback_data="adminusers",
+        )
+    )
+
+    builder.row(
+        InlineKeyboardButton(
+            text="🏪 مالکیت فروشگاه‌ها",
+            callback_data="sellerclaimsadmin",
         )
     )
 
@@ -397,6 +410,7 @@ async def handle_admin_home(
 # ======================================================================
 # USERS
 # ======================================================================
+
 
 @router.callback_query(F.data == "adminusers")
 async def handle_admin_users_menu(
@@ -575,7 +589,7 @@ async def handle_admin_user_search_query(
 
             builder.row(
                 InlineKeyboardButton(
-                    text=f"👤 {label}",
+                    text=f"👤 {_html(label)}",
                     callback_data=(
                         f"adminuserview:{user['id']}"
                     ),
@@ -663,7 +677,7 @@ async def handle_admin_user_list(
 
             builder.row(
                 InlineKeyboardButton(
-                    text=f"👤 {label}",
+                    text=f"👤 {_html(label)}",
                     callback_data=(
                         f"adminuserview:{user['id']}"
                     ),
@@ -863,8 +877,430 @@ async def handle_admin_user_view(
 
 
 # ======================================================================
+# SELLER CLAIM ADMIN
+# ======================================================================
+
+
+async def _render_seller_claims_admin(
+    callback: CallbackQuery,
+) -> None:
+    pending = await get_pending_seller_claims(
+        PAGE_SIZE_LIST
+    )
+
+    lines = [
+        "🏪 <b>مالکیت فروشگاه‌ها</b>",
+        "",
+        (
+            "📋 درخواست‌های در انتظار بررسی: "
+            f"{len(pending)}"
+        ),
+    ]
+
+    builder = InlineKeyboardBuilder()
+
+    if not pending:
+        lines.append(
+            ""
+        )
+        lines.append(
+            "✅ در حال حاضر درخواست مالکیتی در انتظار بررسی نیست."
+        )
+
+    else:
+        for claim in pending:
+            seller_name = (
+                claim["seller_name"]
+                or f"فروشگاه #{claim['seller_id']}"
+            )
+
+            claimant_name = (
+                claim["claimant_first_name"]
+                or (
+                    f"@{claim['claimant_username']}"
+                    if claim["claimant_username"]
+                    else
+                    str(claim["claimant_telegram_id"])
+                )
+            )
+
+            builder.row(
+                InlineKeyboardButton(
+                    text=(
+                        f"📋 {_html(seller_name)} — "
+                        f"{_html(claimant_name)}"
+                    ),
+                    callback_data=(
+                        f"sellerclaimdetail:{claim['id']}"
+                    ),
+                )
+            )
+
+    kb_add_back(
+        builder,
+        "adminhome",
+    )
+
+    await safe_edit(
+        callback,
+        "\n".join(lines),
+        builder.as_markup(),
+    )
+
+
+@router.callback_query(
+    F.data == "sellerclaimsadmin"
+)
+async def handle_seller_claims_admin(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> None:
+    await state.clear()
+
+    if not _is_admin(callback):
+        await callback.answer(
+            "⛔️ این بخش فقط برای ادمین در دسترس است.",
+            show_alert=True,
+        )
+        return
+
+    await _render_seller_claims_admin(
+        callback
+    )
+
+    await callback.answer()
+
+
+@router.callback_query(
+    F.data.startswith("sellerclaimdetail:")
+)
+async def handle_seller_claim_detail(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> None:
+    await state.clear()
+
+    if not _is_admin(callback):
+        await callback.answer(
+            "⛔️ این بخش فقط برای ادمین در دسترس است.",
+            show_alert=True,
+        )
+        return
+
+    claim_id = _parse_callback_int(
+        callback,
+        "sellerclaimdetail:",
+    )
+
+    if claim_id is None:
+        await callback.answer(
+            "⚠️ شناسه نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    claim = await get_seller_claim(
+        claim_id
+    )
+
+    if not claim:
+        await callback.answer(
+            "⚠️ این درخواست مالکیت یافت نشد.",
+            show_alert=True,
+        )
+        return
+
+    seller_name = (
+        claim["seller_name"]
+        or f"فروشگاه #{claim['seller_id']}"
+    )
+
+    claimant_name = (
+        claim["claimant_first_name"]
+        or "بدون نام"
+    )
+
+    claimant_username = (
+        f"@{claim['claimant_username']}"
+        if claim["claimant_username"]
+        else "ثبت نشده"
+    )
+
+    status = str(
+        claim["status"] or ""
+    ).upper()
+
+    status_labels = {
+        "PENDING": "در انتظار بررسی",
+        "APPROVED": "تأیید شده",
+        "REJECTED": "رد شده",
+    }
+
+    status_label = status_labels.get(
+        status,
+        status,
+    )
+
+    lines = [
+        "🏪 <b>درخواست مالکیت فروشگاه</b>",
+        "",
+        (
+            "فروشگاه: "
+            f"<b>{_html(seller_name)}</b>"
+        ),
+        (
+            "Seller ID: "
+            f"{claim['seller_id']}"
+        ),
+        (
+            "Claim ID: "
+            f"{claim['id']}"
+        ),
+        "",
+        (
+            "👤 متقاضی: "
+            f"{_html(claimant_name)}"
+        ),
+        (
+            "Username: "
+            f"{_html(claimant_username)}"
+        ),
+        (
+            "Telegram ID: "
+            f"{_html(claim['claimant_telegram_id'])}"
+        ),
+        (
+            "User ID: "
+            f"{claim['user_id']}"
+        ),
+        "",
+        (
+            "وضعیت درخواست: "
+            f"<b>{_html(status_label)}</b>"
+        ),
+        (
+            "وضعیت فروشگاه: "
+            f"{_html(claim['seller_status'])}"
+        ),
+        (
+            "ثبت درخواست: "
+            f"{_html(claim['created_at'])}"
+        ),
+    ]
+
+    builder = InlineKeyboardBuilder()
+
+    if status == "PENDING":
+        builder.row(
+            InlineKeyboardButton(
+                text="🟢 تأیید مالکیت",
+                callback_data=(
+                    f"sellerclaim:approve:{claim['id']}"
+                ),
+            ),
+            InlineKeyboardButton(
+                text="🔴 رد درخواست",
+                callback_data=(
+                    f"sellerclaim:reject:{claim['id']}"
+                ),
+            ),
+        )
+
+    kb_add_back(
+        builder,
+        "sellerclaimsadmin",
+    )
+
+    await safe_edit(
+        callback,
+        "\n".join(lines),
+        builder.as_markup(),
+    )
+
+    await callback.answer()
+
+
+@router.callback_query(
+    F.data.startswith("sellerclaim:")
+)
+async def handle_seller_claim_decision(
+    callback: CallbackQuery,
+) -> None:
+    data = callback.data or ""
+    parts = data.split(":")
+
+    if len(parts) != 3:
+        await callback.answer(
+            "⚠️ درخواست نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    _, action, claim_id_str = parts
+
+    if action not in (
+        "approve",
+        "reject",
+    ):
+        await callback.answer(
+            "⚠️ عملیات نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    claim_id = parse_int(
+        claim_id_str
+    )
+
+    if claim_id is None or claim_id < 1:
+        await callback.answer(
+            "⚠️ شناسه درخواست نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    if not _is_admin(callback):
+        await callback.answer(
+            "⛔️ این عملیات فقط برای ادمین در دسترس است.",
+            show_alert=True,
+        )
+        return
+
+    admin_user_id = await ensure_user(
+        callback.from_user
+    )
+
+    claim = await get_seller_claim(
+        claim_id
+    )
+
+    if not claim:
+        await callback.answer(
+            "⚠️ این درخواست مالکیت یافت نشد.",
+            show_alert=True,
+        )
+        return
+
+    if claim["status"] != "PENDING":
+        status_labels = {
+            "APPROVED": "تأیید شده",
+            "REJECTED": "رد شده",
+        }
+
+        status_label = status_labels.get(
+            claim["status"],
+            claim["status"],
+        )
+
+        await callback.answer(
+            (
+                "⚠️ این درخواست قبلاً تعیین‌تکلیف شده: "
+                f"{_html(status_label)}"
+            ),
+            show_alert=True,
+        )
+        return
+
+    try:
+        if action == "approve":
+            success = await approve_seller_claim(
+                claim_id,
+                admin_user_id,
+            )
+        else:
+            success = await reject_seller_claim(
+                claim_id,
+                admin_user_id,
+            )
+
+    except PermissionError:
+        await callback.answer(
+            "⛔️ دسترسی انجام این عملیات را نداری.",
+            show_alert=True,
+        )
+        return
+
+    if not success:
+        await callback.answer(
+            (
+                "⚠️ عملیات انجام نشد. "
+                "ممکن است وضعیت فروشگاه یا درخواست "
+                "هم‌زمان تغییر کرده باشد."
+            ),
+            show_alert=True,
+        )
+        return
+
+    if action == "approve":
+        await log_audit(
+            admin_user_id,
+            "seller_claim_approved",
+            "seller_claim",
+            claim_id,
+            details=(
+                f"seller_id={claim['seller_id']};"
+                f"user_id={claim['user_id']}"
+            ),
+        )
+
+        await notify_user(
+            claim["user_id"],
+            "مالکیت فروشگاه",
+            (
+                "🎉 درخواست مالکیت فروشگاهت تأیید شد!\n\n"
+                f"🏪 فروشگاه: <b>"
+                f"{_html(claim['seller_name'])}"
+                "</b>\n\n"
+                "از این به بعد این فروشگاه به حساب تو متصل شده."
+            ),
+        )
+
+        message_text = (
+            "✅ مالکیت فروشگاه تأیید شد."
+        )
+
+    else:
+        await log_audit(
+            admin_user_id,
+            "seller_claim_rejected",
+            "seller_claim",
+            claim_id,
+            details=(
+                f"seller_id={claim['seller_id']};"
+                f"user_id={claim['user_id']}"
+            ),
+        )
+
+        await notify_user(
+            claim["user_id"],
+            "مالکیت فروشگاه",
+            (
+                "ℹ️ درخواست مالکیت فروشگاهت رد شد.\n\n"
+                f"🏪 فروشگاه: <b>"
+                f"{_html(claim['seller_name'])}"
+                "</b>\n\n"
+                "اگر فکر می‌کنی این تصمیم اشتباه بوده، "
+                "می‌تونی با پشتیبانی در ارتباط باشی."
+            ),
+        )
+
+        message_text = (
+            "✅ درخواست مالکیت رد شد."
+        )
+
+    await callback.answer(
+        message_text
+    )
+
+    await _render_seller_claims_admin(
+        callback
+    )
+
+
+# ======================================================================
 # ADVERTISING ADMIN
 # ======================================================================
+
 
 @router.callback_query(
     F.data.startswith("adsetprice:")
