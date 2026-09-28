@@ -8,6 +8,7 @@ import logging
 import re
 
 from ..database import db
+from ..sqlite_backend import sqlite_backend
 from ..utils import now_iso
 
 logger = logging.getLogger("arzankadeh")
@@ -91,7 +92,7 @@ async def record_referral_if_new(
         if existing:
             return False
 
-        await db.execute(
+        await sqlite_backend.execute(
             """
             INSERT INTO referrals (
                 seller_id,
