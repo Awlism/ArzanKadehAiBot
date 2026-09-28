@@ -287,6 +287,13 @@ async def safe_edit(
 
 
 async def ensure_user(user) -> int:
+    """
+    Ensure a Telegram user exists and refresh their profile data.
+
+    Uses INSERT OR IGNORE so concurrent requests cannot create
+    duplicate users when multiple updates for the same Telegram
+    account arrive at the same time.
+    """
     telegram_id = user.id
 
     username = getattr(
@@ -307,41 +314,11 @@ async def ensure_user(user) -> int:
         None,
     )
 
-    existing = await db.fetchone(
-        """
-        SELECT id
-        FROM users
-        WHERE telegram_id = ?;
-        """,
-        (telegram_id,),
-    )
-
-    if existing:
-        await db.execute(
-            """
-            UPDATE users
-            SET username = ?,
-                first_name = ?,
-                last_name = ?,
-                updated_at = ?
-            WHERE telegram_id = ?;
-            """,
-            (
-                username,
-                first_name,
-                last_name,
-                now_iso(),
-                telegram_id,
-            ),
-        )
-
-        return existing["id"]
-
     now = now_iso()
 
     await db.execute(
         """
-        INSERT INTO users (
+        INSERT OR IGNORE INTO users (
             telegram_id,
             username,
             first_name,
@@ -361,16 +338,40 @@ async def ensure_user(user) -> int:
         ),
     )
 
-    created = await db.fetchone(
+    await db.execute(
+        """
+        UPDATE users
+        SET username = ?,
+            first_name = ?,
+            last_name = ?,
+            updated_at = ?
+        WHERE telegram_id = ?;
+        """,
+        (
+            username,
+            first_name,
+            last_name,
+            now,
+            telegram_id,
+        ),
+    )
+
+    existing = await db.fetchone(
         """
         SELECT id
         FROM users
-        WHERE telegram_id = ?;
+        WHERE telegram_id = ?
+        LIMIT 1;
         """,
         (telegram_id,),
     )
 
-    return created["id"]
+    if existing is None:
+        raise RuntimeError(
+            f"Failed to ensure user {telegram_id}"
+        )
+
+    return existing["id"]
 
 
 async def log_event(
