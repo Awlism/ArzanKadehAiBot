@@ -129,8 +129,6 @@ async def handle_product_detail(
         )
         return
 
-    from ..sqlite_backend import sqlite_backend
-
     result = await sqlite_backend.execute(
         """
         UPDATE products
