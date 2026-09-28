@@ -1,134 +1,185 @@
 # -*- coding: utf-8 -*-
 """
 ArzanKadeh AI
-Notification service
+Notification handlers
 """
 
-import logging
-from typing import Optional
+from html import escape
+
+from aiogram import F, Router
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, InlineKeyboardButton
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from ..database import db
-from ..utils import now_iso
+from ..keyboards import kb_add_back
+from ..utils import ensure_user, parse_int, safe_edit
 
-logger = logging.getLogger("arzankadeh")
+
+router = Router(name="notifications")
 
 
-async def notify_user(
-    user_id: int,
-    title: str,
-    message: Optional[str],
-    notification_type: str = "info",
-) -> bool:
-    """
-    Store an in-app notification for a user.
+# ======================================================================
+# NOTIFICATIONS
+# ======================================================================
 
-    The original bot records notifications in the database here.
-    Actual Telegram delivery is handled separately by the caller.
-    """
-    try:
-        await db.execute(
-            """
-            INSERT INTO notifications (
-                user_id,
-                title,
-                message,
-                notification_type,
-                is_read,
-                created_at
+@router.callback_query(F.data == "notifications")
+async def handle_notifications(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> None:
+    await state.clear()
+    await _render_notifications(callback)
+
+
+async def _render_notifications(
+    callback: CallbackQuery,
+    answer_text: str | None = None,
+) -> None:
+    user_id = await ensure_user(
+        callback.from_user
+    )
+
+    rows = await db.fetchall(
+        """
+        SELECT *
+        FROM notifications
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+        LIMIT 20;
+        """,
+        (user_id,),
+    )
+
+    if not rows:
+        builder = InlineKeyboardBuilder()
+
+        kb_add_back(
+            builder,
+            "main",
+        )
+
+        await safe_edit(
+            callback,
+            "🔔 اعلان جدیدی نداری.",
+            builder.as_markup(),
+        )
+
+        if answer_text:
+            await callback.answer(answer_text)
+        else:
+            await callback.answer()
+
+        return
+
+    builder = InlineKeyboardBuilder()
+
+    lines = [
+        "🔔 <b>اعلان‌ها</b>",
+        "",
+    ]
+
+    for notification in rows:
+        mark = (
+            "✅"
+            if notification["is_read"]
+            else "🆕"
+        )
+
+        title = escape(
+            str(notification["title"] or ""),
+            quote=False,
+        )
+
+        message = escape(
+            str(notification["message"] or ""),
+            quote=False,
+        )
+
+        lines.append(
+            f"{mark} <b>{title}</b>\n"
+            f"{message}"
+        )
+
+        if not notification["is_read"]:
+            raw_title = str(
+                notification["title"] or "اعلان"
             )
-            VALUES (?, ?, ?, ?, 0, ?);
-            """,
-            (
-                user_id,
-                title,
-                message,
-                notification_type,
-                now_iso(),
+
+            button_title = raw_title[:20]
+
+            builder.row(
+                InlineKeyboardButton(
+                    text=f"خواندم: {button_title}",
+                    callback_data=(
+                        f"notifread:{notification['id']}"
+                    ),
+                )
+            )
+
+    kb_add_back(
+        builder,
+        "main",
+    )
+
+    await safe_edit(
+        callback,
+        "\n\n".join(lines),
+        builder.as_markup(),
+    )
+
+    if answer_text:
+        await callback.answer(answer_text)
+    else:
+        await callback.answer()
+
+
+@router.callback_query(
+    F.data.startswith("notifread:")
+)
+async def handle_notification_read(
+    callback: CallbackQuery,
+) -> None:
+    notif_id = parse_int(
+        callback.data.split(":", 1)[1]
+    )
+
+    if notif_id is None:
+        await callback.answer(
+            "⚠️ شناسه نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    user_id = await ensure_user(
+        callback.from_user
+    )
+
+    cursor = await db.execute(
+        """
+        UPDATE notifications
+        SET is_read = 1
+        WHERE id = ?
+          AND user_id = ?
+          AND is_read = 0;
+        """,
+        (
+            notif_id,
+            user_id,
+        ),
+    )
+
+    if cursor.rowcount != 1:
+        await _render_notifications(
+            callback,
+            answer_text=(
+                "ℹ️ این اعلان قبلاً خوانده شده "
+                "یا دیگر در دسترس نیست."
             ),
         )
-        return True
+        return
 
-    except Exception as exc:
-        logger.error(
-            "Failed to create notification for user %s: %s",
-            user_id,
-            exc,
-        )
-        return False
-
-
-async def get_unread_notifications(
-    user_id: int,
-) -> list:
-    try:
-        return await db.fetchall(
-            """
-            SELECT id, title, message, notification_type, created_at
-            FROM notifications
-            WHERE user_id = ?
-              AND is_read = 0
-            ORDER BY id DESC;
-            """,
-            (user_id,),
-        )
-    except Exception as exc:
-        logger.error(
-            "Failed to load notifications for user %s: %s",
-            user_id,
-            exc,
-        )
-        return []
-
-
-async def mark_notification_read(
-    notification_id: int,
-    user_id: int,
-) -> bool:
-    try:
-        cursor = await db.execute(
-            """
-            UPDATE notifications
-            SET is_read = 1
-            WHERE id = ?
-              AND user_id = ?
-              AND is_read = 0;
-            """,
-            (
-                notification_id,
-                user_id,
-            ),
-        )
-
-        return cursor.rowcount == 1
-
-    except Exception as exc:
-        logger.error(
-            "Failed to mark notification %s as read: %s",
-            notification_id,
-            exc,
-        )
-        return False
-
-
-async def mark_all_notifications_read(
-    user_id: int,
-) -> bool:
-    try:
-        cursor = await db.execute(
-            """
-            UPDATE notifications
-            SET is_read = 1
-            WHERE user_id = ?
-              AND is_read = 0;
-            """,
-            (user_id,),
-        )
-
-        return cursor.rowcount > 0
-
-    except Exception as exc:
-        logger.error(
-            "Failed to mark all notifications as read for user %s",
-            user_id,
-        )
-        return False
+    await _render_notifications(
+        callback,
+        answer_text="علامت خوانده شد ✅",
+    )
