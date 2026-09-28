@@ -42,6 +42,10 @@ class _FakeCursor:
     def lastrowid(self):
         return self._cursor.lastrowid
 
+    @property
+    def rowcount(self):
+        return self._cursor.rowcount
+
 
 class _FakeConn:
     """
@@ -58,6 +62,11 @@ class _FakeConn:
     async def execute(self, query, params=()):
         return _FakeCursor(
             self._raw.execute(query, params)
+        )
+
+    async def executemany(self, query, parameters):
+        return _FakeCursor(
+            self._raw.executemany(query, parameters)
         )
 
     async def commit(self):
@@ -94,7 +103,7 @@ class FakeDB:
     async def execute(self, query, params=()):
         cur = self._raw.execute(query, params)
         self._raw.commit()
-        return cur
+        return _FakeCursor(cur)
 
 
 def new_conn() -> sqlite3.Connection:
