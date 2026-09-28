@@ -866,7 +866,7 @@ async def _finish_public_ad(
 
         return
 
-    cursor = await db.execute(
+        cursor = await sqlite_backend.execute(
         """
         UPDATE requests
         SET ad_kind = ?,
