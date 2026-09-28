@@ -10,7 +10,6 @@ IMPORTANT:
 - Application/repository code must depend on DatabaseBackend instead.
 - Existing bot.database.Database remains the owner of the current
   SQLite connection lifecycle and schema/migration logic.
-- This adapter does not change the existing database behavior yet.
 """
 
 from __future__ import annotations
@@ -31,15 +30,23 @@ from .database_backend import (
 
 
 class SQLiteTransaction:
-    def __init__(self) -> None:
+    def __init__(self, *, immediate: bool = False) -> None:
         self._conn: Optional[aiosqlite.Connection] = None
+        self._immediate = immediate
 
     async def __aenter__(self) -> "SQLiteTransaction":
         if db.conn is None:
             raise RuntimeError("Database is not connected.")
 
         self._conn = db.conn
-        await self._conn.execute("BEGIN")
+
+        begin_sql = (
+            "BEGIN IMMEDIATE"
+            if self._immediate
+            else "BEGIN"
+        )
+
+        await self._conn.execute(begin_sql)
 
         return self
 
@@ -262,8 +269,12 @@ class SQLiteBackend:
         finally:
             await cursor.close()
 
-    def transaction(self) -> DatabaseTransaction:
-        return SQLiteTransaction()
+    def transaction(
+        self,
+        *,
+        immediate: bool = False,
+    ) -> DatabaseTransaction:
+        return SQLiteTransaction(immediate=immediate)
 
 
 sqlite_backend = SQLiteBackend()
