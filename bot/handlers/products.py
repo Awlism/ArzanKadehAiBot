@@ -1189,7 +1189,7 @@ async def _save_report(
         return False
 
     try:
-        cursor = await db.execute(
+        result = await sqlite_backend.execute(
             """
             INSERT INTO reports (
                 user_id,
@@ -1212,15 +1212,15 @@ async def _save_report(
             ),
         )
 
-    except aiosqlite.IntegrityError:
+    except DatabaseIntegrityError:
         # The database-level partial unique index protects
         # against a concurrent duplicate PENDING report.
         return False
 
-    if cursor.rowcount != 1:
+    if result.rowcount != 1:
         return False
 
-    report_id = cursor.lastrowid
+    report_id = result.lastrowid
 
     if report_id is None:
         return False
