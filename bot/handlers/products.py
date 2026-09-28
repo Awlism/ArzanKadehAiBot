@@ -1455,7 +1455,7 @@ async def handle_admin_report_decision(
         else "REJECTED"
     )
 
-    cursor = await db.execute(
+    result = await sqlite_backend.execute(
         """
         UPDATE reports
         SET status = ?
@@ -1468,7 +1468,7 @@ async def handle_admin_report_decision(
         ),
     )
 
-    if cursor.rowcount != 1:
+    if result.rowcount != 1:
         current_report = await db.fetchone(
             """
             SELECT status
