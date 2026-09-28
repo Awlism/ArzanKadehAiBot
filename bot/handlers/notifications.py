@@ -156,7 +156,7 @@ async def handle_notification_read(
         callback.from_user
     )
 
-        cursor = await sqlite_backend.execute(
+    cursor = await sqlite_backend.execute(
         """
         UPDATE notifications
         SET is_read = 1
