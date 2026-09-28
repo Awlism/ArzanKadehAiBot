@@ -4052,101 +4052,85 @@ async def _finish_register_seller(
 
     now = now_iso()
 
+    already_registered = False
+    seller_id: int | None = None
+
     try:
-        await db.conn.execute(
-            "BEGIN IMMEDIATE;"
-        )
-
-        existing = await db.conn.execute(
-            """
-            SELECT id
-            FROM sellers
-            WHERE (
-                owner_user_id = ?
-                OR created_by_user_id = ?
+        async with sqlite_backend.transaction(
+            immediate=True,
+        ) as tx:
+            existing_row = await tx.fetchone(
+                """
+                SELECT id
+                FROM sellers
+                WHERE (
+                    owner_user_id = ?
+                    OR created_by_user_id = ?
+                )
+                AND status != 'REJECTED'
+                LIMIT 1;
+                """,
+                (
+                    user_id,
+                    user_id,
+                ),
             )
-            AND status != 'REJECTED'
-            LIMIT 1;
-            """,
-            (
-                user_id,
-                user_id,
-            ),
-        )
 
-        existing_row = await existing.fetchone()
-        await existing.close()
+            if existing_row is not None:
+                already_registered = True
+            else:
+                result = await tx.execute(
+                    """
+                    INSERT INTO sellers (
+                        name,
+                        description,
+                        city_id,
+                        instagram,
+                        telegram,
+                        website,
+                        owner_user_id,
+                        created_by_user_id,
+                        status,
+                        is_active,
+                        rating,
+                        review_count,
+                        views,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, ?,
+                        'UNCLAIMED',
+                        1,
+                        0,
+                        0,
+                        0,
+                        ?,
+                        ?
+                    );
+                    """,
+                    (
+                        name,
+                        description,
+                        city_id,
+                        instagram,
+                        telegram,
+                        website,
+                        user_id,
+                        user_id,
+                        now,
+                        now,
+                    ),
+                )
 
-        if existing_row is not None:
-            await db.conn.rollback()
+                seller_id = result.lastrowid
 
-            await message.answer(
-                "⚠️ شما قبلاً یک فروشگاه ثبت کرده‌اید."
-            )
-            return
+                if seller_id is None:
+                    raise RuntimeError(
+                        "Seller registration returned no seller id."
+                    )
 
-        cursor = await db.conn.execute(
-            """
-            INSERT INTO sellers (
-                name,
-                description,
-                city_id,
-                instagram,
-                telegram,
-                website,
-                owner_user_id,
-                created_by_user_id,
-                status,
-                is_active,
-                rating,
-                review_count,
-                views,
-                created_at,
-                updated_at
-            )
-            VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?,
-                'UNCLAIMED',
-                1,
-                0,
-                0,
-                0,
-                ?,
-                ?
-            );
-            """,
-            (
-                name,
-                description,
-                city_id,
-                instagram,
-                telegram,
-                website,
-                user_id,
-                user_id,
-                now,
-                now,
-            ),
-        )
-
-        seller_id = cursor.lastrowid
-
-        if seller_id is None:
-            await db.conn.rollback()
-
-            await message.answer(
-                "⚠️ ثبت فروشگاه انجام نشد. دوباره تلاش کن."
-            )
-            return
-
-        await db.conn.commit()
-
-    except aiosqlite.IntegrityError:
-        try:
-            await db.conn.rollback()
-        except Exception:
-            pass
-
+    except DatabaseIntegrityError:
         await message.answer(
             "⚠️ ثبت فروشگاه انجام نشد. "
             "ممکن است اطلاعات فروشگاه همزمان تغییر کرده باشد."
@@ -4154,11 +4138,6 @@ async def _finish_register_seller(
         return
 
     except Exception:
-        try:
-            await db.conn.rollback()
-        except Exception:
-            pass
-
         logger.exception(
             "Failed to register seller for user %s",
             user_id,
@@ -4167,6 +4146,12 @@ async def _finish_register_seller(
         await message.answer(
             "⚠️ ثبت فروشگاه انجام نشد. "
             "لطفاً دوباره تلاش کن."
+        )
+        return
+
+    if already_registered:
+        await message.answer(
+            "⚠️ شما قبلاً یک فروشگاه ثبت کرده‌اید."
         )
         return
 
