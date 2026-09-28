@@ -847,7 +847,7 @@ async def handle_review_text(
     ).strip()
 
     try:
-        cursor = await db.execute(
+        result = await sqlite_backend.execute(
             """
             INSERT INTO reviews (
                 user_id,
@@ -869,7 +869,7 @@ async def handle_review_text(
             ),
         )
 
-    except aiosqlite.IntegrityError:
+    except DatabaseIntegrityError:
         # The database-level unique index protects against
         # concurrent duplicate review submissions.
         await message.answer(
@@ -877,39 +877,7 @@ async def handle_review_text(
         )
         return
 
-    if cursor.rowcount != 1:
-        await message.answer(
-            "⚠️ ثبت نظر انجام نشد. لطفاً دوباره تلاش کن."
-        )
-        return
-
-    if target_type == "seller":
-        cursor = await db.execute(
-            """
-            UPDATE sellers
-            SET
-                rating = (
-                    SELECT AVG(rating)
-                    FROM reviews
-                    WHERE seller_id = ?
-                ),
-                review_count = (
-                    SELECT COUNT(*)
-                    FROM reviews
-                    WHERE seller_id = ?
-                ),
-                updated_at = ?
-            WHERE id = ?;
-            """,
-            (
-                target_id,
-                target_id,
-                now_iso(),
-                target_id,
-            ),
-        )
-
-        if cursor.rowcount != 1:
+    if result.rowcount != 1:
             await message.answer(
                 "⚠️ نظر شما ثبت شد، اما به‌روزرسانی امتیاز فروشگاه انجام نشد. "
                 "لطفاً بعداً دوباره بررسی کن."
