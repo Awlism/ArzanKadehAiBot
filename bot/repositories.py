@@ -16,6 +16,7 @@ from .constants import (
     VALID_MODES,
 )
 from .database import db
+from .sqlite_backend import sqlite_backend
 from .utils import now_iso
 
 
