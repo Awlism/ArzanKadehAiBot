@@ -38,50 +38,6 @@ async def get_user(
     )
 
 
-async def ensure_user(
-    user_id: int,
-    username: Optional[str] = None,
-    first_name: Optional[str] = None,
-    last_name: Optional[str] = None,
-) -> dict[str, Any]:
-    user = await get_user(user_id)
-
-    if user:
-        return user
-
-    now = now_iso()
-
-    await db.execute(
-        """
-        INSERT OR IGNORE INTO users (
-            telegram_id,
-            username,
-            first_name,
-            last_name,
-            created_at,
-            updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?);
-        """,
-        (
-            user_id,
-            username,
-            first_name,
-            last_name,
-            now,
-            now,
-        ),
-    )
-
-    user = await get_user(user_id)
-
-    if not user:
-        raise RuntimeError(
-            f"Failed to create user {user_id}"
-        )
-
-    return user
-
 
 async def update_user_role(
     user_id: int,
