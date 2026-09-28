@@ -16,6 +16,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from ..config import ADMIN_CHAT_ID
 from ..database import db
+from ..sqlite_backend import sqlite_backend
 from ..keyboards import kb_add_back, kb_pagination_row
 from ..repositories import (
     REQUEST_STATUS_LABELS,
@@ -177,7 +178,7 @@ async def handle_admin_request_decision(
     if action == "reject":
         new_status = "REJECTED"
 
-        cursor = await db.execute(
+        cursor = await sqlite_backend.execute(
             """
             UPDATE requests
             SET status = ?, updated_at = ?
