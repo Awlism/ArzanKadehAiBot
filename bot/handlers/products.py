@@ -876,7 +876,7 @@ async def handle_review_text(
         return
 
     if target_type == "seller":
-        await db.execute(
+        cursor = await db.execute(
             """
             UPDATE sellers
             SET
@@ -901,8 +901,15 @@ async def handle_review_text(
             ),
         )
 
+        if cursor.rowcount != 1:
+            await message.answer(
+                "⚠️ نظر شما ثبت شد، اما به‌روزرسانی امتیاز فروشگاه انجام نشد. "
+                "لطفاً بعداً دوباره بررسی کن."
+            )
+            return
+
     else:
-        await db.execute(
+        cursor = await db.execute(
             """
             UPDATE products
             SET
@@ -926,6 +933,13 @@ async def handle_review_text(
                 target_id,
             ),
         )
+
+        if cursor.rowcount != 1:
+            await message.answer(
+                "⚠️ نظر شما ثبت شد، اما به‌روزرسانی امتیاز محصول انجام نشد. "
+                "لطفاً بعداً دوباره بررسی کن."
+            )
+            return
 
     await log_event(
         user_id,
