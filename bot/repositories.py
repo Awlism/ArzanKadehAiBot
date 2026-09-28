@@ -1111,7 +1111,7 @@ async def toggle_seller_favorite(
     )
 
     if existing:
-        await db.execute(
+        cursor = await db.execute(
             """
             DELETE FROM seller_favorites
             WHERE user_id = ?
@@ -1122,9 +1122,10 @@ async def toggle_seller_favorite(
                 seller_id,
             ),
         )
-        return False
 
-    await db.execute(
+        return cursor.rowcount == 1
+
+    cursor = await db.execute(
         """
         INSERT OR IGNORE INTO seller_favorites (
             user_id,
@@ -1140,7 +1141,7 @@ async def toggle_seller_favorite(
         ),
     )
 
-    return True
+    return cursor.rowcount == 1
 
 
 async def add_seller_favorite(
