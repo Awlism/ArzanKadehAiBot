@@ -3955,80 +3955,181 @@ async def _finish_register_seller(
         message.from_user
     )
 
-    existing = await db.fetchone(
-        """
-        SELECT id
-        FROM sellers
-        WHERE (
-            owner_user_id = ?
-            OR created_by_user_id = ?
-        )
-        AND status != 'REJECTED'
-        LIMIT 1;
-        """,
-        (
-            user_id,
-            user_id,
-        ),
-    )
+    name = (
+        data.get("register_name") or ""
+    ).strip()
 
-    if existing:
+    if not name:
         await message.answer(
-            "⚠️ شما قبلاً یک فروشگاه ثبت کرده‌اید."
+            "⚠️ اسم فروشگاه نمی‌تواند خالی باشد."
         )
         return
 
-    now = now_iso()
-
-    cursor = await db.execute(
-        """
-        INSERT INTO sellers (
-            name,
-            description,
-            city_id,
-            instagram,
-            telegram,
-            website,
-            owner_user_id,
-            created_by_user_id,
-            status,
-            is_active,
-            rating,
-            review_count,
-            views,
-            created_at,
-            updated_at
-        )
-        VALUES (
-            ?, ?, ?, ?, ?, ?, ?, ?,
-            'UNCLAIMED',
-            1,
-            0,
-            0,
-            0,
-            ?,
-            ?
-        );
-        """,
-        (
-            data.get("register_name"),
-            data.get("register_description"),
-            data.get("register_city_id"),
-            data.get("register_instagram"),
-            data.get("register_telegram"),
-            data.get("register_website"),
-            user_id,
-            user_id,
-            now,
-            now,
-        ),
+    city_id = data.get(
+        "register_city_id"
     )
 
-    seller_id = cursor.lastrowid
-
-    if seller_id is None:
+    if (
+        not isinstance(city_id, int)
+        or city_id < 1
+    ):
         await message.answer(
-            "⚠️ ثبت فروشگاه انجام نشد. دوباره تلاش کن."
+            "⚠️ شهر فروشگاه معتبر نیست. "
+            "لطفاً دوباره ثبت فروشگاه را شروع کن."
+        )
+        return
+
+    city = await db.fetchone(
+        """
+        SELECT id
+        FROM cities
+        WHERE id = ?
+        LIMIT 1;
+        """,
+        (city_id,),
+    )
+
+    if city is None:
+        await message.answer(
+            "⚠️ شهر انتخاب‌شده پیدا نشد. "
+            "لطفاً دوباره تلاش کن."
+        )
+        return
+
+    description = (
+        data.get("register_description")
+        or ""
+    ).strip()
+
+    instagram = data.get(
+        "register_instagram"
+    )
+
+    telegram = data.get(
+        "register_telegram"
+    )
+
+    website = data.get(
+        "register_website"
+    )
+
+    now = now_iso()
+
+    try:
+        await db.conn.execute(
+            "BEGIN IMMEDIATE;"
+        )
+
+        existing = await db.conn.execute(
+            """
+            SELECT id
+            FROM sellers
+            WHERE (
+                owner_user_id = ?
+                OR created_by_user_id = ?
+            )
+            AND status != 'REJECTED'
+            LIMIT 1;
+            """,
+            (
+                user_id,
+                user_id,
+            ),
+        )
+
+        existing_row = await existing.fetchone()
+        await existing.close()
+
+        if existing_row is not None:
+            await db.conn.rollback()
+
+            await message.answer(
+                "⚠️ شما قبلاً یک فروشگاه ثبت کرده‌اید."
+            )
+            return
+
+        cursor = await db.conn.execute(
+            """
+            INSERT INTO sellers (
+                name,
+                description,
+                city_id,
+                instagram,
+                telegram,
+                website,
+                owner_user_id,
+                created_by_user_id,
+                status,
+                is_active,
+                rating,
+                review_count,
+                views,
+                created_at,
+                updated_at
+            )
+            VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?,
+                'UNCLAIMED',
+                1,
+                0,
+                0,
+                0,
+                ?,
+                ?
+            );
+            """,
+            (
+                name,
+                description,
+                city_id,
+                instagram,
+                telegram,
+                website,
+                user_id,
+                user_id,
+                now,
+                now,
+            ),
+        )
+
+        seller_id = cursor.lastrowid
+
+        if seller_id is None:
+            await db.conn.rollback()
+
+            await message.answer(
+                "⚠️ ثبت فروشگاه انجام نشد. دوباره تلاش کن."
+            )
+            return
+
+        await db.conn.commit()
+
+    except aiosqlite.IntegrityError:
+        try:
+            await db.conn.rollback()
+        except Exception:
+            pass
+
+        await message.answer(
+            "⚠️ ثبت فروشگاه انجام نشد. "
+            "ممکن است اطلاعات فروشگاه همزمان تغییر کرده باشد."
+        )
+        return
+
+    except Exception:
+        try:
+            await db.conn.rollback()
+        except Exception:
+            pass
+
+        logger.exception(
+            "Failed to register seller for user %s",
+            user_id,
+        )
+
+        await message.answer(
+            "⚠️ ثبت فروشگاه انجام نشد. "
+            "لطفاً دوباره تلاش کن."
         )
         return
 
@@ -4042,7 +4143,7 @@ async def _finish_register_seller(
     await message.answer(
         (
             "🎉 <b>فروشگاهت با موفقیت ثبت شد!</b>\n\n"
-            f"🏪 {_html(data.get('register_name'))}\n\n"
+            f"🏪 {_html(name)}\n\n"
             "حالا می‌تونی محصولاتت رو اضافه کنی "
             "و فروشگاهت رو مدیریت کنی."
         )
