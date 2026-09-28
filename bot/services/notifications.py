@@ -26,7 +26,7 @@ async def notify_user(
     Actual Telegram delivery is handled separately by the caller.
     """
     try:
-        await db.execute(
+        await sqlite_backend.execute(
             """
             INSERT INTO notifications (
                 user_id,
@@ -85,7 +85,7 @@ async def mark_notification_read(
     user_id: int,
 ) -> bool:
     try:
-        cursor = await db.execute(
+        cursor = await sqlite_backend.execute(
             """
             UPDATE notifications
             SET is_read = 1
@@ -115,7 +115,7 @@ async def mark_all_notifications_read(
     user_id: int,
 ) -> bool:
     try:
-        await db.execute(
+        await sqlite_backend.execute(
             """
             UPDATE notifications
             SET is_read = 1
