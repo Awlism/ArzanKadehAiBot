@@ -88,6 +88,8 @@ class DatabaseBackend(Protocol):
 
     def transaction(
         self,
+        *,
+        immediate: bool = False,
     ) -> AsyncContextManager["DatabaseTransaction"]:
         ...
 
