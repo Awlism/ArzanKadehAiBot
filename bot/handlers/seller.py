@@ -716,7 +716,7 @@ async def handle_seller_favorite_remove(
         )
         return
 
-    await db.execute(
+    cursor = await db.execute(
         """
         DELETE FROM seller_favorites
         WHERE user_id = ?
@@ -727,6 +727,17 @@ async def handle_seller_favorite_remove(
             seller_id,
         ),
     )
+
+    if cursor.rowcount != 1:
+        await callback.answer(
+            "این فروشگاه دیگر در علاقه‌مندی‌ها نیست.",
+            show_alert=True,
+        )
+        await _render_seller_detail(
+            callback,
+            seller_id,
+        )
+        return
 
     await log_event(
         user_id,
