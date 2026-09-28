@@ -1406,7 +1406,7 @@ async def handle_store_toggle_active(
 
     next_value = 0 if current else 1
 
-    cursor = await db.execute(
+    result = await sqlite_backend.execute(
         """
         UPDATE sellers
         SET is_active = ?,
@@ -1429,7 +1429,7 @@ async def handle_store_toggle_active(
         ),
     )
 
-    if cursor.rowcount != 1:
+    if result.rowcount != 1:
         await callback.answer(
             "⚠️ وضعیت فروشگاه تغییر نکرد. "
             "ممکن است وضعیت قبلاً تغییر کرده باشد.",
