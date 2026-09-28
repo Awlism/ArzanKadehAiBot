@@ -88,7 +88,7 @@ async def handle_compare_list(
         )
         return
 
-    selection = get_compare_selection(
+    selection = await get_compare_selection(
         user_id
     )
 
@@ -141,7 +141,7 @@ async def handle_compare_list(
     ]
 
     if len(products) != len(selection):
-        set_compare_selection(
+        await set_compare_selection(
             user_id,
             valid_product_ids,
         )
@@ -341,7 +341,7 @@ async def handle_compare_start(
             user_id
         )
 
-    selection = get_compare_selection(
+    selection = await get_compare_selection(
         user_id
     )
 
@@ -350,7 +350,7 @@ async def handle_compare_start(
         product_id,
     )
 
-    set_compare_selection(
+    await set_compare_selection(
         user_id,
         new_selection,
     )
@@ -429,13 +429,13 @@ async def handle_compare_drop(
     if product_id is not None and product_id > 0:
         selection = [
             selected_id
-            for selected_id in get_compare_selection(
+            for selected_id in await get_compare_selection(
                 user_id
             )
             if selected_id != product_id
         ]
 
-        set_compare_selection(
+        await set_compare_selection(
             user_id,
             selection,
         )
@@ -458,7 +458,7 @@ async def handle_compare_reset(
         callback.from_user
     )
 
-    clear_compare_selection(
+    await clear_compare_selection(
         user_id
     )
 
