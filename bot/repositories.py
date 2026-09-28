@@ -937,6 +937,23 @@ async def approve_seller_claim(
             await db.conn.rollback()
             return False
 
+        await db.conn.execute(
+            """
+            UPDATE seller_claims
+            SET
+                status = 'REJECTED',
+                updated_at = ?
+            WHERE seller_id = ?
+              AND status = 'PENDING'
+              AND id != ?;
+            """,
+            (
+                now,
+                claim_row["seller_id"],
+                claim_id,
+            ),
+        )
+
         await db.conn.commit()
         return True
 
