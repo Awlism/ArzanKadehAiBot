@@ -724,7 +724,7 @@ async def create_seller_claim(
     now = now_iso()
 
     try:
-        cursor = await db.execute(
+        result = await sqlite_backend.execute(
             """
             INSERT INTO seller_claims (
                 seller_id,
@@ -743,7 +743,7 @@ async def create_seller_claim(
             ),
         )
 
-    except aiosqlite.IntegrityError:
+    except DatabaseIntegrityError:
         # Another request may have created the PENDING claim
         # between our read and insert. Re-read the canonical row
         # instead of creating a duplicate audit/claim record.
@@ -768,10 +768,10 @@ async def create_seller_claim(
 
         return int(pending["id"])
 
-    if cursor.lastrowid is None:
+    if result.lastrowid is None:
         return None
 
-    return int(cursor.lastrowid)
+    return int(result.lastrowid)
 
 
 async def approve_seller_claim(
