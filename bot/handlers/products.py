@@ -445,7 +445,7 @@ async def handle_favorite_remove(
         callback.from_user
     )
 
-    cursor = await db.execute(
+    result = await sqlite_backend.execute(
         """
         DELETE FROM favorites
         WHERE user_id = ?
@@ -457,7 +457,7 @@ async def handle_favorite_remove(
         ),
     )
 
-    if cursor.rowcount != 1:
+    if result.rowcount != 1:
         await callback.answer(
             "این محصول دیگر در علاقه‌مندی‌ها نیست.",
             show_alert=True,
@@ -473,10 +473,13 @@ async def handle_favorite_remove(
     )
 
     await callback.answer(
-        "از علاقه‌مندی‌ها حذف شد 💔"
+        "💔 از علاقه‌مندی‌ها حذف شد.",
+        show_alert=True,
     )
 
-    await _render_product_detail(callback)
+    await _render_product_detail(
+        callback,
+    )
 
 @router.callback_query(F.data.startswith("favorites:"))
 async def handle_favorites_list(
