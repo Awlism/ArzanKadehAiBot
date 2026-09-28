@@ -387,7 +387,7 @@ async def _render_seller_detail(
         )
         return
 
-    await db.execute(
+    await sqlite_backend.execute(
         """
         UPDATE sellers
         SET views = COALESCE(views, 0) + 1
