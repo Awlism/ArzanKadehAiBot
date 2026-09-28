@@ -6,6 +6,8 @@ Repository / data-access layer
 
 from __future__ import annotations
 
+import aiosqlite
+
 from typing import Any, Optional
 
 from .config import ADMIN_CHAT_ID
