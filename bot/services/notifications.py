@@ -8,6 +8,7 @@ import logging
 from typing import Optional
 
 from ..database import db
+from ..sqlite_backend import sqlite_backend
 from ..utils import now_iso
 
 logger = logging.getLogger("arzankadeh")
