@@ -2099,21 +2099,26 @@ COMPARE_INTRO_TEXT = (
 )
 
 
-_compare_sessions: dict[int, list[int]] = {}
-
-
-def get_compare_selection(
+async def get_compare_selection(
     user_id: int,
 ) -> list[int]:
-    return list(
-        _compare_sessions.get(
-            user_id,
-            [],
-        )
+    rows = await db.fetchall(
+        """
+        SELECT product_id
+        FROM compare_selections
+        WHERE user_id = ?
+        ORDER BY position ASC, id ASC;
+        """,
+        (user_id,),
     )
 
+    return [
+        int(row["product_id"])
+        for row in rows
+    ]
 
-def set_compare_selection(
+
+async def set_compare_selection(
     user_id: int,
     selection: list[int],
 ) -> None:
@@ -2131,22 +2136,87 @@ def set_compare_selection(
         if len(normalized) >= COMPARE_MAX_ITEMS:
             break
 
-    if normalized:
-        _compare_sessions[user_id] = normalized
-    else:
-        _compare_sessions.pop(
-            user_id,
-            None,
+    if db.conn is None:
+        raise RuntimeError(
+            "Database is not connected."
         )
 
+    now = now_iso()
 
-def clear_compare_selection(
+    try:
+        await db.conn.execute(
+            "BEGIN;"
+        )
+
+        await db.conn.execute(
+            """
+            DELETE FROM compare_selections
+            WHERE user_id = ?;
+            """,
+            (user_id,),
+        )
+
+        for position, product_id in enumerate(
+            normalized,
+            start=1,
+        ):
+            await db.conn.execute(
+                """
+                INSERT INTO compare_selections (
+                    user_id,
+                    product_id,
+                    position,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?);
+                """,
+                (
+                    user_id,
+                    product_id,
+                    position,
+                    now,
+                    now,
+                ),
+            )
+
+        await db.conn.commit()
+
+    except Exception:
+        await db.conn.rollback()
+        raise
+
+
+async def clear_compare_selection(
     user_id: int,
 ) -> None:
-    _compare_sessions.pop(
-        user_id,
-        None,
+    await db.execute(
+        """
+        DELETE FROM compare_selections
+        WHERE user_id = ?;
+        """,
+        (user_id,),
     )
+
+
+def compare_add(
+    selection: list[int],
+    product_id: int,
+) -> tuple[list[int], str]:
+    current = list(selection)
+
+    if product_id in current:
+        return current, "already_in_selection"
+
+    if len(current) >= COMPARE_MAX_ITEMS:
+        return current, "already_full"
+
+    current.append(product_id)
+
+    if len(current) >= COMPARE_MAX_ITEMS:
+        return current, "added_ready"
+
+    return current, "added_need_one_more"
 
 
 def compare_add(
