@@ -334,7 +334,9 @@ async def ensure_column(
 ) -> None:
     """Add a column if it does not already exist."""
 
-    identifier_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    identifier_re = re.compile(
+        r"^[A-Za-z_][A-Za-z0-9_]*$"
+    )
 
     if not identifier_re.fullmatch(table):
         raise ValueError(
@@ -463,6 +465,121 @@ async def run_seller_claim_migration() -> None:
             idx_claims_seller_user_pending_unique
         ON seller_claims(seller_id, user_id)
         WHERE status = 'PENDING';
+        """
+    )
+
+    await db.conn.commit()
+
+
+async def run_report_migration() -> None:
+    """
+    Enforce report uniqueness safely.
+
+    A user may have only one PENDING report for a seller
+    and only one PENDING report for a product.
+
+    Historical APPROVED/REJECTED reports remain untouched.
+
+    Older databases may contain duplicate PENDING reports.
+    Keep the newest report in each duplicate group before
+    creating the partial unique indexes.
+    """
+
+    seller_duplicate_rows = await db.fetchall(
+        """
+        SELECT
+            user_id,
+            seller_id,
+            COUNT(*) AS report_count
+        FROM reports
+        WHERE status = 'PENDING'
+          AND seller_id IS NOT NULL
+          AND product_id IS NULL
+        GROUP BY user_id, seller_id
+        HAVING COUNT(*) > 1;
+        """
+    )
+
+    if seller_duplicate_rows:
+        await db.conn.execute(
+            """
+            DELETE FROM reports
+            WHERE status = 'PENDING'
+              AND seller_id IS NOT NULL
+              AND product_id IS NULL
+              AND id NOT IN (
+                  SELECT MAX(id)
+                  FROM reports
+                  WHERE status = 'PENDING'
+                    AND seller_id IS NOT NULL
+                    AND product_id IS NULL
+                  GROUP BY user_id, seller_id
+              );
+            """
+        )
+
+        logger.warning(
+            "Deduplicated %d pending seller report groups.",
+            len(seller_duplicate_rows),
+        )
+
+    product_duplicate_rows = await db.fetchall(
+        """
+        SELECT
+            user_id,
+            product_id,
+            COUNT(*) AS report_count
+        FROM reports
+        WHERE status = 'PENDING'
+          AND product_id IS NOT NULL
+          AND seller_id IS NULL
+        GROUP BY user_id, product_id
+        HAVING COUNT(*) > 1;
+        """
+    )
+
+    if product_duplicate_rows:
+        await db.conn.execute(
+            """
+            DELETE FROM reports
+            WHERE status = 'PENDING'
+              AND product_id IS NOT NULL
+              AND seller_id IS NULL
+              AND id NOT IN (
+                  SELECT MAX(id)
+                  FROM reports
+                  WHERE status = 'PENDING'
+                    AND product_id IS NOT NULL
+                    AND seller_id IS NULL
+                  GROUP BY user_id, product_id
+              );
+            """
+        )
+
+        logger.warning(
+            "Deduplicated %d pending product report groups.",
+            len(product_duplicate_rows),
+        )
+
+    await db.conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS
+            idx_reports_user_seller_pending_unique
+        ON reports(user_id, seller_id)
+        WHERE status = 'PENDING'
+          AND seller_id IS NOT NULL
+          AND product_id IS NULL;
+        """
+    )
+
+    await db.conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS
+            idx_reports_user_product_pending_unique
+        ON reports(user_id, product_id)
+        WHERE status = 'PENDING'
+          AND product_id IS NOT NULL
+          AND seller_id IS NULL;
         """
     )
 
