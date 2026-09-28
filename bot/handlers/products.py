@@ -129,7 +129,9 @@ async def handle_product_detail(
         )
         return
 
-    cursor = await db.execute(
+    from ..sqlite_backend import sqlite_backend
+
+    result = await sqlite_backend.execute(
         """
         UPDATE products
         SET views = COALESCE(views, 0) + 1,
@@ -142,7 +144,7 @@ async def handle_product_detail(
         ),
     )
 
-    if cursor.rowcount != 1:
+    if result.rowcount != 1:
         await callback.answer(
             "⚠️ ثبت بازدید انجام نشد. لطفاً دوباره تلاش کن.",
             show_alert=True,
