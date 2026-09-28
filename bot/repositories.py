@@ -783,133 +783,114 @@ async def approve_seller_claim(
             "Only the configured admin can approve seller claims."
         )
 
-    if db.conn is None:
-        raise RuntimeError(
-            "Database is not connected."
-        )
-
     now = now_iso()
 
     try:
-        await db.conn.execute("BEGIN")
+        async with sqlite_backend.transaction() as transaction:
+            claim_row = await transaction.fetchone(
+                """
+                SELECT
+                    id,
+                    seller_id,
+                    user_id,
+                    status
+                FROM seller_claims
+                WHERE id = ?
+                LIMIT 1;
+                """,
+                (claim_id,),
+            )
 
-        claim_cursor = await db.conn.execute(
-            """
-            SELECT
-                id,
-                seller_id,
-                user_id,
-                status
-            FROM seller_claims
-            WHERE id = ?
-            LIMIT 1;
-            """,
-            (claim_id,),
-        )
-        claim_row = await claim_cursor.fetchone()
-        await claim_cursor.close()
+            if not claim_row:
+                return False
 
-        if not claim_row:
-            await db.conn.rollback()
-            return False
+            if claim_row["status"] != "PENDING":
+                return False
 
-        if claim_row["status"] != "PENDING":
-            await db.conn.rollback()
-            return False
+            seller_row = await transaction.fetchone(
+                """
+                SELECT
+                    id,
+                    status,
+                    owner_user_id,
+                    created_by_user_id
+                FROM sellers
+                WHERE id = ?
+                LIMIT 1;
+                """,
+                (claim_row["seller_id"],),
+            )
 
-        seller_cursor = await db.conn.execute(
-            """
-            SELECT
-                id,
-                status,
-                owner_user_id,
-                created_by_user_id
-            FROM sellers
-            WHERE id = ?
-            LIMIT 1;
-            """,
-            (claim_row["seller_id"],),
-        )
-        seller_row = await seller_cursor.fetchone()
-        await seller_cursor.close()
+            if not seller_row:
+                return False
 
-        if not seller_row:
-            await db.conn.rollback()
-            return False
+            if seller_row["status"] != "UNCLAIMED":
+                return False
 
-        if seller_row["status"] != "UNCLAIMED":
-            await db.conn.rollback()
-            return False
+            if (
+                seller_row["owner_user_id"] is not None
+                and seller_row["owner_user_id"] != claim_row["user_id"]
+            ):
+                return False
 
-        if (
-            seller_row["owner_user_id"] is not None
-            and seller_row["owner_user_id"] != claim_row["user_id"]
-        ):
-            await db.conn.rollback()
-            return False
+            claim_update = await transaction.execute(
+                """
+                UPDATE seller_claims
+                SET
+                    status = 'APPROVED',
+                    updated_at = ?
+                WHERE id = ?
+                  AND status = 'PENDING';
+                """,
+                (
+                    now,
+                    claim_id,
+                ),
+            )
 
-        claim_update = await db.conn.execute(
-            """
-            UPDATE seller_claims
-            SET
-                status = 'APPROVED',
-                updated_at = ?
-            WHERE id = ?
-              AND status = 'PENDING';
-            """,
-            (
-                now,
-                claim_id,
-            ),
-        )
+            if claim_update.rowcount != 1:
+                return False
 
-        if claim_update.rowcount != 1:
-            await db.conn.rollback()
-            return False
+            seller_update = await transaction.execute(
+                """
+                UPDATE sellers
+                SET
+                    owner_user_id = ?,
+                    status = 'CLAIMED',
+                    updated_at = ?
+                WHERE id = ?
+                  AND status = 'UNCLAIMED';
+                """,
+                (
+                    claim_row["user_id"],
+                    now,
+                    claim_row["seller_id"],
+                ),
+            )
 
-        seller_update = await db.conn.execute(
-            """
-            UPDATE sellers
-            SET
-                owner_user_id = ?,
-                status = 'CLAIMED',
-                updated_at = ?
-            WHERE id = ?
-              AND status = 'UNCLAIMED';
-            """,
-            (
-                claim_row["user_id"],
-                now,
-                claim_row["seller_id"],
-            ),
-        )
+            if seller_update.rowcount != 1:
+                return False
 
-        if seller_update.rowcount != 1:
-            await db.conn.rollback()
-            return False
+            await transaction.execute(
+                """
+                UPDATE seller_claims
+                SET
+                    status = 'REJECTED',
+                    updated_at = ?
+                WHERE seller_id = ?
+                  AND status = 'PENDING'
+                  AND id != ?;
+                """,
+                (
+                    now,
+                    claim_row["seller_id"],
+                    claim_id,
+                ),
+            )
 
-        await db.conn.execute(
-            """
-            UPDATE seller_claims
-            SET
-                status = 'REJECTED',
-                updated_at = ?
-            WHERE seller_id = ?
-              AND status = 'PENDING'
-              AND id != ?;
-            """,
-            (
-                now,
-                claim_row["seller_id"],
-                claim_id,
-            ),
-        )
-
-        await db.conn.commit()
-        return True
+            return True
 
     except Exception:
-        await db.conn.rollback()
         raise
 
 
