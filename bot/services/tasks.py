@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from ..database import db
+from ..sqlite_backend import sqlite_backend
 from ..utils import now_iso
 from .backups import create_database_backup
 from .notifications import notify_user
@@ -209,7 +210,7 @@ async def expire_overdue_ads() -> int:
         expired_count = 0
 
         for row in rows:
-            cursor = await db.execute(
+            cursor = await sqlite_backend.execute(
                 """
                 UPDATE requests
                 SET status = 'EXPIRED',
