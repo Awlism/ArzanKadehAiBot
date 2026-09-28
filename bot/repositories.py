@@ -367,7 +367,7 @@ async def create_product_record(
         "?" for _ in columns
     )
 
-    cursor = await db.execute(
+    result = await sqlite_backend.execute(
         f"""
         INSERT INTO products (
             {", ".join(columns)}
@@ -377,12 +377,12 @@ async def create_product_record(
         tuple(values),
     )
 
-    if cursor.lastrowid is None:
+    if result.lastrowid is None:
         raise RuntimeError(
             "Failed to create product."
         )
 
-    return int(cursor.lastrowid)
+    return int(result.lastrowid)
 
 
 async def delete_product_record(
