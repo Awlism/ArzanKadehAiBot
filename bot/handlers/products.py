@@ -7,7 +7,6 @@ Product handlers
 from html import escape
 from typing import Optional
 
-import aiosqlite
 from aiogram import F, Bot, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import StateFilter
