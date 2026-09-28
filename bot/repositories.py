@@ -17,6 +17,7 @@ from .constants import (
 )
 from .database import db
 from .sqlite_backend import sqlite_backend
+from .database_backend import DatabaseIntegrityError
 from .utils import now_iso
 
 
