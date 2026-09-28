@@ -204,7 +204,7 @@ async def handle_admin_request_decision(
             timespec="seconds"
         )
 
-        cursor = await db.execute(
+        cursor = await sqlite_backend.execute(
             """
             UPDATE requests
             SET status = ?,
@@ -224,7 +224,7 @@ async def handle_admin_request_decision(
     else:
         new_status = "APPROVED"
 
-        cursor = await db.execute(
+        cursor = await sqlite_backend.execute(
             """
             UPDATE requests
             SET status = ?, updated_at = ?
@@ -1468,7 +1468,7 @@ async def handle_admin_ad_set_price_value(
         )
         return
 
-    cursor = await db.execute(
+        cursor = await sqlite_backend.execute(
         """
         UPDATE requests
         SET ad_price = ?,
@@ -1654,7 +1654,7 @@ async def handle_admin_ad_set_duration_value(
         )
         return
 
-    cursor = await db.execute(
+        cursor = await sqlite_backend.execute(
         """
         UPDATE requests
         SET ad_duration_days = ?,
@@ -1716,7 +1716,7 @@ async def handle_admin_ad_set_duration_value(
             timespec="seconds"
         )
 
-        activation_cursor = await db.execute(
+        activation_cursor = await sqlite_backend.execute(
             """
             UPDATE requests
             SET status = 'ACTIVE',
@@ -1883,7 +1883,7 @@ async def handle_admin_ad_set_placement_value(
         )
         return
 
-    cursor = await db.execute(
+        cursor = await sqlite_backend.execute(
         """
         UPDATE requests
         SET ad_placement = ?,
