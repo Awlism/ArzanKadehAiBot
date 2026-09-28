@@ -27,10 +27,6 @@ from typing import (
 )
 
 
-# ============================================================================
-# TYPES
-# ============================================================================
-
 Params: TypeAlias = (
     Sequence[Any]
     | Mapping[str, Any]
@@ -38,47 +34,28 @@ Params: TypeAlias = (
 )
 
 
+class DatabaseIntegrityError(Exception):
+    """
+    Backend-neutral integrity constraint error.
+
+    Concrete database backends should translate their native
+    integrity/constraint exception into this exception so that
+    repository/business logic does not depend on SQLite-specific
+    exception types.
+    """
+
+
 @dataclass(slots=True, frozen=True)
 class DatabaseResult:
-    """
-    Normalized result for database write operations.
-
-    SQLite can provide rowcount and lastrowid through its cursor.
-    D1 has different response objects, so repositories should depend
-    on this normalized representation instead of a SQLite cursor.
-    """
-
     rowcount: int = 0
     lastrowid: Optional[int] = None
 
 
-# ============================================================================
-# DATABASE BACKEND CONTRACT
-# ============================================================================
-
-
 class DatabaseBackend(Protocol):
-    """
-    Common async database contract.
-
-    Implementations:
-        - Local SQLite backend
-        - Cloudflare D1 backend
-
-    The application/repository layer must depend on this contract
-    rather than on a concrete database driver.
-    """
-
     async def connect(self) -> None:
-        """
-        Open or initialize the backend connection/resource.
-        """
         ...
 
     async def close(self) -> None:
-        """
-        Release backend resources.
-        """
         ...
 
     async def execute(
@@ -86,12 +63,6 @@ class DatabaseBackend(Protocol):
         query: str,
         params: Params = None,
     ) -> DatabaseResult:
-        """
-        Execute one write statement.
-
-        Returns normalized write metadata instead of a driver-specific
-        cursor object.
-        """
         ...
 
     async def fetchone(
@@ -99,9 +70,6 @@ class DatabaseBackend(Protocol):
         query: str,
         params: Params = None,
     ) -> Optional[dict[str, Any]]:
-        """
-        Execute a query and return one row, or None.
-        """
         ...
 
     async def fetchall(
@@ -109,9 +77,6 @@ class DatabaseBackend(Protocol):
         query: str,
         params: Params = None,
     ) -> list[dict[str, Any]]:
-        """
-        Execute a query and return all rows.
-        """
         ...
 
     async def executemany(
@@ -119,42 +84,16 @@ class DatabaseBackend(Protocol):
         query: str,
         parameters: Iterable[Params],
     ) -> DatabaseResult:
-        """
-        Execute one statement against multiple parameter sets.
-        """
         ...
 
     def transaction(
         self,
     ) -> AsyncContextManager["DatabaseTransaction"]:
-        """
-        Create a transaction context.
-
-        The concrete backend decides how the transaction is implemented.
-
-        SQLite may use BEGIN/COMMIT/ROLLBACK.
-        D1 may use batch/atomic operations where appropriate.
-        """
         ...
 
 
-# ============================================================================
-# TRANSACTION CONTRACT
-# ============================================================================
-
-
 class DatabaseTransaction(Protocol):
-    """
-    Common transaction contract.
-
-    Repositories should use this abstraction for operations that must
-    succeed or fail as one logical unit.
-    """
-
     async def __aenter__(self) -> "DatabaseTransaction":
-        """
-        Start/enter the transaction.
-        """
         ...
 
     async def __aexit__(
@@ -163,10 +102,6 @@ class DatabaseTransaction(Protocol):
         exc_value: Any,
         traceback: Any,
     ) -> Optional[bool]:
-        """
-        Commit on success or roll back on failure according to
-        the concrete backend.
-        """
         ...
 
     async def execute(
@@ -174,9 +109,6 @@ class DatabaseTransaction(Protocol):
         query: str,
         params: Params = None,
     ) -> DatabaseResult:
-        """
-        Execute a write statement inside the transaction.
-        """
         ...
 
     async def fetchone(
@@ -184,9 +116,6 @@ class DatabaseTransaction(Protocol):
         query: str,
         params: Params = None,
     ) -> Optional[dict[str, Any]]:
-        """
-        Fetch one row inside the transaction.
-        """
         ...
 
     async def fetchall(
@@ -194,9 +123,6 @@ class DatabaseTransaction(Protocol):
         query: str,
         params: Params = None,
     ) -> list[dict[str, Any]]:
-        """
-        Fetch all rows inside the transaction.
-        """
         ...
 
     async def executemany(
@@ -204,30 +130,12 @@ class DatabaseTransaction(Protocol):
         query: str,
         parameters: Iterable[Params],
     ) -> DatabaseResult:
-        """
-        Execute one statement against multiple parameter sets
-        inside the transaction.
-        """
         ...
-
-
-# ============================================================================
-# TYPE CHECKING HELPERS
-# ============================================================================
 
 
 def normalize_params(
     params: Params,
 ) -> tuple[Any, ...] | dict[str, Any]:
-    """
-    Normalize supported parameter containers.
-
-    This helper intentionally does not perform SQL interpolation.
-
-    Positional parameters remain positional.
-    Mapping parameters remain mappings.
-    """
-
     if params is None:
         return ()
 
