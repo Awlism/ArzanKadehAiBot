@@ -5,7 +5,7 @@ Tests for:
 - Roles: user_has_any_seller / get_active_mode / set_active_mode
 - Seller favorites as separate storage from product favorites
 - Compare selection limits and duplicate handling
-- Per-user compare sessions
+- Per-user persisted compare selections
 - Persisted compare-intro state
 
 Runs against real SQLite via tests/_fakedb.py without importing the
@@ -39,7 +39,6 @@ NAMES = [
     "COMPARE_MAX_ITEMS",
     "COMPARE_INTRO_TEXT",
     "compare_add",
-    "_compare_sessions",
     "get_compare_selection",
     "set_compare_selection",
     "clear_compare_selection",
@@ -454,7 +453,11 @@ class RolesFavoritesCompareTests(unittest.TestCase):
         )
 
     def test_compare_add_third_item_respects_configured_limit(self):
-        current = list(range(self.ns["COMPARE_MAX_ITEMS"]))
+        current = list(
+            range(
+                self.ns["COMPARE_MAX_ITEMS"]
+            )
+        )
 
         selection, outcome = self.ns["compare_add"](
             current,
@@ -510,51 +513,137 @@ class RolesFavoritesCompareTests(unittest.TestCase):
         )
 
     # ------------------------------------------------------------
-    # Compare session
+    # Persisted Compare selection
     # ------------------------------------------------------------
 
     def test_compare_session_get_set_clear(self):
         self.assertEqual(
-            self.ns["get_compare_selection"](2),
+            run(
+                self.ns["get_compare_selection"](2)
+            ),
             [],
         )
 
-        self.ns["set_compare_selection"](
-            2,
-            [100, 200],
+        run(
+            self.ns["set_compare_selection"](
+                2,
+                [100, 200],
+            )
         )
 
         self.assertEqual(
-            self.ns["get_compare_selection"](2),
+            run(
+                self.ns["get_compare_selection"](2)
+            ),
             [100, 200],
         )
 
-        self.ns["clear_compare_selection"](2)
+        run(
+            self.ns["clear_compare_selection"](2)
+        )
 
         self.assertEqual(
-            self.ns["get_compare_selection"](2),
+            run(
+                self.ns["get_compare_selection"](2)
+            ),
             [],
         )
 
     def test_compare_session_isolated_per_user(self):
-        self.ns["set_compare_selection"](
-            1,
-            [100],
+        run(
+            self.ns["set_compare_selection"](
+                1,
+                [100],
+            )
         )
 
-        self.ns["set_compare_selection"](
-            2,
-            [200],
+        run(
+            self.ns["set_compare_selection"](
+                2,
+                [200],
+            )
         )
 
         self.assertEqual(
-            self.ns["get_compare_selection"](1),
+            run(
+                self.ns["get_compare_selection"](1)
+            ),
             [100],
         )
 
         self.assertEqual(
-            self.ns["get_compare_selection"](2),
+            run(
+                self.ns["get_compare_selection"](2)
+            ),
             [200],
+        )
+
+    def test_compare_session_replaces_previous_selection(self):
+        run(
+            self.ns["set_compare_selection"](
+                2,
+                [100, 200],
+            )
+        )
+
+        run(
+            self.ns["set_compare_selection"](
+                2,
+                [200],
+            )
+        )
+
+        self.assertEqual(
+            run(
+                self.ns["get_compare_selection"](2)
+            ),
+            [200],
+        )
+
+    def test_compare_session_normalizes_duplicates_and_invalid_ids(self):
+        run(
+            self.ns["set_compare_selection"](
+                2,
+                [0, -1, 100, 100, 200, 200],
+            )
+        )
+
+        self.assertEqual(
+            run(
+                self.ns["get_compare_selection"](2)
+            ),
+            [100, 200],
+        )
+
+    def test_compare_session_respects_max_items(self):
+        selection = list(
+            range(
+                1,
+                self.ns["COMPARE_MAX_ITEMS"] + 3,
+            )
+        )
+
+        run(
+            self.ns["set_compare_selection"](
+                2,
+                selection,
+            )
+        )
+
+        stored = run(
+            self.ns["get_compare_selection"](2)
+        )
+
+        self.assertEqual(
+            len(stored),
+            self.ns["COMPARE_MAX_ITEMS"],
+        )
+
+        self.assertEqual(
+            stored,
+            selection[
+                :self.ns["COMPARE_MAX_ITEMS"]
+            ],
         )
 
     # ------------------------------------------------------------
