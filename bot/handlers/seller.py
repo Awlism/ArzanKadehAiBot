@@ -2898,7 +2898,7 @@ async def handle_product_field_edit_value(
         )
         return
 
-    cursor = await db.execute(
+    result = await sqlite_backend.execute(
         query,
         (
             value,
@@ -2907,7 +2907,7 @@ async def handle_product_field_edit_value(
         ),
     )
 
-    if cursor.rowcount != 1:
+    if result.rowcount != 1:
         await message.answer(
             "⚠️ تغییر محصول انجام نشد. "
             "ممکن است محصول قبلاً تغییر کرده یا حذف شده باشد."
