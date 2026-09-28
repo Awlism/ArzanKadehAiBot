@@ -3104,7 +3104,7 @@ async def handle_product_stock_set(
         )
         return
 
-    cursor = await db.execute(
+    result = await sqlite_backend.execute(
         """
         UPDATE products
         SET stock_status = ?,
@@ -3118,7 +3118,7 @@ async def handle_product_stock_set(
         ),
     )
 
-    if cursor.rowcount != 1:
+    if result.rowcount != 1:
         await callback.answer(
             "⚠️ وضعیت موجودی تغییر نکرد. "
             "ممکن است محصول قبلاً تغییر کرده یا حذف شده باشد.",
