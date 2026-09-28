@@ -42,6 +42,7 @@ EXPECTED_TABLES = {
     "requests",
     "audit_log",
     "orders",
+    "compare_selections",
 }
 
 
@@ -89,6 +90,7 @@ EXPECTED_INDEXES = {
     "idx_orders_seller",
     "idx_orders_product",
     "idx_orders_status",
+    "idx_compare_selections_user_position",
 }
 
 
@@ -540,7 +542,7 @@ class SchemaAndSeedTests(unittest.TestCase):
                     created_at
                 )
                 VALUES (1, 1, 't');
-                """
+            """
             )
             conn.commit()
 
