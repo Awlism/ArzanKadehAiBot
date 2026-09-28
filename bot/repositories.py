@@ -890,13 +890,6 @@ async def approve_seller_claim(
             await db.conn.rollback()
             return False
 
-        if (
-            seller_row["created_by_user_id"] is not None
-            and seller_row["created_by_user_id"] != claim_row["user_id"]
-        ):
-            await db.conn.rollback()
-            return False
-
         claim_update = await db.conn.execute(
             """
             UPDATE seller_claims
