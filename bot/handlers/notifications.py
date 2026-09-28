@@ -12,6 +12,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from ..database import db
+from ..sqlite_backend import sqlite_backend
 from ..keyboards import kb_add_back
 from ..utils import ensure_user, parse_int, safe_edit
 
