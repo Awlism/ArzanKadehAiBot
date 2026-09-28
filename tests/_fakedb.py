@@ -10,6 +10,7 @@ application code under test:
 - execute()
 - conn.execute()
 - conn.commit()
+- conn.rollback()
 
 The implementation uses a real in-memory SQLite database, allowing tests
 to exercise async application functions against real SQL without requiring
@@ -47,17 +48,23 @@ class _FakeConn:
     Awaitable-shaped wrapper around a plain sqlite3.Connection.
 
     Used by modular database helpers that access ``db.conn`` directly,
-    including schema inspection and column migration helpers.
+    including schema inspection, column migration helpers, and
+    transactional repository operations.
     """
 
     def __init__(self, raw_conn: sqlite3.Connection):
         self._raw = raw_conn
 
     async def execute(self, query, params=()):
-        return _FakeCursor(self._raw.execute(query, params))
+        return _FakeCursor(
+            self._raw.execute(query, params)
+        )
 
     async def commit(self):
         self._raw.commit()
+
+    async def rollback(self):
+        self._raw.rollback()
 
 
 class FakeDB:
