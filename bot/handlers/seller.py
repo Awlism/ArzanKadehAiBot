@@ -1910,7 +1910,7 @@ async def handle_shop_edit_city_pick(
         callback.from_user
     )
 
-    cursor = await db.execute(
+    result = await sqlite_backend.execute(
         """
         UPDATE sellers
         SET city_id = ?,
@@ -1924,7 +1924,7 @@ async def handle_shop_edit_city_pick(
         ),
     )
 
-    if cursor.rowcount != 1:
+    if result.rowcount != 1:
         await callback.answer(
             "⚠️ تغییر شهر فروشگاه انجام نشد. "
             "ممکن است فروشگاه قبلاً تغییر کرده یا حذف شده باشد.",
