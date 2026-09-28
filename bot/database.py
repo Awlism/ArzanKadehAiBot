@@ -302,6 +302,20 @@ SCHEMA_STATEMENTS = [
         FOREIGN KEY (product_id) REFERENCES products(id)
     );
     """,
+    """
+    CREATE TABLE IF NOT EXISTS compare_selections (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        product_id INTEGER NOT NULL,
+        position INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(user_id, product_id),
+        UNIQUE(user_id, position),
+        FOREIGN KEY (user_id) REFERENCES users(id),
+        FOREIGN KEY (product_id) REFERENCES products(id)
+    );
+    """,
 ]
 
 
@@ -713,6 +727,7 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_orders_seller ON orders(seller_id);",
     "CREATE INDEX IF NOT EXISTS idx_orders_product ON orders(product_id);",
     "CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);",
+    "CREATE INDEX IF NOT EXISTS idx_compare_selections_user_position ON compare_selections(user_id, position);",
 ]
 
 
