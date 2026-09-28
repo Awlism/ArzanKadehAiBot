@@ -168,16 +168,22 @@ async def handle_global_error(event) -> bool:
 # DISPATCHER
 # ======================================================================
 
-def create_dispatcher() -> Dispatcher:
+def create_dispatcher(
+    storage=None,
+) -> Dispatcher:
     """
     Create and configure the application's Dispatcher.
 
     Router registration order is intentional:
     specific handlers are registered before generic fallback handlers.
+
+    Storage is injectable so the local polling application can use
+    MemoryStorage while a persistent Cloudflare-compatible storage
+    can be provided later.
     """
 
     dp = Dispatcher(
-        storage=MemoryStorage(),
+        storage=storage or MemoryStorage(),
     )
 
     # --------------------------------------------------------------
