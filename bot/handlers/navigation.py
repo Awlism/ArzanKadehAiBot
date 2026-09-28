@@ -151,11 +151,7 @@ async def handle_role_pick(
         )
         return
 
-    # ------------------------------------------------------------------
-    # Authorization MUST happen before role_chosen is persisted.
-    # Otherwise an unauthorized admin selection could mark the user as
-    # having completed role selection even though access was denied.
-    # ------------------------------------------------------------------
+    # Authorization MUST happen before the role is persisted.
     if role == "admin" and not is_admin_telegram_id(
         callback.from_user.id
     ):
@@ -169,25 +165,19 @@ async def handle_role_pick(
         callback.from_user
     )
 
-    await db.execute(
-        """
-        UPDATE users
-        SET role_chosen = 1,
-            updated_at = ?
-        WHERE id = ?;
-        """,
-        (
-            now_iso(),
-            user_id,
-        ),
+    updated = await set_active_mode(
+        user_id,
+        role,
     )
 
-    if role == "buyer":
-        await set_active_mode(
-            user_id,
-            "buyer",
+    if not updated:
+        await callback.answer(
+            "⚠️ ذخیره نقش انجام نشد. لطفاً دوباره تلاش کن.",
+            show_alert=True,
         )
+        return
 
+    if role == "buyer":
         await send_main_menu(
             callback
         )
@@ -196,11 +186,6 @@ async def handle_role_pick(
         return
 
     if role == "admin":
-        await set_active_mode(
-            user_id,
-            "admin",
-        )
-
         await _render_admin_home(
             callback
         )
@@ -209,11 +194,6 @@ async def handle_role_pick(
         return
 
     # role == "seller"
-
-    await set_active_mode(
-        user_id,
-        "seller",
-    )
 
     await _render_seller_panel(
         callback,
