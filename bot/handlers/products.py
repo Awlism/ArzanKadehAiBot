@@ -885,7 +885,7 @@ async def handle_review_text(
             return
 
     else:
-        cursor = await db.execute(
+        result = await sqlite_backend.execute(
             """
             UPDATE products
             SET
@@ -910,7 +910,7 @@ async def handle_review_text(
             ),
         )
 
-        if cursor.rowcount != 1:
+        if result.rowcount != 1:
             await message.answer(
                 "⚠️ نظر شما ثبت شد، اما به‌روزرسانی امتیاز محصول انجام نشد. "
                 "لطفاً بعداً دوباره بررسی کن."
