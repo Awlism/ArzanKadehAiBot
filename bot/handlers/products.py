@@ -89,7 +89,76 @@ async def handle_product_detail(
     state: FSMContext,
 ) -> None:
     await state.clear()
-    await _render_product_detail(callback)
+
+    parts = callback.data.split(":", 1)
+
+    product_id = (
+        parse_int(parts[1])
+        if len(parts) > 1
+        else None
+    )
+
+    if product_id is None or product_id < 1:
+        await callback.answer(
+            "⚠️ شناسه نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    user_id = await ensure_user(
+        callback.from_user
+    )
+
+    product = await db.fetchone(
+        """
+        SELECT
+            p.id
+        FROM products p
+        JOIN sellers s
+          ON s.id = p.seller_id
+        WHERE p.id = ?
+          AND COALESCE(s.is_active, 1) = 1;
+        """,
+        (product_id,),
+    )
+
+    if not product:
+        await callback.answer(
+            "⚠️ این محصول یافت نشد.",
+            show_alert=True,
+        )
+        return
+
+    cursor = await db.execute(
+        """
+        UPDATE products
+        SET views = COALESCE(views, 0) + 1,
+            updated_at = ?
+        WHERE id = ?;
+        """,
+        (
+            now_iso(),
+            product_id,
+        ),
+    )
+
+    if cursor.rowcount != 1:
+        await callback.answer(
+            "⚠️ ثبت بازدید انجام نشد. لطفاً دوباره تلاش کن.",
+            show_alert=True,
+        )
+        return
+
+    await log_event(
+        user_id,
+        "view_product",
+        "product",
+        product_id,
+    )
+
+    await _render_product_detail(
+        callback,
+    )
 
 
 async def _render_product_detail(
@@ -138,26 +207,6 @@ async def _render_product_detail(
             show_alert=True,
         )
         return
-
-    await db.execute(
-        """
-        UPDATE products
-        SET views = COALESCE(views, 0) + 1,
-            updated_at = ?
-        WHERE id = ?;
-        """,
-        (
-            now_iso(),
-            product_id,
-        ),
-    )
-
-    await log_event(
-        user_id,
-        "view_product",
-        "product",
-        product_id,
-    )
 
     is_favorite = await db.fetchone(
         """
@@ -273,7 +322,6 @@ async def _render_product_detail(
     )
 
     await callback.answer()
-
 
 # ======================================================================
 # FAVORITES
