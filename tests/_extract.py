@@ -27,6 +27,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MODULE_PATHS = {
     "constants": PROJECT_ROOT / "bot" / "constants.py",
     "database": PROJECT_ROOT / "bot" / "database.py",
+    "database_backend": PROJECT_ROOT / "bot" / "database_backend.py",
+    "sqlite_backend": PROJECT_ROOT / "bot" / "sqlite_backend.py",
     "repositories": PROJECT_ROOT / "bot" / "repositories.py",
     "utils": PROJECT_ROOT / "bot" / "utils.py",
     "search": PROJECT_ROOT / "bot" / "handlers" / "search.py",
@@ -53,6 +55,161 @@ SAFE_GLOBALS = {
     "logging": logging,
     "__name__": "tests._extract",
 }
+
+
+class _ExtractedTransaction:
+    """
+    Async context-manager adapter for the extracted test database.
+
+    The wrapped database object is resolved dynamically from the extraction
+    namespace so tests can replace ``ns["db"]`` with FakeDB after extraction.
+    """
+
+    def __init__(self, namespace: dict):
+        self._namespace = namespace
+
+    @property
+    def _db(self):
+        return self._namespace["db"]
+
+    async def __aenter__(self):
+        await self._db.conn.execute(
+            "BEGIN;"
+        )
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type,
+        exc,
+        tb,
+    ):
+        if exc_type is None:
+            await self._db.conn.commit()
+        else:
+            await self._db.conn.rollback()
+
+        return False
+
+    async def execute(
+        self,
+        query,
+        params=(),
+    ):
+        return await self._db.conn.execute(
+            query,
+            params,
+        )
+
+    async def fetchone(
+        self,
+        query,
+        params=(),
+    ):
+        return await self._db.fetchone(
+            query,
+            params,
+        )
+
+    async def fetchall(
+        self,
+        query,
+        params=(),
+    ):
+        return await self._db.fetchall(
+            query,
+            params,
+        )
+
+    async def executemany(
+        self,
+        query,
+        parameters,
+    ):
+        return await self._db.conn.executemany(
+            query,
+            parameters,
+        )
+
+
+class _ExtractedSQLiteBackend:
+    """
+    Test-only stand-in for ``sqlite_backend``.
+
+    It intentionally delegates to the database object stored in the
+    extraction namespace instead of importing the production SQLite backend.
+    """
+
+    def __init__(self, namespace: dict):
+        self._namespace = namespace
+
+    @property
+    def _db(self):
+        return self._namespace["db"]
+
+    async def execute(
+        self,
+        query,
+        params=(),
+    ):
+        return await self._db.execute(
+            query,
+            params,
+        )
+
+    async def fetchone(
+        self,
+        query,
+        params=(),
+    ):
+        return await self._db.fetchone(
+            query,
+            params,
+        )
+
+    async def fetchall(
+        self,
+        query,
+        params=(),
+    ):
+        return await self._db.fetchall(
+            query,
+            params,
+        )
+
+    async def executemany(
+        self,
+        query,
+        parameters,
+    ):
+        return await self._db.conn.executemany(
+            query,
+            parameters,
+        )
+
+    def transaction(
+        self,
+        *,
+        immediate: bool = False,
+    ):
+        if immediate:
+            return _ExtractedTransactionImmediate(
+                self._namespace
+            )
+
+        return _ExtractedTransaction(
+            self._namespace
+        )
+
+
+class _ExtractedTransactionImmediate(_ExtractedTransaction):
+    """Transaction adapter that preserves BEGIN IMMEDIATE semantics."""
+
+    async def __aenter__(self):
+        await self._db.conn.execute(
+            "BEGIN IMMEDIATE;"
+        )
+        return self
 
 
 NAME_MODULES = {
@@ -314,6 +471,18 @@ def _module_imports(
         elif module.endswith(".database") or module == "database":
             source_module = "database"
 
+        elif (
+            module.endswith(".database_backend")
+            or module == "database_backend"
+        ):
+            source_module = "database_backend"
+
+        elif (
+            module.endswith(".sqlite_backend")
+            or module == "sqlite_backend"
+        ):
+            source_module = "sqlite_backend"
+
         elif module.endswith(".repositories") or module == "repositories":
             source_module = "repositories"
 
@@ -401,6 +570,16 @@ def _extract_from_module(
 
     visiting.add(key)
 
+    if (
+        module_name == "sqlite_backend"
+        and name == "sqlite_backend"
+    ):
+        namespace["sqlite_backend"] = _ExtractedSQLiteBackend(
+            namespace
+        )
+        visiting.remove(key)
+        return True
+
     nodes = _top_level_nodes(module_name)
     node = nodes.get(name)
 
@@ -425,6 +604,15 @@ def _extract_from_module(
         source_module, source_name = imported
 
         if referenced_name in namespace:
+            continue
+
+        if (
+            source_module == "sqlite_backend"
+            and source_name == "sqlite_backend"
+        ):
+            namespace[referenced_name] = _ExtractedSQLiteBackend(
+                namespace
+            )
             continue
 
         if _extract_from_module(
