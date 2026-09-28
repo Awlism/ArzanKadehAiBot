@@ -4,6 +4,7 @@ ArzanKadeh AI
 Advertising handlers
 """
 
+import logging
 from html import escape
 from typing import Optional
 
@@ -31,6 +32,8 @@ from ..utils import (
     website_url,
 )
 
+
+logger = logging.getLogger("arzankadeh")
 
 router = Router(name="ads")
 
@@ -863,7 +866,7 @@ async def _finish_public_ad(
 
         return
 
-    await db.execute(
+    cursor = await db.execute(
         """
         UPDATE requests
         SET ad_kind = ?,
@@ -883,6 +886,32 @@ async def _finish_public_ad(
             request_id,
         ),
     )
+
+    if cursor.rowcount != 1:
+        logger.error(
+            "Failed to update general ad request %s "
+            "after creation for user %s.",
+            request_id,
+            user_id,
+        )
+
+        text = (
+            "⚠️ اطلاعات تبلیغ کامل ذخیره نشد. "
+            "لطفاً دوباره تلاش کن."
+        )
+
+        if callback:
+            await safe_edit(
+                callback,
+                text,
+                InlineKeyboardBuilder().as_markup(),
+            )
+            await callback.answer()
+
+        elif message:
+            await message.answer(text)
+
+        return
 
     await log_audit(
         user_id,
