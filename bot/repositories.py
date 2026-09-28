@@ -2119,54 +2119,43 @@ async def set_compare_selection(
         if len(normalized) >= COMPARE_MAX_ITEMS:
             break
 
-    if db.conn is None:
-        raise RuntimeError(
-            "Database is not connected."
-        )
-
     now = now_iso()
 
     try:
-        await db.conn.execute(
-            "BEGIN;"
-        )
-
-        await db.conn.execute(
-            """
-            DELETE FROM compare_selections
-            WHERE user_id = ?;
-            """,
-            (user_id,),
-        )
-
-        for position, product_id in enumerate(
-            normalized,
-            start=1,
-        ):
-            await db.conn.execute(
+        async with sqlite_backend.transaction() as transaction:
+            await transaction.execute(
                 """
-                INSERT INTO compare_selections (
-                    user_id,
-                    product_id,
-                    position,
-                    created_at,
-                    updated_at
-                )
-                VALUES (?, ?, ?, ?, ?);
+                DELETE FROM compare_selections
+                WHERE user_id = ?;
                 """,
-                (
-                    user_id,
-                    product_id,
-                    position,
-                    now,
-                    now,
-                ),
+                (user_id,),
             )
 
-        await db.conn.commit()
+            for position, product_id in enumerate(
+                normalized,
+                start=1,
+            ):
+                await transaction.execute(
+                    """
+                    INSERT INTO compare_selections (
+                        user_id,
+                        product_id,
+                        position,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?);
+                    """,
+                    (
+                        user_id,
+                        product_id,
+                        position,
+                        now,
+                        now,
+                    ),
+                )
 
     except Exception:
-        await db.conn.rollback()
         raise
 
 
