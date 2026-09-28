@@ -1153,6 +1153,30 @@ async def handle_claim(
         )
         return
 
+    existing_pending = await db.fetchone(
+        """
+        SELECT id
+        FROM seller_claims
+        WHERE seller_id = ?
+          AND user_id = ?
+          AND status = 'PENDING'
+        ORDER BY id DESC
+        LIMIT 1;
+        """,
+        (
+            seller_id,
+            user_id,
+        ),
+    )
+
+    if existing_pending is not None:
+        await callback.answer(
+            "ℹ️ درخواست مالکیت شما هنوز در حال "
+            "بررسی است.",
+            show_alert=True,
+        )
+        return
+
     claim_id = await create_seller_claim(
         seller_id,
         user_id,
