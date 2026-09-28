@@ -702,8 +702,8 @@ async def create_seller_claim(
     - Existing PENDING claim returns its existing id.
     - Existing REJECTED claim does not block a new claim.
     - Existing APPROVED claim blocks a new claim.
-    - Database-level partial uniqueness allows only one PENDING
-      claim per seller/user pair while preserving rejected history.
+    - Database-level partial uniqueness prevents duplicate
+      PENDING claims for the same seller/user pair.
     """
 
     seller = await db.fetchone(
@@ -765,24 +765,50 @@ async def create_seller_claim(
 
     now = now_iso()
 
-    cursor = await db.execute(
-        """
-        INSERT INTO seller_claims (
-            seller_id,
-            user_id,
-            status,
-            created_at,
-            updated_at
+    try:
+        cursor = await db.execute(
+            """
+            INSERT INTO seller_claims (
+                seller_id,
+                user_id,
+                status,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, 'PENDING', ?, ?);
+            """,
+            (
+                seller_id,
+                user_id,
+                now,
+                now,
+            ),
         )
-        VALUES (?, ?, 'PENDING', ?, ?);
-        """,
-        (
-            seller_id,
-            user_id,
-            now,
-            now,
-        ),
-    )
+
+    except aiosqlite.IntegrityError:
+        # Another request may have created the PENDING claim
+        # between our read and insert. Re-read the canonical row
+        # instead of creating a duplicate audit/claim record.
+        pending = await db.fetchone(
+            """
+            SELECT id
+            FROM seller_claims
+            WHERE seller_id = ?
+              AND user_id = ?
+              AND status = 'PENDING'
+            ORDER BY id DESC
+            LIMIT 1;
+            """,
+            (
+                seller_id,
+                user_id,
+            ),
+        )
+
+        if pending is None:
+            return None
+
+        return int(pending["id"])
 
     if cursor.lastrowid is None:
         return None
