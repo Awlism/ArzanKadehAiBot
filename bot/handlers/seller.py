@@ -718,7 +718,7 @@ async def handle_seller_favorite_remove(
         )
         return
 
-    cursor = await db.execute(
+    result = await sqlite_backend.execute(
         """
         DELETE FROM seller_favorites
         WHERE user_id = ?
