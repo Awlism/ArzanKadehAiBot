@@ -29,6 +29,8 @@ from ..constants import (
     SHOP_UPDATE_QUERIES,
 )
 from ..database import db
+from ..database_backend import DatabaseIntegrityError
+from ..sqlite_backend import sqlite_backend
 from ..keyboards import kb_add_back, kb_pagination_row
 from ..repositories import (
     create_product_record,
