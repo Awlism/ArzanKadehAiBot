@@ -38,7 +38,6 @@ async def get_user(
     )
 
 
-
 async def update_user_role(
     user_id: int,
     role: str,
@@ -46,7 +45,7 @@ async def update_user_role(
     if role not in VALID_MODES:
         return False
 
-    cursor = await db.execute(
+    cursor = await sqlite_backend.execute(
         """
         UPDATE users
         SET active_mode = ?,
@@ -132,7 +131,7 @@ async def set_active_mode(
             "Admin mode is restricted to the configured admin user."
         )
 
-    cursor = await db.execute(
+    cursor = await sqlite_backend.execute(
         """
         UPDATE users
         SET active_mode = ?,
@@ -390,7 +389,7 @@ async def delete_product_record(
     if product_id < 1:
         return False
 
-    cursor = await db.execute(
+    cursor = await sqlite_backend.execute(
         """
         DELETE FROM products
         WHERE id = ?;
@@ -404,7 +403,7 @@ async def delete_product_record(
 async def increment_product_views(
     product_id: int,
 ) -> bool:
-    await db.execute(
+    await sqlite_backend.execute(
         """
         UPDATE products
         SET views = COALESCE(views, 0) + 1,
@@ -742,9 +741,6 @@ async def create_seller_claim(
         )
 
     except DatabaseIntegrityError:
-        # Another request may have created the PENDING claim
-        # between our read and insert. Re-read the canonical row
-        # instead of creating a duplicate audit/claim record.
         pending = await db.fetchone(
             """
             SELECT id
@@ -903,7 +899,7 @@ async def reject_seller_claim(
 
     now = now_iso()
 
-    cursor = await db.execute(
+    cursor = await sqlite_backend.execute(
         """
         UPDATE seller_claims
         SET
@@ -951,7 +947,7 @@ async def add_favorite(
     user_id: int,
     product_id: int,
 ) -> bool:
-    await db.execute(
+    await sqlite_backend.execute(
         """
         INSERT OR IGNORE INTO favorites (
             user_id,
@@ -974,7 +970,7 @@ async def remove_favorite(
     user_id: int,
     product_id: int,
 ) -> bool:
-    await db.execute(
+    await sqlite_backend.execute(
         """
         DELETE FROM favorites
         WHERE user_id = ?
@@ -1048,7 +1044,7 @@ async def toggle_seller_favorite(
     )
 
     if existing:
-        cursor = await db.execute(
+        cursor = await sqlite_backend.execute(
             """
             DELETE FROM seller_favorites
             WHERE user_id = ?
@@ -1062,7 +1058,7 @@ async def toggle_seller_favorite(
 
         return cursor.rowcount == 1
 
-    cursor = await db.execute(
+    cursor = await sqlite_backend.execute(
         """
         INSERT OR IGNORE INTO seller_favorites (
             user_id,
@@ -1085,7 +1081,7 @@ async def add_seller_favorite(
     user_id: int,
     seller_id: int,
 ) -> bool:
-    await db.execute(
+    await sqlite_backend.execute(
         """
         INSERT OR IGNORE INTO seller_favorites (
             user_id,
@@ -1108,7 +1104,7 @@ async def remove_seller_favorite(
     user_id: int,
     seller_id: int,
 ) -> bool:
-    await db.execute(
+    await sqlite_backend.execute(
         """
         DELETE FROM seller_favorites
         WHERE user_id = ?
@@ -1293,7 +1289,7 @@ async def create_review(
     if existing is not None:
         return False
 
-    await db.execute(
+    await sqlite_backend.execute(
         """
         INSERT INTO reviews (
             user_id,
@@ -1373,7 +1369,7 @@ async def create_report(
 
         product_id = target_id
 
-    await db.execute(
+    await sqlite_backend.execute(
         """
         INSERT INTO reports (
             user_id,
@@ -1472,7 +1468,7 @@ async def update_report_status(
     if status not in valid_statuses:
         return False
 
-    cursor = await db.execute(
+    cursor = await sqlite_backend.execute(
         """
         UPDATE reports
         SET status = ?
@@ -1560,8 +1556,6 @@ async def create_request(
     if request_type not in {"support", "ad", "general_ad"}:
         return None
 
-    # Support both the newer explicit topic/message names and
-    # the original title/description interface.
     request_topic = (
         topic.strip()
         if topic is not None
@@ -1613,7 +1607,7 @@ async def create_request(
 
     now = now_iso()
 
-    cursor = await db.execute(
+    cursor = await sqlite_backend.execute(
         """
         INSERT INTO requests (
             user_id,
@@ -1717,7 +1711,7 @@ async def update_request_status(
     if status not in valid_statuses:
         return False
 
-    cursor = await db.execute(
+    cursor = await sqlite_backend.execute(
         """
         UPDATE requests
         SET status = ?,
@@ -1765,7 +1759,7 @@ async def mark_notification_read(
     notification_id: int,
     user_id: int,
 ) -> bool:
-    cursor = await db.execute(
+    cursor = await sqlite_backend.execute(
         """
         UPDATE notifications
         SET is_read = 1
@@ -1852,7 +1846,6 @@ async def create_order(
     if quantity < 1:
         return None
 
-    # The product must exist and belong to the supplied seller.
     product = await db.fetchone(
         """
         SELECT
@@ -1882,7 +1875,7 @@ async def create_order(
     total_price = int(unit_price) * int(quantity)
     now = now_iso()
 
-    cursor = await db.execute(
+    cursor = await sqlite_backend.execute(
         """
         INSERT INTO orders (
             buyer_user_id,
@@ -1989,7 +1982,7 @@ async def update_order_status(
     if status not in ORDER_STATUSES:
         return False
 
-    cursor = await db.execute(
+    cursor = await sqlite_backend.execute(
         """
         UPDATE orders
         SET status = ?,
@@ -2018,7 +2011,7 @@ async def create_audit_log(
     entity_id: Optional[int] = None,
     details: Optional[str] = None,
 ) -> bool:
-    await db.execute(
+    await sqlite_backend.execute(
         """
         INSERT INTO audit_log (
             actor_user_id,
@@ -2160,7 +2153,7 @@ async def set_compare_selection(
 async def clear_compare_selection(
     user_id: int,
 ) -> None:
-    await db.execute(
+    await sqlite_backend.execute(
         """
         DELETE FROM compare_selections
         WHERE user_id = ?;
@@ -2211,7 +2204,7 @@ async def has_seen_compare_intro(
 async def mark_compare_intro_seen(
     user_id: int,
 ) -> None:
-    await db.execute(
+    await sqlite_backend.execute(
         """
         UPDATE users
         SET has_seen_compare_intro = 1,
@@ -2286,7 +2279,7 @@ async def execute(
     query: str,
     params: tuple[Any, ...] = (),
 ):
-    return await db.execute(
+    return await sqlite_backend.execute(
         query,
         params,
     )
