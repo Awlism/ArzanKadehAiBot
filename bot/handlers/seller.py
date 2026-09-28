@@ -2048,7 +2048,7 @@ async def handle_shop_edit_value(
         )
         return
 
-    cursor = await db.execute(
+    result = await sqlite_backend.execute(
         query,
         (
             value,
@@ -2057,7 +2057,7 @@ async def handle_shop_edit_value(
         ),
     )
 
-    if cursor.rowcount != 1:
+    if result.rowcount != 1:
         await message.answer(
             "⚠️ تغییر اطلاعات فروشگاه انجام نشد. "
             "ممکن است فروشگاه قبلاً تغییر کرده یا حذف شده باشد."
