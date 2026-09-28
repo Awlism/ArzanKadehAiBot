@@ -374,7 +374,7 @@ async def handle_favorite_add(
         return
 
     try:
-        cursor = await db.execute(
+        result = await sqlite_backend.execute(
             """
             INSERT INTO favorites (
                 user_id,
@@ -390,7 +390,7 @@ async def handle_favorite_add(
             ),
         )
 
-    except aiosqlite.IntegrityError:
+    except DatabaseIntegrityError:
         await callback.answer(
             "این محصول از قبل در علاقه‌مندی‌هاست ❤️",
             show_alert=True,
@@ -398,7 +398,7 @@ async def handle_favorite_add(
         await _render_product_detail(callback)
         return
 
-    if cursor.rowcount != 1:
+    if result.rowcount != 1:
         await callback.answer(
             "⚠️ ذخیره علاقه‌مندی انجام نشد.",
             show_alert=True,
@@ -413,10 +413,13 @@ async def handle_favorite_add(
     )
 
     await callback.answer(
-        "به علاقه‌مندی‌ها اضافه شد ❤️"
+        "❤️ به علاقه‌مندی‌ها اضافه شد.",
+        show_alert=True,
     )
 
-    await _render_product_detail(callback)
+    await _render_product_detail(
+        callback,
+    )
 
 
 @router.callback_query(F.data.startswith("unfavorite:"))
