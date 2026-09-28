@@ -730,7 +730,7 @@ async def handle_seller_favorite_remove(
         ),
     )
 
-    if cursor.rowcount != 1:
+    if result.rowcount != 1:
         await callback.answer(
             "این فروشگاه دیگر در علاقه‌مندی‌ها نیست.",
             show_alert=True,
