@@ -2219,26 +2219,6 @@ def compare_add(
     return current, "added_need_one_more"
 
 
-def compare_add(
-    selection: list[int],
-    product_id: int,
-) -> tuple[list[int], str]:
-    current = list(selection)
-
-    if product_id in current:
-        return current, "already_in_selection"
-
-    if len(current) >= COMPARE_MAX_ITEMS:
-        return current, "already_full"
-
-    current.append(product_id)
-
-    if len(current) >= COMPARE_MAX_ITEMS:
-        return current, "added_ready"
-
-    return current, "added_need_one_more"
-
-
 async def has_seen_compare_intro(
     user_id: int,
 ) -> bool:
