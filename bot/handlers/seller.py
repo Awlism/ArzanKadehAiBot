@@ -1049,7 +1049,7 @@ async def handle_whatsapp_edit_value(
         )
         return
 
-    await db.execute(
+    cursor = await db.execute(
         """
         UPDATE sellers
         SET whatsapp = ?,
@@ -1062,6 +1062,13 @@ async def handle_whatsapp_edit_value(
             seller_id,
         ),
     )
+
+    if cursor.rowcount != 1:
+        await message.answer(
+            "⚠️ تغییر شماره واتساپ انجام نشد. "
+            "ممکن است فروشگاه قبلاً تغییر کرده یا حذف شده باشد."
+        )
+        return
 
     await log_audit(
         user_id,
