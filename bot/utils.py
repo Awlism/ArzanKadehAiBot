@@ -23,6 +23,7 @@ from .constants import (
     _UNSAFE_URL_CHARS,
 )
 from .database import db
+from .sqlite_backend import sqlite_backend
 
 
 def now_iso() -> str:
@@ -316,7 +317,7 @@ async def ensure_user(user) -> int:
 
     now = now_iso()
 
-    await db.execute(
+    await sqlite_backend.execute(
         """
         INSERT OR IGNORE INTO users (
             telegram_id,
@@ -338,7 +339,7 @@ async def ensure_user(user) -> int:
         ),
     )
 
-    await db.execute(
+    await sqlite_backend.execute(
         """
         UPDATE users
         SET username = ?,
@@ -381,7 +382,7 @@ async def log_event(
     entity_id: Optional[int] = None,
 ) -> None:
     try:
-        await db.execute(
+        await sqlite_backend.execute(
             """
             INSERT INTO events (
                 user_id,
@@ -412,7 +413,7 @@ async def log_audit(
     details: Optional[str] = None,
 ) -> None:
     try:
-        await db.execute(
+        await sqlite_backend.execute(
             """
             INSERT INTO audit_log (
                 actor_user_id,
