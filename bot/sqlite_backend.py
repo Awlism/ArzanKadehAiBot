@@ -22,6 +22,7 @@ import aiosqlite
 from .database import db
 from .database_backend import (
     DatabaseBackend,
+    DatabaseIntegrityError,
     DatabaseResult,
     DatabaseTransaction,
     Params,
@@ -30,14 +31,6 @@ from .database_backend import (
 
 
 class SQLiteTransaction:
-    """
-    SQLite implementation of DatabaseTransaction.
-
-    This transaction operates directly on the existing Database
-    connection so the current SQLite database remains the single
-    source of truth.
-    """
-
     def __init__(self) -> None:
         self._conn: Optional[aiosqlite.Connection] = None
 
@@ -47,6 +40,7 @@ class SQLiteTransaction:
 
         self._conn = db.conn
         await self._conn.execute("BEGIN")
+
         return self
 
     async def __aexit__(
@@ -64,6 +58,7 @@ class SQLiteTransaction:
             await self._conn.rollback()
 
         self._conn = None
+
         return None
 
     def _require_connection(self) -> aiosqlite.Connection:
@@ -78,10 +73,16 @@ class SQLiteTransaction:
         params: Params = None,
     ) -> DatabaseResult:
         conn = self._require_connection()
-        cursor = await conn.execute(
-            query,
-            normalize_params(params),
-        )
+
+        try:
+            cursor = await conn.execute(
+                query,
+                normalize_params(params),
+            )
+        except aiosqlite.IntegrityError as exc:
+            raise DatabaseIntegrityError(
+                str(exc)
+            ) from exc
 
         try:
             return DatabaseResult(
@@ -97,6 +98,7 @@ class SQLiteTransaction:
         params: Params = None,
     ) -> Optional[dict[str, Any]]:
         conn = self._require_connection()
+
         cursor = await conn.execute(
             query,
             normalize_params(params),
@@ -104,10 +106,12 @@ class SQLiteTransaction:
 
         try:
             row = await cursor.fetchone()
+
             if row is None:
                 return None
 
             return dict(row)
+
         finally:
             await cursor.close()
 
@@ -117,6 +121,7 @@ class SQLiteTransaction:
         params: Params = None,
     ) -> list[dict[str, Any]]:
         conn = self._require_connection()
+
         cursor = await conn.execute(
             query,
             normalize_params(params),
@@ -124,7 +129,9 @@ class SQLiteTransaction:
 
         try:
             rows = await cursor.fetchall()
+
             return [dict(row) for row in rows]
+
         finally:
             await cursor.close()
 
@@ -140,10 +147,15 @@ class SQLiteTransaction:
             for params in parameters
         ]
 
-        cursor = await conn.executemany(
-            query,
-            normalized_parameters,
-        )
+        try:
+            cursor = await conn.executemany(
+                query,
+                normalized_parameters,
+            )
+        except aiosqlite.IntegrityError as exc:
+            raise DatabaseIntegrityError(
+                str(exc)
+            ) from exc
 
         try:
             return DatabaseResult(
@@ -155,12 +167,6 @@ class SQLiteTransaction:
 
 
 class SQLiteBackend:
-    """
-    Concrete SQLite implementation of DatabaseBackend.
-
-    It wraps the existing global Database instance from database.py.
-    """
-
     def __init__(self) -> None:
         self._database = db
 
@@ -175,10 +181,15 @@ class SQLiteBackend:
         query: str,
         params: Params = None,
     ) -> DatabaseResult:
-        cursor = await self._database.execute(
-            query,
-            normalize_params(params),
-        )
+        try:
+            cursor = await self._database.execute(
+                query,
+                normalize_params(params),
+            )
+        except aiosqlite.IntegrityError as exc:
+            raise DatabaseIntegrityError(
+                str(exc)
+            ) from exc
 
         try:
             return DatabaseResult(
@@ -221,17 +232,24 @@ class SQLiteBackend:
         parameters: Iterable[Params],
     ) -> DatabaseResult:
         if self._database.conn is None:
-            raise RuntimeError("Database is not connected.")
+            raise RuntimeError(
+                "Database is not connected."
+            )
 
         normalized_parameters = [
             normalize_params(params)
             for params in parameters
         ]
 
-        cursor = await self._database.conn.executemany(
-            query,
-            normalized_parameters,
-        )
+        try:
+            cursor = await self._database.conn.executemany(
+                query,
+                normalized_parameters,
+            )
+        except aiosqlite.IntegrityError as exc:
+            raise DatabaseIntegrityError(
+                str(exc)
+            ) from exc
 
         try:
             await self._database.conn.commit()
@@ -240,6 +258,7 @@ class SQLiteBackend:
                 rowcount=cursor.rowcount,
                 lastrowid=cursor.lastrowid,
             )
+
         finally:
             await cursor.close()
 
