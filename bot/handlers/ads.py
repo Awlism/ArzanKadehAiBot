@@ -14,8 +14,7 @@ from aiogram.filters import StateFilter
 from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from ..database import db
-from ..sqlite_backend import sqlite_backend
+from ..backend import backend
 from ..keyboards import kb_add_back
 from ..repositories import (
     create_request,
@@ -867,7 +866,7 @@ async def _finish_public_ad(
 
         return
 
-        cursor = await sqlite_backend.execute(
+    cursor = await backend.execute(
         """
         UPDATE requests
         SET ad_kind = ?,
