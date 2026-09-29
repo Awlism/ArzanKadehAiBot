@@ -1,18 +1,19 @@
+from aiogram import Bot, Dispatcher
 from workers import WorkerEntrypoint, Response
 
 
 class Default(WorkerEntrypoint):
     async def fetch(self, request):
-        result = await self.env.DB.prepare(
-            "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
-        ).run()
+        # Compatibility proof only:
+        # verify that aiogram can be imported and its core
+        # Bot/Dispatcher classes can be initialized in the
+        # Cloudflare Python Worker runtime.
 
-        tables = [
-            row["name"]
-            for row in result.results
-        ]
+        dp = Dispatcher()
+        bot = Bot(token="000000000:TEST")
+
+        await bot.session.close()
 
         return Response(
-            "ArzanKadeh D1 OK\n"
-            + "\n".join(tables)
-        )  
+            "ArzanKadeh Worker AIogram compatibility OK"
+        )
