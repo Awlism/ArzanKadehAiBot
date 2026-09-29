@@ -11,8 +11,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from ..backend import backend
 from ..constants import COMPARE_MAX_ITEMS
-from ..database import db
 from ..keyboards import kb_add_back
 from ..repositories import (
     COMPARE_INTRO_TEXT,
@@ -118,7 +118,7 @@ async def handle_compare_list(
     products = []
 
     for product_id in selection:
-        row = await db.fetchone(
+        row = await backend.fetchone(
             """
             SELECT
                 p.*,
@@ -308,7 +308,7 @@ async def handle_compare_start(
         )
         return
 
-    product = await db.fetchone(
+    product = await backend.fetchone(
         """
         SELECT
             p.id
