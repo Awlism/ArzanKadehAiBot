@@ -12,6 +12,7 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from ..backend import backend
 from ..constants import (
     EMOJI_CATEGORIES,
     EMOJI_HOT,
@@ -25,7 +26,6 @@ from ..constants import (
     PAGE_SIZE_LIST,
     TOP_LIST_LIMIT,
 )
-from ..database import db
 from ..keyboards import kb_add_back, kb_pagination_row
 from ..utils import (
     ensure_user,
@@ -88,7 +88,7 @@ async def handle_category(callback: CallbackQuery, state) -> None:
     )
 
     if cat_id == 0:
-        rows = await db.fetchall(
+        rows = await backend.fetchall(
             """
             SELECT id, name, emoji
             FROM categories
@@ -148,7 +148,7 @@ async def handle_category(callback: CallbackQuery, state) -> None:
         await callback.answer()
         return
 
-    category = await db.fetchone(
+    category = await backend.fetchone(
         "SELECT * FROM categories WHERE id = ?;",
         (cat_id,),
     )
@@ -167,7 +167,7 @@ async def handle_category(callback: CallbackQuery, state) -> None:
         cat_id,
     )
 
-    children = await db.fetchall(
+    children = await backend.fetchall(
         """
         SELECT id, name, emoji
         FROM categories
@@ -235,7 +235,7 @@ async def handle_category(callback: CallbackQuery, state) -> None:
         await callback.answer()
         return
 
-    products = await db.fetchall(
+    products = await backend.fetchall(
         """
         SELECT p.*, s.name AS seller_name
         FROM products p
@@ -332,7 +332,7 @@ async def handle_near_me(
         callback.from_user
     )
 
-    user = await db.fetchone(
+    user = await backend.fetchone(
         "SELECT city_id FROM users WHERE id = ?;",
         (user_id,),
     )
@@ -364,7 +364,7 @@ async def handle_near_me(
         await callback.answer()
         return
 
-    city = await db.fetchone(
+    city = await backend.fetchone(
         "SELECT name FROM cities WHERE id = ?;",
         (user["city_id"],),
     )
@@ -389,7 +389,7 @@ async def handle_near_me(
         await callback.answer()
         return
 
-    sellers = await db.fetchall(
+    sellers = await backend.fetchall(
         """
         SELECT id, name, status
         FROM sellers
@@ -462,7 +462,7 @@ async def handle_hot(
         callback.from_user
     )
 
-    products = await db.fetchall(
+    products = await backend.fetchall(
         """
         SELECT p.*
         FROM products p
@@ -529,7 +529,7 @@ async def handle_new_today(
 
     today_tehran = _today_tehran()
 
-    products = await db.fetchall(
+    products = await backend.fetchall(
         """
         SELECT p.*
         FROM products p
@@ -598,7 +598,7 @@ async def handle_picks(
         callback.from_user
     )
 
-    products = await db.fetchall(
+    products = await backend.fetchall(
         """
         SELECT p.*
         FROM products p
@@ -665,7 +665,7 @@ async def handle_top_sellers(
         callback.from_user
     )
 
-    sellers = await db.fetchall(
+    sellers = await backend.fetchall(
         """
         SELECT *
         FROM sellers
