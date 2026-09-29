@@ -15,8 +15,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from ..config import ADMIN_CHAT_ID
-from ..database import db
-from ..sqlite_backend import sqlite_backend
+from ..backend import backend
 from ..keyboards import kb_add_back, kb_pagination_row
 from ..repositories import (
     REQUEST_STATUS_LABELS,
@@ -74,7 +73,7 @@ def _is_admin(callback: CallbackQuery) -> bool:
 
 
 async def _get_ad_request(request_id: int):
-    return await db.fetchone(
+    return await backend.fetchone(
         """
         SELECT *
         FROM requests
@@ -146,7 +145,7 @@ async def handle_admin_request_decision(
         callback.from_user
     )
 
-    req = await db.fetchone(
+    req = await backend.fetchone(
         "SELECT * FROM requests WHERE id = ?;",
         (request_id,),
     )
@@ -178,7 +177,7 @@ async def handle_admin_request_decision(
     if action == "reject":
         new_status = "REJECTED"
 
-        cursor = await sqlite_backend.execute(
+        cursor = await backend.execute(
             """
             UPDATE requests
             SET status = ?, updated_at = ?
@@ -204,7 +203,7 @@ async def handle_admin_request_decision(
             timespec="seconds"
         )
 
-        cursor = await sqlite_backend.execute(
+        cursor = await backend.execute(
             """
             UPDATE requests
             SET status = ?,
@@ -224,7 +223,7 @@ async def handle_admin_request_decision(
     else:
         new_status = "APPROVED"
 
-        cursor = await sqlite_backend.execute(
+        cursor = await backend.execute(
             """
             UPDATE requests
             SET status = ?, updated_at = ?
@@ -239,7 +238,7 @@ async def handle_admin_request_decision(
         )
 
     if cursor.rowcount != 1:
-        current_req = await db.fetchone(
+        current_req = await backend.fetchone(
             "SELECT status FROM requests WHERE id = ?;",
             (request_id,),
         )
@@ -556,7 +555,7 @@ async def handle_admin_user_search_query(
     like = f"%{query}%"
 
     if query.isdigit():
-        rows = await db.fetchall(
+        rows = await backend.fetchall(
             """
             SELECT *
             FROM users
@@ -577,7 +576,7 @@ async def handle_admin_user_search_query(
         )
 
     else:
-        rows = await db.fetchall(
+        rows = await backend.fetchall(
             """
             SELECT *
             FROM users
@@ -671,7 +670,7 @@ async def handle_admin_user_list(
         )
         return
 
-    all_users = await db.fetchall(
+    all_users = await backend.fetchall(
         "SELECT * FROM users ORDER BY id DESC;"
     )
 
@@ -713,12 +712,12 @@ async def handle_admin_user_list(
                 )
             )
 
-        kb_pagination_row(
-            builder,
-            "adminuserlist",
-            page,
-            has_next,
-        )
+    kb_pagination_row(
+        builder,
+        "adminuserlist",
+        page,
+        has_next,
+    )
 
     kb_add_back(
         builder,
@@ -732,12 +731,15 @@ async def handle_admin_user_list(
     )
 
     await callback.answer()
+# ======================================================================
+# SELLER CLAIM ADMIN
+# ======================================================================
 
 
 @router.callback_query(
-    F.data.startswith("adminuserview:")
+    F.data.startswith("sellerclaimdetail:")
 )
-async def handle_admin_user_view(
+async def handle_seller_claim_detail(
     callback: CallbackQuery,
     state: FSMContext,
 ) -> None:
@@ -750,150 +752,101 @@ async def handle_admin_user_view(
         )
         return
 
-    data = callback.data or ""
-    parts = data.split(":")
+    claim_id = _parse_callback_int(
+        callback,
+        "sellerclaimdetail:",
+    )
 
-    if len(parts) != 2:
+    if claim_id is None:
         await callback.answer(
-            "⚠️ شناسه نامعتبر است.",
+            "⚠️ شناسه درخواست نامعتبر است.",
             show_alert=True,
         )
         return
 
-    target_user_id = parse_int(parts[1])
+    claim = await get_seller_claim(
+        claim_id
+    )
 
-    if target_user_id is None:
+    if not claim:
         await callback.answer(
-            "⚠️ شناسه نامعتبر است.",
+            "⚠️ این درخواست مالکیت یافت نشد.",
             show_alert=True,
         )
         return
 
-    user = await db.fetchone(
-        """
-        SELECT
-            u.*,
-            c.name AS city_name
-        FROM users u
-        LEFT JOIN cities c
-            ON c.id = u.city_id
-        WHERE u.id = ?;
-        """,
-        (target_user_id,),
+    seller_name = (
+        claim["seller_name"]
+        or f"فروشگاه #{claim['seller_id']}"
     )
 
-    if not user:
-        await callback.answer(
-            "⚠️ این کاربر یافت نشد.",
-            show_alert=True,
+    claimant_name = (
+        claim["claimant_first_name"]
+        or (
+            f"@{claim['claimant_username']}"
+            if claim["claimant_username"]
+            else str(claim["claimant_telegram_id"])
         )
-        return
-
-    owned_sellers = await get_sellers_owned_by_user(
-        target_user_id
     )
 
-    mode = await get_active_mode(
-        target_user_id
+    status_label = REQUEST_STATUS_LABELS.get(
+        claim["status"],
+        claim["status"],
     )
-
-    request_row = await db.fetchone(
-        """
-        SELECT COUNT(*) AS c
-        FROM requests
-        WHERE user_id = ?;
-        """,
-        (target_user_id,),
-    )
-
-    report_row = await db.fetchone(
-        """
-        SELECT COUNT(*) AS c
-        FROM reports
-        WHERE user_id = ?;
-        """,
-        (target_user_id,),
-    )
-
-    referral_total = 0
-
-    for seller in owned_sellers:
-        referral_total += await get_referral_count(
-            seller["id"]
-        )
-
-    name = " ".join(
-        filter(
-            None,
-            [
-                user["first_name"],
-                user["last_name"],
-            ],
-        )
-    ) or "بدون نام"
 
     lines = [
-        f"👤 <b>{_html(name)}</b>",
-        (
-            "آیدی تلگرام: "
-            f"{_html(user['telegram_id'])}"
-        ),
-    ]
-
-    if user["username"]:
-        lines.append(
-            "نام کاربری: "
-            f"@{_html(user['username'])}"
-        )
-
-    lines += [
-        (
-            "شهر: "
-            f"{_html(user['city_name'] or 'ثبت نشده')}"
-        ),
-        (
-            "نقش انتخاب‌شده: "
-            f"{'بله' if user['role_chosen'] else 'خیر'}"
-        ),
-        f"حالت فعلی: {_html(mode)}",
-        (
-            "عضویت از: "
-            f"{_html(user['created_at'][:10])}"
-        ),
+        "🏪 <b>جزئیات درخواست مالکیت</b>",
         "",
         (
-            "🏪 فروشگاه‌های متعلق به این کاربر: "
-            f"{len(owned_sellers)}"
+            "فروشگاه: "
+            f"<b>{_html(seller_name)}</b>"
+        ),
+        (
+            "درخواست‌دهنده: "
+            f"{_html(claimant_name)}"
+        ),
+        (
+            "آیدی تلگرام: "
+            f"{_html(claim['claimant_telegram_id'])}"
+        ),
+        (
+            "وضعیت: "
+            f"{_html(status_label)}"
+        ),
+        (
+            "تاریخ ثبت: "
+            f"{_html(claim['created_at'])}"
         ),
     ]
 
-    for seller in owned_sellers:
-        lines.append(
-            "  • "
-            f"{_html(seller['name'])}"
-        )
-
-    lines += [
-        (
-            "📋 تعداد درخواست‌های ثبت‌شده: "
-            f"{request_row['c'] if request_row else 0}"
-        ),
-        (
-            "🚨 تعداد گزارش‌های ثبت‌شده توسط این کاربر: "
-            f"{report_row['c'] if report_row else 0}"
-        ),
-        (
-            "🎁 مجموع معرفی‌های موفق "
-            "(از فروشگاه‌هایش): "
-            f"{referral_total}"
-        ),
-    ]
+    if claim["message"]:
+        lines += [
+            "",
+            "💬 <b>توضیحات درخواست‌دهنده:</b>",
+            _html(claim["message"]),
+        ]
 
     builder = InlineKeyboardBuilder()
 
+    if claim["status"] == "PENDING":
+        builder.row(
+            InlineKeyboardButton(
+                text="✅ تأیید مالکیت",
+                callback_data=(
+                    f"sellerclaim:approve:{claim_id}"
+                ),
+            ),
+            InlineKeyboardButton(
+                text="❌ رد مالکیت",
+                callback_data=(
+                    f"sellerclaim:reject:{claim_id}"
+                ),
+            ),
+        )
+
     kb_add_back(
         builder,
-        "adminuserlist:0",
+        "sellerclaimsadmin",
     )
 
     await safe_edit(
@@ -905,62 +858,183 @@ async def handle_admin_user_view(
     await callback.answer()
 
 
-# ======================================================================
-# SELLER CLAIM ADMIN
-# ======================================================================
-
-
-async def _render_seller_claims_admin(
+@router.callback_query(
+    F.data.startswith("sellerclaim:")
+)
+async def handle_seller_claim_decision(
     callback: CallbackQuery,
 ) -> None:
-    pending = await get_pending_seller_claims(
-        PAGE_SIZE_LIST
+    data = callback.data or ""
+    parts = data.split(":")
+
+    if len(parts) != 3:
+        await callback.answer(
+            "⚠️ درخواست نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    _, action, claim_id_str = parts
+
+    claim_id = parse_int(claim_id_str)
+
+    if claim_id is None or action not in (
+        "approve",
+        "reject",
+    ):
+        await callback.answer(
+            "⚠️ درخواست نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    if not _is_admin(callback):
+        await callback.answer(
+            "⛔️ این عملیات فقط برای ادمین در دسترس است.",
+            show_alert=True,
+        )
+        return
+
+    admin_user_id = await ensure_user(
+        callback.from_user
+    )
+
+    claim = await get_seller_claim(
+        claim_id
+    )
+
+    if not claim:
+        await callback.answer(
+            "⚠️ این درخواست مالکیت یافت نشد.",
+            show_alert=True,
+        )
+        return
+
+    if claim["status"] != "PENDING":
+        await callback.answer(
+            "⚠️ این درخواست قبلاً تعیین‌تکلیف شده است.",
+            show_alert=True,
+        )
+        return
+
+    if action == "approve":
+        updated = await approve_seller_claim(
+            claim_id
+        )
+    else:
+        updated = await reject_seller_claim(
+            claim_id
+        )
+
+    if not updated:
+        await callback.answer(
+            "⚠️ به‌روزرسانی درخواست انجام نشد.",
+            show_alert=True,
+        )
+        return
+
+    await log_audit(
+        admin_user_id,
+        f"seller_claim_{action}d",
+        "seller_claim",
+        claim_id,
+    )
+
+    if action == "approve":
+        await notify_user(
+            claim["claimant_user_id"],
+            "مالکیت فروشگاه",
+            (
+                "✅ درخواست مالکیت فروشگاهت تأیید شد. "
+                "از این به بعد می‌تونی فروشگاه رو مدیریت کنی."
+            ),
+        )
+
+        message = (
+            "✅ مالکیت فروشگاه با موفقیت تأیید شد."
+        )
+
+    else:
+        await notify_user(
+            claim["claimant_user_id"],
+            "مالکیت فروشگاه",
+            (
+                "❌ درخواست مالکیت فروشگاهت رد شد. "
+                "اگر مدرک یا توضیح بیشتری داری، "
+                "می‌تونی دوباره درخواست ثبت کنی."
+            ),
+        )
+
+        message = (
+            "❌ درخواست مالکیت رد شد."
+        )
+
+    await callback.answer(message)
+
+    await _render_seller_claims_admin(
+        callback
+    )
+
+
+# ======================================================================
+# ADVERTISEMENT ADMIN
+# ======================================================================
+
+
+async def _render_ads_admin(
+    callback: CallbackQuery,
+) -> None:
+    rows = await backend.fetchall(
+        """
+        SELECT
+            r.*,
+            u.first_name,
+            u.last_name,
+            u.username
+        FROM requests r
+        LEFT JOIN users u
+            ON u.id = r.user_id
+        WHERE r.request_type IN ('ad', 'general_ad')
+        ORDER BY r.id DESC
+        LIMIT ?;
+        """,
+        (PAGE_SIZE_LIST,),
     )
 
     lines = [
-        "🏪 <b>مالکیت فروشگاه‌ها</b>",
+        "📢 <b>مدیریت تبلیغات</b>",
         "",
-        (
-            "📋 درخواست‌های در انتظار بررسی: "
-            f"{len(pending)}"
-        ),
     ]
 
     builder = InlineKeyboardBuilder()
 
-    if not pending:
+    if not rows:
         lines.append(
-            ""
-        )
-        lines.append(
-            "✅ در حال حاضر درخواست مالکیتی در انتظار بررسی نیست."
+            "📭 هنوز درخواست تبلیغی ثبت نشده."
         )
 
     else:
-        for claim in pending:
-            seller_name = (
-                claim["seller_name"]
-                or f"فروشگاه #{claim['seller_id']}"
+        for request in rows:
+            status_label = REQUEST_STATUS_LABELS.get(
+                request["status"],
+                request["status"],
             )
 
-            claimant_name = (
-                claim["claimant_first_name"]
-                or (
-                    f"@{claim['claimant_username']}"
-                    if claim["claimant_username"]
-                    else
-                    str(claim["claimant_telegram_id"])
-                )
+            name = (
+                request["first_name"]
+                or request["username"]
+                or str(request["user_id"])
             )
 
             builder.row(
                 InlineKeyboardButton(
                     text=(
-                        f"📋 {_html(seller_name)} — "
-                        f"{_html(claimant_name)}"
+                        f"📢 #{request['id']} "
+                        f"{_html(name)} — "
+                        f"{_html(status_label)}"
                     ),
                     callback_data=(
-                        f"sellerclaimdetail:{claim['id']}"
+                        f"adminadview:{request['id']}"
                     ),
                 )
             )
@@ -977,10 +1051,8 @@ async def _render_seller_claims_admin(
     )
 
 
-@router.callback_query(
-    F.data == "sellerclaimsadmin"
-)
-async def handle_seller_claims_admin(
+@router.callback_query(F.data == "adsadmin")
+async def handle_ads_admin(
     callback: CallbackQuery,
     state: FSMContext,
 ) -> None:
@@ -993,13 +1065,203 @@ async def handle_seller_claims_admin(
         )
         return
 
-    await _render_seller_claims_admin(
+    await _render_ads_admin(
         callback
     )
 
     await callback.answer()
 
 
+@router.callback_query(
+    F.data.startswith("adminadview:")
+)
+async def handle_admin_ad_view(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> None:
+    await state.clear()
+
+    if not _is_admin(callback):
+        await callback.answer(
+            "⛔️ این بخش فقط برای ادمین در دسترس است.",
+            show_alert=True,
+        )
+        return
+
+    request_id = _parse_callback_int(
+        callback,
+        "adminadview:",
+    )
+
+    if request_id is None:
+        await callback.answer(
+            "⚠️ شناسه تبلیغ نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    request = await _get_ad_request(
+        request_id
+    )
+
+    if not request:
+        await callback.answer(
+            "⚠️ درخواست تبلیغ یافت نشد.",
+            show_alert=True,
+        )
+        return
+
+    user = await backend.fetchone(
+        """
+        SELECT *
+        FROM users
+        WHERE id = ?;
+        """,
+        (request["user_id"],),
+    )
+
+    if not user:
+        await callback.answer(
+            "⚠️ کاربر درخواست‌کننده یافت نشد.",
+            show_alert=True,
+        )
+        return
+
+    status_label = REQUEST_STATUS_LABELS.get(
+        request["status"],
+        request["status"],
+    )
+
+    name = (
+        " ".join(
+            filter(
+                None,
+                [
+                    user["first_name"],
+                    user["last_name"],
+                ],
+            )
+        )
+        or user["username"]
+        or str(user["telegram_id"])
+    )
+
+    lines = [
+        "📢 <b>جزئیات تبلیغ</b>",
+        "",
+        (
+            "شماره درخواست: "
+            f"#{request['id']}"
+        ),
+        (
+            "ثبت‌کننده: "
+            f"{_html(name)}"
+        ),
+        (
+            "وضعیت: "
+            f"{_html(status_label)}"
+        ),
+    ]
+
+    if request["title"]:
+        lines.append(
+            f"عنوان: {_html(request['title'])}"
+        )
+
+    if request["description"]:
+        lines += [
+            "",
+            "<b>توضیحات:</b>",
+            _html(request["description"]),
+        ]
+
+    if request["ad_duration_days"]:
+        lines.append(
+            (
+                "مدت تبلیغ: "
+                f"{request['ad_duration_days']} روز"
+            )
+        )
+
+    if request["ad_price"]:
+        lines.append(
+            (
+                "قیمت: "
+                f"{format_price(request['ad_price'])}"
+            )
+        )
+
+    if request["ad_placement"]:
+        lines.append(
+            (
+                "جایگاه: "
+                f"{_html(request['ad_placement'])}"
+            )
+        )
+
+    if request["ad_expires_at"]:
+        lines.append(
+            (
+                "انقضا: "
+                f"{_html(request['ad_expires_at'])}"
+            )
+        )
+
+    builder = InlineKeyboardBuilder()
+
+    if request["status"] in AD_EDITABLE_STATUSES:
+        builder.row(
+            InlineKeyboardButton(
+                text="💰 تعیین قیمت",
+                callback_data=(
+                    f"adminadprice:{request_id}"
+                ),
+            ),
+            InlineKeyboardButton(
+                text="⏱ تعیین مدت",
+                callback_data=(
+                    f"adminadduration:{request_id}"
+                ),
+            ),
+        )
+
+        builder.row(
+            InlineKeyboardButton(
+                text="📍 تعیین جایگاه",
+                callback_data=(
+                    f"adminadplacement:{request_id}"
+                ),
+            )
+        )
+
+    if request["status"] == "PENDING":
+        builder.row(
+            InlineKeyboardButton(
+                text="✅ تأیید",
+                callback_data=(
+                    f"adminaddecision:approve:{request_id}"
+                ),
+            ),
+            InlineKeyboardButton(
+                text="❌ رد",
+                callback_data=(
+                    f"adminaddecision:reject:{request_id}"
+                ),
+            ),
+        )
+
+    kb_add_back(
+        builder,
+        "adsadmin",
+    )
+
+    await safe_edit(
+        callback,
+        "\n".join(lines),
+        builder.as_markup(),
+    )
+
+    await callback.answer()
 # ======================================================================
 # SELLER CLAIM DETAIL / DECISION
 # ======================================================================
@@ -1468,7 +1730,7 @@ async def handle_admin_ad_set_price_value(
         )
         return
 
-        cursor = await sqlite_backend.execute(
+    cursor = await backend.execute(
         """
         UPDATE requests
         SET ad_price = ?,
@@ -1654,7 +1916,7 @@ async def handle_admin_ad_set_duration_value(
         )
         return
 
-        cursor = await sqlite_backend.execute(
+    cursor = await backend.execute(
         """
         UPDATE requests
         SET ad_duration_days = ?,
@@ -1716,7 +1978,7 @@ async def handle_admin_ad_set_duration_value(
             timespec="seconds"
         )
 
-        activation_cursor = await sqlite_backend.execute(
+        activation_cursor = await backend.execute(
             """
             UPDATE requests
             SET status = 'ACTIVE',
@@ -1883,7 +2145,7 @@ async def handle_admin_ad_set_placement_value(
         )
         return
 
-        cursor = await sqlite_backend.execute(
+    cursor = await backend.execute(
         """
         UPDATE requests
         SET ad_placement = ?,
@@ -1939,6 +2201,11 @@ async def handle_admin_ad_set_placement_value(
     )
 
 
+# ======================================================================
+# LEGACY / SECOND ADS ADMIN PANEL
+# ======================================================================
+
+
 @router.callback_query(F.data == "adsadmin")
 async def handle_ads_admin_panel(
     callback: CallbackQuery,
@@ -1953,7 +2220,7 @@ async def handle_ads_admin_panel(
         )
         return
 
-    pending = await db.fetchall(
+    pending = await backend.fetchall(
         """
         SELECT *
         FROM requests
@@ -1964,7 +2231,7 @@ async def handle_ads_admin_panel(
         """
     )
 
-    active = await db.fetchall(
+    active = await backend.fetchall(
         """
         SELECT *
         FROM requests
@@ -2073,7 +2340,7 @@ async def handle_ads_admin_detail(
         )
         return
 
-    req = await db.fetchone(
+    req = await backend.fetchone(
         """
         SELECT *
         FROM requests
