@@ -178,7 +178,7 @@ async def is_admin_user_id(
 async def get_product_by_id(
     product_id: int,
 ) -> Optional[dict[str, Any]]:
-    return await db.fetchone(
+    return await backend.fetchone(
         """
         SELECT
             p.*,
@@ -224,7 +224,7 @@ async def get_products_by_ids(
         "?" for _ in normalized_ids
     )
 
-    return await db.fetchall(
+    return await backend.fetchall(
         f"""
         SELECT
             p.*,
@@ -253,7 +253,7 @@ async def create_product_record(
     if not name:
         raise ValueError("Product name is required.")
 
-    seller = await db.fetchone(
+    seller = await backend.fetchone(
         """
         SELECT id
         FROM sellers
@@ -287,7 +287,7 @@ async def create_product_record(
         if not isinstance(category_id, int) or category_id < 1:
             raise ValueError("Invalid category_id.")
 
-        category = await db.fetchone(
+        category = await backend.fetchone(
             """
             SELECT id
             FROM categories
@@ -366,7 +366,7 @@ async def create_product_record(
         "?" for _ in columns
     )
 
-    result = await sqlite_backend.execute(
+    result = await backend.execute(
         f"""
         INSERT INTO products (
             {", ".join(columns)}
@@ -390,7 +390,7 @@ async def delete_product_record(
     if product_id < 1:
         return False
 
-    cursor = await sqlite_backend.execute(
+    result = await backend.execute(
         """
         DELETE FROM products
         WHERE id = ?;
@@ -398,13 +398,13 @@ async def delete_product_record(
         (product_id,),
     )
 
-    return cursor.rowcount == 1
+    return result.rowcount == 1
 
 
 async def increment_product_views(
     product_id: int,
 ) -> bool:
-    await sqlite_backend.execute(
+    result = await backend.execute(
         """
         UPDATE products
         SET views = COALESCE(views, 0) + 1,
@@ -417,13 +417,13 @@ async def increment_product_views(
         ),
     )
 
-    return True
+    return result.rowcount == 1
 
 
 async def get_product_statistics(
     product_id: int,
 ) -> Optional[dict[str, Any]]:
-    return await db.fetchone(
+    return await backend.fetchone(
         """
         SELECT
             p.id,
