@@ -28,7 +28,7 @@ from .utils import now_iso
 async def get_user(
     user_id: int,
 ) -> Optional[dict[str, Any]]:
-    return await db.fetchone(
+    return await backend.fetchone(
         """
         SELECT *
         FROM users
