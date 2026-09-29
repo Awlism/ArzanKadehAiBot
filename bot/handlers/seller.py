@@ -6,6 +6,7 @@ product management, statistics and seller registration.
 """
 
 from html import escape
+import logging
 from typing import Optional
 
 from aiogram import Bot, F, Router
@@ -28,9 +29,8 @@ from ..constants import (
     SHOP_EDITABLE_FIELDS,
     SHOP_UPDATE_QUERIES,
 )
-from ..database import db
+from ..backend import backend
 from ..database_backend import DatabaseIntegrityError
-from ..sqlite_backend import sqlite_backend
 from ..keyboards import kb_add_back, kb_pagination_row
 from ..repositories import (
     create_product_record,
@@ -65,6 +65,9 @@ from ..utils import (
     whatsapp_url,
     website_url,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 router = Router(name="seller")
@@ -243,7 +246,7 @@ async def handle_sellers_list(
         callback.from_user
     )
 
-    sellers = await db.fetchall(
+    sellers = await backend.fetchall(
         """
         SELECT *
         FROM sellers
@@ -367,7 +370,7 @@ async def _render_seller_detail(
         callback.from_user
     )
 
-    seller = await db.fetchone(
+    seller = await backend.fetchone(
         """
         SELECT
             s.*,
@@ -387,7 +390,7 @@ async def _render_seller_detail(
         )
         return
 
-    await sqlite_backend.execute(
+    await backend.execute(
         """
         UPDATE sellers
         SET views = COALESCE(views, 0) + 1
@@ -644,7 +647,7 @@ async def handle_seller_favorite_add(
         callback.from_user
     )
 
-    seller = await db.fetchone(
+    seller = await backend.fetchone(
         "SELECT id FROM sellers WHERE id = ?;",
         (seller_id,),
     )
@@ -706,7 +709,7 @@ async def handle_seller_favorite_remove(
         callback.from_user
     )
 
-    seller = await db.fetchone(
+    seller = await backend.fetchone(
         "SELECT id FROM sellers WHERE id = ?;",
         (seller_id,),
     )
@@ -718,7 +721,7 @@ async def handle_seller_favorite_remove(
         )
         return
 
-    result = await sqlite_backend.execute(
+    result = await backend.execute(
         """
         DELETE FROM seller_favorites
         WHERE user_id = ?
@@ -773,7 +776,7 @@ async def _handle_seller_url_click(
         callback.from_user
     )
 
-    seller = await db.fetchone(
+    seller = await backend.fetchone(
         f"""
         SELECT
             {field},
@@ -940,7 +943,754 @@ async def handle_whatsapp_edit_start(
         callback.from_user
     )
 
-    seller = await db.fetchone(
+    seller = await _check_seller_ownership(
+        user_id,
+        seller_id,
+    )
+
+    if not seller:
+        await callback.answer(
+            "⚠️ دسترسی مجاز نیست.",
+            show_alert=True,
+        )
+        return
+
+    current = seller["whatsapp"] or ""
+
+    await state.update_data(
+        whatsapp_seller_id=seller_id
+    )
+
+    await state.set_state(
+        WhatsAppEditStates.value
+    )
+
+    builder = InlineKeyboardBuilder()
+
+    builder.row(
+        InlineKeyboardButton(
+            text="⏭ حذف واتساپ",
+            callback_data=(
+                f"waeditremove:{seller_id}"
+            ),
+        )
+    )
+
+    kb_add_back(
+        builder,
+        f"shopview:{seller_id}",
+    )
+
+    await safe_edit(
+        callback,
+        (
+            "🟢 <b>واتساپ فروشگاه</b>\n\n"
+            f"فعلی: {_html(current) if current else 'ثبت نشده'}\n\n"
+            "شماره یا لینک واتساپ جدید رو بفرست:"
+        ),
+        builder.as_markup(),
+    )
+
+    await callback.answer()
+
+
+@router.message(
+    StateFilter(
+        WhatsAppEditStates.value
+    )
+)
+async def handle_whatsapp_edit_value(
+    message: Message,
+    state: FSMContext,
+) -> None:
+    value = (
+        message.text or ""
+    ).strip()
+
+    if not value:
+        await message.answer(
+            "⚠️ مقدار واتساپ نمی‌تواند خالی باشد."
+        )
+        return
+
+    normalized = whatsapp_url(value)
+
+    if not normalized:
+        await message.answer(
+            "⚠️ شماره یا لینک واتساپ معتبر نیست."
+        )
+        return
+
+    data = await state.get_data()
+
+    seller_id = data.get(
+        "whatsapp_seller_id"
+    )
+
+    if (
+        not isinstance(seller_id, int)
+        or seller_id < 1
+    ):
+        await state.clear()
+        await message.answer(
+            "⚠️ نشست ویرایش منقضی شده است. "
+            "لطفاً دوباره وارد مدیریت فروشگاه شو."
+        )
+        return
+
+    user_id = await ensure_user(
+        message.from_user
+    )
+
+    seller = await _check_seller_ownership(
+        user_id,
+        seller_id,
+    )
+
+    if not seller:
+        await state.clear()
+        await message.answer(
+            "⚠️ دسترسی مجاز نیست."
+        )
+        return
+
+    await backend.execute(
+        """
+        UPDATE sellers
+        SET whatsapp = ?,
+            updated_at = ?
+        WHERE id = ?;
+        """,
+        (
+            normalized,
+            now_iso(),
+            seller_id,
+        ),
+    )
+
+    await state.clear()
+
+    await log_audit(
+        user_id,
+        "seller_whatsapp_updated",
+        "seller",
+        seller_id,
+    )
+
+    await message.answer(
+        "🟢 واتساپ فروشگاه با موفقیت به‌روزرسانی شد."
+    )
+
+
+@router.callback_query(
+    F.data.startswith("waeditremove:")
+)
+async def handle_whatsapp_edit_remove(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> None:
+    seller_id = _parse_positive_callback_id(
+        callback.data
+    )
+
+    if seller_id is None:
+        await callback.answer(
+            "⚠️ شناسه نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    user_id = await ensure_user(
+        callback.from_user
+    )
+
+    seller = await _check_seller_ownership(
+        user_id,
+        seller_id,
+    )
+
+    if not seller:
+        await callback.answer(
+            "⚠️ دسترسی مجاز نیست.",
+            show_alert=True,
+        )
+        return
+
+    await backend.execute(
+        """
+        UPDATE sellers
+        SET whatsapp = NULL,
+            updated_at = ?
+        WHERE id = ?;
+        """,
+        (
+            now_iso(),
+            seller_id,
+        ),
+    )
+
+    await state.clear()
+
+    await log_audit(
+        user_id,
+        "seller_whatsapp_removed",
+        "seller",
+        seller_id,
+    )
+
+    await callback.answer(
+        "واتساپ حذف شد.",
+        show_alert=True,
+    )
+
+    await _render_seller_detail(
+        callback,
+        seller_id,
+    )
+
+
+# ============================================================================
+# SELLER SHOP MANAGEMENT
+# ============================================================================
+
+
+@router.callback_query(
+    F.data.startswith("shopview:")
+)
+async def handle_shop_view(
+    callback: CallbackQuery,
+) -> None:
+    seller_id = _parse_positive_callback_id(
+        callback.data
+    )
+
+    if seller_id is None:
+        await callback.answer(
+            "⚠️ شناسه نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    user_id = await ensure_user(
+        callback.from_user
+    )
+
+    seller = await _check_seller_ownership(
+        user_id,
+        seller_id,
+    )
+
+    if not seller:
+        await callback.answer(
+            "⚠️ دسترسی مجاز نیست.",
+            show_alert=True,
+        )
+        return
+
+    await _render_shop_home(
+        callback,
+        seller_id,
+    )
+
+
+async def _render_shop_home(
+    callback: CallbackQuery,
+    seller_id: int,
+) -> None:
+    seller = await get_seller_by_id(
+        seller_id
+    )
+
+    if not seller:
+        await callback.answer(
+            "⚠️ فروشگاه پیدا نشد.",
+            show_alert=True,
+        )
+        return
+
+    products = await backend.fetchall(
+        """
+        SELECT
+            id,
+            name,
+            price,
+            status,
+            is_active
+        FROM products
+        WHERE seller_id = ?
+        ORDER BY created_at DESC, id DESC;
+        """,
+        (seller_id,),
+    )
+
+    active_count = sum(
+        1
+        for product in products
+        if (
+            product["is_active"] is None
+            or bool(product["is_active"])
+        )
+    )
+
+    builder = InlineKeyboardBuilder()
+
+    builder.row(
+        InlineKeyboardButton(
+            text="➕ افزودن محصول",
+            callback_data=(
+                f"productadd:{seller_id}"
+            ),
+        )
+    )
+
+    builder.row(
+        InlineKeyboardButton(
+            text="✏️ ویرایش اطلاعات فروشگاه",
+            callback_data=(
+                f"shopedit:{seller_id}"
+            ),
+        )
+    )
+
+    builder.row(
+        InlineKeyboardButton(
+            text="📊 آمار فروشگاه",
+            callback_data=(
+                f"stats:{seller_id}"
+            ),
+        )
+    )
+
+    builder.row(
+        InlineKeyboardButton(
+            text="📦 محصولات",
+            callback_data=(
+                f"productseller:{seller_id}:0"
+            ),
+        )
+    )
+
+    kb_add_back(
+        builder,
+        "account",
+    )
+
+    await safe_edit(
+        callback,
+        (
+            f"🏪 <b>{_html(_seller_name(seller))}</b>\n\n"
+            f"📦 محصولات: {len(products)}\n"
+            f"🟢 فعال: {active_count}\n"
+            f"👁 بازدید: {seller.get('views', 0) or 0}"
+        ),
+        builder.as_markup(),
+    )
+
+    await callback.answer()
+
+
+@router.callback_query(
+    F.data.startswith("shopedit:")
+)
+async def handle_shop_edit_start(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> None:
+    seller_id = _parse_positive_callback_id(
+        callback.data
+    )
+
+    if seller_id is None:
+        await callback.answer(
+            "⚠️ شناسه نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    user_id = await ensure_user(
+        callback.from_user
+    )
+
+    seller = await _check_seller_ownership(
+        user_id,
+        seller_id,
+    )
+
+    if not seller:
+        await callback.answer(
+            "⚠️ دسترسی مجاز نیست.",
+            show_alert=True,
+        )
+        return
+
+    await state.update_data(
+        shop_edit_seller_id=seller_id
+    )
+
+    builder = InlineKeyboardBuilder()
+
+    for field, label in (
+        SHOP_EDITABLE_FIELDS
+    ):
+        builder.row(
+            InlineKeyboardButton(
+                text=label,
+                callback_data=(
+                    f"shopfield:"
+                    f"{seller_id}:"
+                    f"{field}"
+                ),
+            )
+        )
+
+    kb_add_back(
+        builder,
+        f"shopview:{seller_id}",
+    )
+
+    await safe_edit(
+        callback,
+        (
+            "✏️ <b>ویرایش فروشگاه</b>\n\n"
+            "کدوم بخش رو می‌خوای تغییر بدی؟"
+        ),
+        builder.as_markup(),
+    )
+
+    await callback.answer()
+
+
+@router.callback_query(
+    F.data.startswith("shopfield:")
+)
+async def handle_shop_field(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> None:
+    parts = callback.data.split(":")
+    if len(parts) != 3:
+        await callback.answer(
+            "⚠️ گزینه نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    seller_id = parse_int(parts[1])
+    field = parts[2]
+
+    if (
+        seller_id is None
+        or seller_id < 1
+        or field not in dict(SHOP_EDITABLE_FIELDS)
+    ):
+        await callback.answer(
+            "⚠️ گزینه نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    user_id = await ensure_user(
+        callback.from_user
+    )
+
+    seller = await _check_seller_ownership(
+        user_id,
+        seller_id,
+    )
+
+    if not seller:
+        await callback.answer(
+            "⚠️ دسترسی مجاز نیست.",
+            show_alert=True,
+        )
+        return
+
+    await state.update_data(
+        shop_edit_seller_id=seller_id,
+        shop_edit_field=field,
+    )
+
+    await state.set_state(
+        ShopEditStates.value
+    )
+
+    await safe_edit(
+        callback,
+        (
+            "✏️ مقدار جدید رو بفرست.\n\n"
+            "برای لغو، /cancel رو بفرست."
+        ),
+        InlineKeyboardBuilder().as_markup(),
+    )
+
+    await callback.answer()
+
+
+@router.message(
+    StateFilter(
+        ShopEditStates.value
+    )
+)
+async def handle_shop_field_value(
+    message: Message,
+    state: FSMContext,
+) -> None:
+    value = (
+        message.text or ""
+    ).strip()
+
+    if value == "/cancel":
+        await state.clear()
+        await message.answer(
+            "لغو شد."
+        )
+        return
+
+    data = await state.get_data()
+
+    seller_id = data.get(
+        "shop_edit_seller_id"
+    )
+
+    field = data.get(
+        "shop_edit_field"
+    )
+
+    if (
+        not isinstance(seller_id, int)
+        or seller_id < 1
+        or field not in dict(SHOP_EDITABLE_FIELDS)
+    ):
+        await state.clear()
+        await message.answer(
+            "⚠️ نشست ویرایش نامعتبر یا منقضی شده است."
+        )
+        return
+
+    user_id = await ensure_user(
+        message.from_user
+    )
+
+    seller = await _check_seller_ownership(
+        user_id,
+        seller_id,
+    )
+
+    if not seller:
+        await state.clear()
+        await message.answer(
+            "⚠️ دسترسی مجاز نیست."
+        )
+        return
+
+    if field == "name" and not value:
+        await message.answer(
+            "⚠️ نام فروشگاه نمی‌تواند خالی باشد."
+        )
+        return
+
+    if field == "instagram" and value:
+        if not instagram_url(value):
+            await message.answer(
+                "⚠️ لینک یا آیدی اینستاگرام معتبر نیست."
+            )
+            return
+
+    if field == "telegram" and value:
+        if not telegram_url(value):
+            await message.answer(
+                "⚠️ لینک یا آیدی تلگرام معتبر نیست."
+            )
+            return
+
+    if field == "website" and value:
+        if not website_url(value):
+            await message.answer(
+                "⚠️ لینک وب‌سایت معتبر نیست."
+            )
+            return
+
+    if field == "whatsapp" and value:
+        if not whatsapp_url(value):
+            await message.answer(
+                "⚠️ شماره یا لینک واتساپ معتبر نیست."
+            )
+            return
+
+    query = SHOP_UPDATE_QUERIES.get(field)
+
+    if not query:
+        await state.clear()
+        await message.answer(
+            "⚠️ این فیلد قابل ویرایش نیست."
+        )
+        return
+
+    params = (
+        (value or None)
+        + (now_iso(), seller_id)
+    )
+
+    await backend.execute(
+        query,
+        params,
+    )
+
+    await state.clear()
+
+    await log_audit(
+        user_id,
+        "seller_updated",
+        "seller",
+        seller_id,
+    )
+
+    await message.answer(
+        "✅ اطلاعات فروشگاه با موفقیت به‌روزرسانی شد."
+    )
+
+    is_owner = user_id in (
+        seller["owner_user_id"],
+        seller["created_by_user_id"],
+    )
+
+    if not is_active and not is_owner:
+        await callback.answer(
+            "🔴 این فروشگاه فعلاً غیرفعال است و "
+            "ارتباطات جدید در دسترس نیست.",
+            show_alert=True,
+        )
+        return
+
+    value = seller[field]
+
+    link = builder(value)
+
+    if not link:
+        await callback.answer(
+            "⚠️ این لینک در دسترس نیست.",
+            show_alert=True,
+        )
+        return
+
+    await log_event(
+        user_id,
+        event_type,
+        "seller",
+        seller_id,
+    )
+
+    await callback.answer(
+        url=link
+    )
+
+
+@router.callback_query(
+    F.data.startswith("igclick:")
+)
+async def handle_instagram_click(
+    callback: CallbackQuery,
+) -> None:
+    seller_id = _parse_positive_callback_id(
+        callback.data
+    )
+
+    if seller_id is None:
+        await callback.answer(
+            "⚠️ شناسه نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    await _handle_seller_url_click(
+        callback,
+        seller_id,
+        "instagram",
+        instagram_url,
+        "instagram_click",
+    )
+
+
+@router.callback_query(
+    F.data.startswith("tgclick:")
+)
+async def handle_telegram_click(
+    callback: CallbackQuery,
+) -> None:
+    seller_id = _parse_positive_callback_id(
+        callback.data
+    )
+
+    if seller_id is None:
+        await callback.answer(
+            "⚠️ شناسه نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    await _handle_seller_url_click(
+        callback,
+        seller_id,
+        "telegram",
+        telegram_url,
+        "telegram_click",
+    )
+
+
+@router.callback_query(
+    F.data.startswith("waclick:")
+)
+async def handle_whatsapp_click(
+    callback: CallbackQuery,
+) -> None:
+    seller_id = _parse_positive_callback_id(
+        callback.data
+    )
+
+    if seller_id is None:
+        await callback.answer(
+            "⚠️ شناسه نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    await _handle_seller_url_click(
+        callback,
+        seller_id,
+        "whatsapp",
+        whatsapp_url,
+        "whatsapp_click",
+    )
+
+
+# ============================================================================
+# WHATSAPP EDIT
+# ============================================================================
+
+
+@router.callback_query(
+    F.data.startswith("waedit:")
+)
+async def handle_whatsapp_edit_start(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> None:
+    seller_id = _parse_positive_callback_id(
+        callback.data
+    )
+
+    if seller_id is None:
+        await callback.answer(
+            "⚠️ شناسه نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    user_id = await ensure_user(
+        callback.from_user
+    )
+
+    seller = await backend.fetchone(
         """
         SELECT
             id,
@@ -1028,7 +1778,7 @@ async def handle_whatsapp_edit_value(
         message.from_user
     )
 
-    seller = await db.fetchone(
+    seller = await backend.fetchone(
         """
         SELECT
             id,
@@ -1062,7 +1812,7 @@ async def handle_whatsapp_edit_value(
         )
         return
 
-    result = await sqlite_backend.execute(
+    result = await backend.execute(
         """
         UPDATE sellers
         SET whatsapp = ?,
@@ -1166,7 +1916,7 @@ async def handle_claim(
         )
         return
 
-    existing_pending = await db.fetchone(
+    existing_pending = await backend.fetchone(
         """
         SELECT id
         FROM seller_claims
@@ -1406,7 +2156,7 @@ async def handle_store_toggle_active(
 
     next_value = 0 if current else 1
 
-    result = await sqlite_backend.execute(
+    result = await backend.execute(
         """
         UPDATE sellers
         SET is_active = ?,
@@ -1805,7 +2555,7 @@ async def handle_shop_city_start(
     if not seller:
         return
 
-    cities = await db.fetchall(
+    cities = await backend.fetchall(
         """
         SELECT id, name
         FROM cities
@@ -1890,7 +2640,7 @@ async def handle_shop_edit_city_pick(
     if not seller:
         return
 
-    city = await db.fetchone(
+    city = await backend.fetchone(
         """
         SELECT id, name
         FROM cities
@@ -1910,7 +2660,7 @@ async def handle_shop_edit_city_pick(
         callback.from_user
     )
 
-    result = await sqlite_backend.execute(
+    result = await backend.execute(
         """
         UPDATE sellers
         SET city_id = ?,
@@ -2048,7 +2798,7 @@ async def handle_shop_edit_value(
         )
         return
 
-    result = await sqlite_backend.execute(
+    result = await backend.execute(
         query,
         (
             value,
@@ -2171,7 +2921,7 @@ async def _render_product_list(
         )
         return
 
-    products = await db.fetchall(
+    products = await backend.fetchall(
         """
         SELECT *
         FROM products
@@ -2898,7 +3648,7 @@ async def handle_product_field_edit_value(
         )
         return
 
-    result = await sqlite_backend.execute(
+    result = await backend.execute(
         query,
         (
             value,
@@ -3104,7 +3854,7 @@ async def handle_product_stock_set(
         )
         return
 
-    result = await sqlite_backend.execute(
+    result = await backend.execute(
         """
         UPDATE products
         SET stock_status = ?,
@@ -3198,7 +3948,6 @@ async def handle_product_delete_start(
         return
 
     builder = InlineKeyboardBuilder()
-
     builder.row(
         InlineKeyboardButton(
             text="❌ بله، حذف شود",
@@ -3429,7 +4178,7 @@ async def _render_stats_home(
         )
         return
 
-    products = await db.fetchall(
+    products = await backend.fetchall(
         """
         SELECT id, name
         FROM products
@@ -3663,7 +4412,7 @@ async def handle_register_description(
         RegisterSellerStates.city
     )
 
-    cities = await db.fetchall(
+    cities = await backend.fetchall(
         """
         SELECT id, name
         FROM cities
@@ -3710,7 +4459,7 @@ async def handle_pick_city(
         )
         return
 
-    city = await db.fetchone(
+    city = await backend.fetchone(
         """
         SELECT id, name
         FROM cities
@@ -3998,10 +4747,9 @@ async def _finish_register_seller(
 
     if not name:
         await message.answer(
-            "⚠️ اسم فروشگاه نمی‌تواند خالی باشد."
+            "⚠️ نام فروشگاه وارد نشده است."
         )
         return
-
     city_id = data.get(
         "register_city_id"
     )
@@ -4016,7 +4764,7 @@ async def _finish_register_seller(
         )
         return
 
-    city = await db.fetchone(
+    city = await backend.fetchone(
         """
         SELECT id
         FROM cities
@@ -4056,7 +4804,7 @@ async def _finish_register_seller(
     seller_id: int | None = None
 
     try:
-        async with sqlite_backend.transaction(
+        async with backend.transaction(
             immediate=True,
         ) as tx:
             existing_row = await tx.fetchone(
@@ -4079,7 +4827,7 @@ async def _finish_register_seller(
             if existing_row is not None:
                 already_registered = True
             else:
-                result = await tx.execute(
+                await tx.execute(
                     """
                     INSERT INTO sellers (
                         name,
@@ -4123,12 +4871,24 @@ async def _finish_register_seller(
                     ),
                 )
 
-                seller_id = result.lastrowid
+        if not already_registered:
+            seller_row = await backend.fetchone(
+                """
+                SELECT id
+                FROM sellers
+                WHERE created_by_user_id = ?
+                ORDER BY id DESC
+                LIMIT 1;
+                """,
+                (user_id,),
+            )
 
-                if seller_id is None:
-                    raise RuntimeError(
-                        "Seller registration returned no seller id."
-                    )
+            if seller_row is None:
+                raise RuntimeError(
+                    "Seller registration returned no seller id."
+                )
+
+            seller_id = seller_row["id"]
 
     except DatabaseIntegrityError:
         await message.answer(
@@ -4152,6 +4912,13 @@ async def _finish_register_seller(
     if already_registered:
         await message.answer(
             "⚠️ شما قبلاً یک فروشگاه ثبت کرده‌اید."
+        )
+        return
+
+    if seller_id is None:
+        await message.answer(
+            "⚠️ ثبت فروشگاه انجام نشد. "
+            "شناسه فروشگاه دریافت نشد."
         )
         return
 
