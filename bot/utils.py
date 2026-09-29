@@ -17,17 +17,20 @@ from aiogram.types import (
     Message,
 )
 
+from .backend import backend
 from .config import ADMIN_CHAT_ID
 from .constants import (
     _DANGEROUS_URL_SCHEME_PREFIXES,
     _UNSAFE_URL_CHARS,
 )
-from .database import db
-from .sqlite_backend import sqlite_backend
 
 
 def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(
+        timezone.utc
+    ).isoformat(
+        timespec="seconds"
+    )
 
 
 def parse_int(value) -> Optional[int]:
@@ -64,7 +67,11 @@ def status_badge(status: str) -> str:
         "active": "🟢",
         "inactive": "⚪",
     }
-    return badges.get(status, "⚪")
+
+    return badges.get(
+        status,
+        "⚪",
+    )
 
 
 def _normalize_url(
@@ -78,6 +85,7 @@ def _normalize_url(
     Unsafe control characters, whitespace, dangerous schemes,
     malformed hosts, credentials, and invalid ports are rejected.
     """
+
     if not value:
         return None
 
@@ -157,7 +165,9 @@ def instagram_url(
         username,
     )
 
-    username = username.strip("/").lstrip("@")
+    username = username.strip(
+        "/"
+    ).lstrip("@")
 
     if not username:
         return None
@@ -191,7 +201,9 @@ def telegram_url(
         username,
     )
 
-    username = username.strip("/").lstrip("@")
+    username = username.strip(
+        "/"
+    ).lstrip("@")
 
     if not username:
         return None
@@ -214,7 +226,9 @@ def telegram_url(
 def website_url(
     value: Optional[str],
 ) -> Optional[str]:
-    return _normalize_url(value)
+    return _normalize_url(
+        value
+    )
 
 
 def whatsapp_url(
@@ -228,10 +242,9 @@ def whatsapp_url(
     if not value:
         return None
 
-    if value.startswith(
-        "http://"
-    ) or value.startswith(
-        "https://"
+    if (
+        value.startswith("http://")
+        or value.startswith("https://")
     ):
         return _normalize_url(
             value
@@ -274,7 +287,9 @@ async def safe_edit(
         return True
 
     except TelegramBadRequest as exc:
-        if "message is not modified" in str(exc).lower():
+        if "message is not modified" in str(
+            exc
+        ).lower():
             return False
 
         try:
@@ -295,6 +310,7 @@ async def ensure_user(user) -> int:
     duplicate users when multiple updates for the same Telegram
     account arrive at the same time.
     """
+
     telegram_id = user.id
 
     username = getattr(
@@ -317,7 +333,7 @@ async def ensure_user(user) -> int:
 
     now = now_iso()
 
-    await sqlite_backend.execute(
+    await backend.execute(
         """
         INSERT OR IGNORE INTO users (
             telegram_id,
@@ -339,7 +355,7 @@ async def ensure_user(user) -> int:
         ),
     )
 
-    await sqlite_backend.execute(
+    await backend.execute(
         """
         UPDATE users
         SET username = ?,
@@ -357,7 +373,7 @@ async def ensure_user(user) -> int:
         ),
     )
 
-    existing = await db.fetchone(
+    existing = await backend.fetchone(
         """
         SELECT id
         FROM users
@@ -382,7 +398,7 @@ async def log_event(
     entity_id: Optional[int] = None,
 ) -> None:
     try:
-        await sqlite_backend.execute(
+        await backend.execute(
             """
             INSERT INTO events (
                 user_id,
@@ -413,7 +429,7 @@ async def log_audit(
     details: Optional[str] = None,
 ) -> None:
     try:
-        await sqlite_backend.execute(
+        await backend.execute(
             """
             INSERT INTO audit_log (
                 actor_user_id,
@@ -471,7 +487,9 @@ async def restart_requested(
     message: Message,
     state: FSMContext,
 ) -> bool:
-    if (message.text or "").strip() != "/start":
+    if (
+        message.text or ""
+    ).strip() != "/start":
         return False
 
     await state.clear()
