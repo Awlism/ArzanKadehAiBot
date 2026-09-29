@@ -30,16 +30,7 @@ class Default(WorkerEntrypoint):
         backend.set_backend(d1_backend)
         await backend.connect()
 
-        # Execute a real read query against Cloudflare D1.
-        row = await backend.fetchone(
-            "SELECT COUNT(*) AS count FROM cities"
-        )
-
-        cities_count = (
-            row["count"]
-            if row is not None
-            else 0
-        )
+        cities_count = "SKIPPED"
 
         dp = Dispatcher()
 
