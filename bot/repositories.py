@@ -768,14 +768,6 @@ async def create_seller_claim(
     return int(result.lastrowid)
 
 
-    if not await is_admin_user_id(admin_user_id):
-        raise PermissionError(
-            "Only the configured admin can approve seller claims."
-        )
-
-    now = now_iso()
-
-    try:
 async def approve_seller_claim(
     claim_id: int,
     admin_user_id: int,
