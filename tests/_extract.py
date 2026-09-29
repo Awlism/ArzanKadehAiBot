@@ -596,34 +596,48 @@ def _extract_from_module(
     }
 
     for referenced_name in referenced_names:
-        imported = imports.get(referenced_name)
-
-        if imported is None:
+        if referenced_name == name:
             continue
-
-        source_module, source_name = imported
 
         if referenced_name in namespace:
             continue
 
-        if (
-            source_module == "sqlite_backend"
-            and source_name == "sqlite_backend"
-        ):
-            namespace[referenced_name] = _ExtractedSQLiteBackend(
-                namespace
-            )
+        imported = imports.get(referenced_name)
+
+        if imported is not None:
+            source_module, source_name = imported
+
+            if (
+                source_module == "sqlite_backend"
+                and source_name == "sqlite_backend"
+            ):
+                namespace[referenced_name] = (
+                    _ExtractedSQLiteBackend(namespace)
+                )
+                continue
+
+            if _extract_from_module(
+                source_module,
+                source_name,
+                namespace,
+                visiting,
+            ):
+                namespace[referenced_name] = namespace[
+                    source_name
+                ]
+
             continue
 
-        if _extract_from_module(
-            source_module,
-            source_name,
-            namespace,
-            visiting,
-        ):
-            namespace[referenced_name] = namespace[
-                source_name
-            ]
+        local_node = nodes.get(referenced_name)
+
+        if local_node is not None:
+            if _extract_from_module(
+                module_name,
+                referenced_name,
+                namespace,
+                visiting,
+            ):
+                continue
 
     _compile_node(
         node,
