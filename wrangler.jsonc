@@ -3,5 +3,13 @@
   "name": "arzankadehaibot",
   "main": "src/entry.py",
   "compatibility_date": "2026-09-29",
-  "compatibility_flags": ["python_workers"]
+  "compatibility_flags": ["python_workers"],
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "arzankadeh-db",
+      "database_id": "1f3a3d15-aaaa-4b17-992a-74c508582917"
+    }
+  ]
 }
