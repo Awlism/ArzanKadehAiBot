@@ -1,0 +1,7 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "arzankadehaibot",
+  "main": "src/entry.py",
+  "compatibility_date": "2026-09-29",
+  "compatibility_flags": ["python_workers"]
+}
