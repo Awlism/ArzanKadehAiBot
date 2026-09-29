@@ -7,8 +7,7 @@ Referral / seller growth service
 import logging
 import re
 
-from ..database import db
-from ..sqlite_backend import sqlite_backend
+from ..backend import backend
 from ..utils import now_iso
 
 logger = logging.getLogger("arzankadeh")
@@ -34,7 +33,7 @@ def build_referral_link(
 async def get_referral_count(
     seller_id: int,
 ) -> int:
-    row = await db.fetchone(
+    row = await backend.fetchone(
         """
         SELECT COUNT(*) AS c
         FROM referrals
@@ -59,7 +58,7 @@ async def record_referral_if_new(
     referred_user_id: int,
 ) -> bool:
     try:
-        seller = await db.fetchone(
+        seller = await backend.fetchone(
             """
             SELECT
                 id,
@@ -80,7 +79,7 @@ async def record_referral_if_new(
         ):
             return False
 
-        existing = await db.fetchone(
+        existing = await backend.fetchone(
             """
             SELECT id
             FROM referrals
@@ -92,7 +91,7 @@ async def record_referral_if_new(
         if existing:
             return False
 
-        await sqlite_backend.execute(
+        await backend.execute(
             """
             INSERT INTO referrals (
                 seller_id,
@@ -123,7 +122,7 @@ async def record_referral_if_new(
 async def get_sellers_owned_by_user(
     user_id: int,
 ) -> list:
-    return await db.fetchall(
+    return await backend.fetchall(
         """
         SELECT id, name
         FROM sellers
