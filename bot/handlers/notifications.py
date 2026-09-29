@@ -11,8 +11,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from ..database import db
-from ..sqlite_backend import sqlite_backend
+from ..backend import backend
 from ..keyboards import kb_add_back
 from ..utils import ensure_user, parse_int, safe_edit
 
@@ -41,7 +40,7 @@ async def _render_notifications(
         callback.from_user
     )
 
-    rows = await db.fetchall(
+    rows = await backend.fetchall(
         """
         SELECT *
         FROM notifications
@@ -156,7 +155,7 @@ async def handle_notification_read(
         callback.from_user
     )
 
-    cursor = await sqlite_backend.execute(
+    result = await backend.execute(
         """
         UPDATE notifications
         SET is_read = 1
@@ -170,7 +169,7 @@ async def handle_notification_read(
         ),
     )
 
-    if cursor.rowcount != 1:
+    if result.rowcount != 1:
         await _render_notifications(
             callback,
             answer_text=(
