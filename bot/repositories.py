@@ -780,6 +780,18 @@ async def approve_seller_claim(
     now = now_iso()
 
     try:
+async def approve_seller_claim(
+    claim_id: int,
+    admin_user_id: int,
+) -> bool:
+    if not await is_admin_user_id(admin_user_id):
+        raise PermissionError(
+            "Only the configured admin can approve seller claims."
+        )
+
+    now = now_iso()
+
+    try:
         async with sqlite_backend.transaction() as transaction:
             claim_row = await transaction.fetchone(
                 """
@@ -827,25 +839,34 @@ async def approve_seller_claim(
             ):
                 return False
 
-            claim_update = await transaction.execute(
+            await transaction.execute(
                 """
                 UPDATE seller_claims
                 SET
                     status = 'APPROVED',
                     updated_at = ?
                 WHERE id = ?
-                  AND status = 'PENDING';
+                  AND status = 'PENDING'
+                  AND EXISTS (
+                      SELECT 1
+                      FROM sellers
+                      WHERE id = ?
+                        AND status = 'UNCLAIMED'
+                        AND (
+                            owner_user_id IS NULL
+                            OR owner_user_id = ?
+                        )
+                  );
                 """,
                 (
                     now,
                     claim_id,
+                    claim_row["seller_id"],
+                    claim_row["user_id"],
                 ),
             )
 
-            if claim_update.rowcount != 1:
-                return False
-
-            seller_update = await transaction.execute(
+            await transaction.execute(
                 """
                 UPDATE sellers
                 SET
@@ -853,17 +874,30 @@ async def approve_seller_claim(
                     status = 'CLAIMED',
                     updated_at = ?
                 WHERE id = ?
-                  AND status = 'UNCLAIMED';
+                  AND status = 'UNCLAIMED'
+                  AND (
+                      owner_user_id IS NULL
+                      OR owner_user_id = ?
+                  )
+                  AND EXISTS (
+                      SELECT 1
+                      FROM seller_claims
+                      WHERE id = ?
+                        AND seller_id = ?
+                        AND user_id = ?
+                        AND status = 'APPROVED'
+                  );
                 """,
                 (
                     claim_row["user_id"],
                     now,
                     claim_row["seller_id"],
+                    claim_row["user_id"],
+                    claim_id,
+                    claim_row["seller_id"],
+                    claim_row["user_id"],
                 ),
             )
-
-            if seller_update.rowcount != 1:
-                return False
 
             await transaction.execute(
                 """
