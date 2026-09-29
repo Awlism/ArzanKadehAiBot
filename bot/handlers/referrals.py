@@ -8,7 +8,7 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
 
-from ..database import db
+from ..backend import backend
 from ..services.referrals import referral_stats_text
 from ..utils import ensure_user, parse_int, safe_edit
 
@@ -24,7 +24,7 @@ async def handle_referral_list(
 
     user_id = await ensure_user(callback.from_user)
 
-    sellers = await db.fetchall(
+    sellers = await backend.fetchall(
         """
         SELECT id, name
         FROM sellers
@@ -117,7 +117,7 @@ async def _render_referral_stats(
         callback.from_user
     )
 
-    seller = await db.fetchone(
+    seller = await backend.fetchone(
         """
         SELECT
             id,
