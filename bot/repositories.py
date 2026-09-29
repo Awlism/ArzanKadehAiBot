@@ -458,7 +458,7 @@ async def get_product_statistics(
 async def get_seller_by_id(
     seller_id: int,
 ) -> Optional[dict[str, Any]]:
-    return await db.fetchone(
+    return await backend.fetchone(
         """
         SELECT *
         FROM sellers
@@ -478,7 +478,7 @@ async def get_seller(
 async def get_sellers_owned_by_user(
     user_id: int,
 ) -> list[dict[str, Any]]:
-    return await db.fetchall(
+    return await backend.fetchall(
         """
         SELECT *
         FROM sellers
@@ -496,7 +496,7 @@ async def get_sellers_owned_by_user(
 async def get_seller_products(
     seller_id: int,
 ) -> list[dict[str, Any]]:
-    return await db.fetchall(
+    return await backend.fetchall(
         """
         SELECT *
         FROM products
@@ -510,7 +510,7 @@ async def get_seller_products(
 async def get_seller_statistics(
     seller_id: int,
 ) -> Optional[dict[str, Any]]:
-    return await db.fetchone(
+    return await backend.fetchone(
         """
         SELECT
             s.id,
