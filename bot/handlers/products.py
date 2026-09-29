@@ -24,8 +24,7 @@ from ..constants import (
     EMOJI_SELLERS,
     PAGE_SIZE_LIST,
 )
-from ..database import db
-from ..sqlite_backend import sqlite_backend
+from ..backend import backend
 from ..database_backend import DatabaseIntegrityError
 from ..keyboards import kb_add_back, kb_pagination_row
 from ..repositories import has_open_report
@@ -110,7 +109,7 @@ async def handle_product_detail(
         callback.from_user
     )
 
-    product = await db.fetchone(
+    product = await backend.fetchone(
         """
         SELECT
             p.id
@@ -130,7 +129,7 @@ async def handle_product_detail(
         )
         return
 
-    result = await sqlite_backend.execute(
+    result = await backend.execute(
         """
         UPDATE products
         SET views = COALESCE(views, 0) + 1,
@@ -184,7 +183,7 @@ async def _render_product_detail(
         callback.from_user
     )
 
-    product = await db.fetchone(
+    product = await backend.fetchone(
         """
         SELECT
             p.*,
@@ -209,7 +208,7 @@ async def _render_product_detail(
         )
         return
 
-    is_favorite = await db.fetchone(
+    is_favorite = await backend.fetchone(
         """
         SELECT id
         FROM favorites
@@ -324,6 +323,7 @@ async def _render_product_detail(
 
     await callback.answer()
 
+
 # ======================================================================
 # FAVORITES
 # ======================================================================
@@ -352,7 +352,7 @@ async def handle_favorite_add(
         callback.from_user
     )
 
-    product = await db.fetchone(
+    product = await backend.fetchone(
         """
         SELECT
             p.id
@@ -373,7 +373,7 @@ async def handle_favorite_add(
         return
 
     try:
-        result = await sqlite_backend.execute(
+        result = await backend.execute(
             """
             INSERT INTO favorites (
                 user_id,
@@ -444,7 +444,7 @@ async def handle_favorite_remove(
         callback.from_user
     )
 
-    result = await sqlite_backend.execute(
+    result = await backend.execute(
         """
         DELETE FROM favorites
         WHERE user_id = ?
@@ -480,6 +480,7 @@ async def handle_favorite_remove(
         callback,
     )
 
+
 @router.callback_query(F.data.startswith("favorites:"))
 async def handle_favorites_list(
     callback: CallbackQuery,
@@ -506,7 +507,7 @@ async def handle_favorites_list(
         callback.from_user
     )
 
-    products = await db.fetchall(
+    products = await backend.fetchall(
         """
         SELECT p.*
         FROM favorites f
@@ -624,7 +625,7 @@ async def handle_review_start(
         return
 
     if target_type == "seller":
-        target = await db.fetchone(
+        target = await backend.fetchone(
             """
             SELECT id
             FROM sellers
@@ -634,7 +635,7 @@ async def handle_review_start(
             (target_id,),
         )
     else:
-        target = await db.fetchone(
+        target = await backend.fetchone(
             """
             SELECT p.id
             FROM products p
@@ -768,7 +769,7 @@ async def handle_review_text(
         return
 
     if target_type == "seller":
-        target = await db.fetchone(
+        target = await backend.fetchone(
             """
             SELECT id
             FROM sellers
@@ -778,7 +779,7 @@ async def handle_review_text(
             (target_id,),
         )
     elif target_type == "product":
-        target = await db.fetchone(
+        target = await backend.fetchone(
             """
             SELECT p.id
             FROM products p
@@ -827,7 +828,7 @@ async def handle_review_text(
               AND seller_id IS NULL;
         """
 
-    existing = await db.fetchone(
+    existing = await backend.fetchone(
         duplicate_query,
         (
             user_id,
@@ -846,7 +847,7 @@ async def handle_review_text(
     ).strip()
 
     try:
-        result = await sqlite_backend.execute(
+        result = await backend.execute(
             """
             INSERT INTO reviews (
                 user_id,
@@ -884,7 +885,7 @@ async def handle_review_text(
             return
 
     else:
-        result = await sqlite_backend.execute(
+        result = await backend.execute(
             """
             UPDATE products
             SET
@@ -966,7 +967,7 @@ async def handle_report_start(
         return
 
     if target_type == "seller":
-        target = await db.fetchone(
+        target = await backend.fetchone(
             """
             SELECT id
             FROM sellers
@@ -976,7 +977,7 @@ async def handle_report_start(
             (target_id,),
         )
     else:
-        target = await db.fetchone(
+        target = await backend.fetchone(
             """
             SELECT p.id
             FROM products p
@@ -1143,7 +1144,7 @@ async def _save_report(
         return False
 
     if target_type == "seller":
-        target = await db.fetchone(
+        target = await backend.fetchone(
             """
             SELECT id
             FROM sellers
@@ -1153,7 +1154,7 @@ async def _save_report(
             (target_id,),
         )
     else:
-        target = await db.fetchone(
+        target = await backend.fetchone(
             """
             SELECT p.id
             FROM products p
@@ -1188,7 +1189,7 @@ async def _save_report(
         return False
 
     try:
-        result = await sqlite_backend.execute(
+        result = await backend.execute(
             """
             INSERT INTO reports (
                 user_id,
@@ -1277,6 +1278,7 @@ async def _save_report(
         )
 
     return True
+
 
 @router.callback_query(
     F.data == "reportskip",
@@ -1431,7 +1433,7 @@ async def handle_admin_report_decision(
         )
         return
 
-    report = await db.fetchone(
+    report = await backend.fetchone(
         """
         SELECT *
         FROM reports
@@ -1454,7 +1456,7 @@ async def handle_admin_report_decision(
         else "REJECTED"
     )
 
-    result = await sqlite_backend.execute(
+    result = await backend.execute(
         """
         UPDATE reports
         SET status = ?
@@ -1468,7 +1470,7 @@ async def handle_admin_report_decision(
     )
 
     if result.rowcount != 1:
-        current_report = await db.fetchone(
+        current_report = await backend.fetchone(
             """
             SELECT status
             FROM reports
