@@ -7,8 +7,7 @@ Notification service
 import logging
 from typing import Optional
 
-from ..database import db
-from ..sqlite_backend import sqlite_backend
+from ..backend import backend
 from ..utils import now_iso
 
 logger = logging.getLogger("arzankadeh")
@@ -27,7 +26,7 @@ async def notify_user(
     Actual Telegram delivery is handled separately by the caller.
     """
     try:
-        await sqlite_backend.execute(
+        await backend.execute(
             """
             INSERT INTO notifications (
                 user_id,
@@ -62,7 +61,7 @@ async def get_unread_notifications(
     user_id: int,
 ) -> list:
     try:
-        return await db.fetchall(
+        return await backend.fetchall(
             """
             SELECT id, title, message, notification_type, created_at
             FROM notifications
@@ -86,7 +85,7 @@ async def mark_notification_read(
     user_id: int,
 ) -> bool:
     try:
-        cursor = await sqlite_backend.execute(
+        cursor = await backend.execute(
             """
             UPDATE notifications
             SET is_read = 1
@@ -104,10 +103,9 @@ async def mark_notification_read(
 
     except Exception as exc:
         logger.error(
-            "Failed to mark notification %s as read for user %s: %s",
+            "Failed to mark notification %s as read for user %s",
             notification_id,
             user_id,
-            exc,
         )
         return False
 
@@ -116,7 +114,7 @@ async def mark_all_notifications_read(
     user_id: int,
 ) -> bool:
     try:
-        await sqlite_backend.execute(
+        await backend.execute(
             """
             UPDATE notifications
             SET is_read = 1
