@@ -30,6 +30,17 @@ class Default(WorkerEntrypoint):
         backend.set_backend(d1_backend)
         await backend.connect()
 
+        # Execute a real read query against Cloudflare D1.
+        row = await backend.fetchone(
+            "SELECT COUNT(*) AS count FROM cities"
+        )
+
+        cities_count = (
+            row["count"]
+            if row is not None
+            else 0
+        )
+
         dp = Dispatcher()
 
         routers = [
@@ -53,9 +64,10 @@ class Default(WorkerEntrypoint):
         bot = Bot(token="000000000:TEST")
 
         return Response(
-            f"ArzanKadeh D1 backend OK - "
+            f"ArzanKadeh D1 query OK - "
             f"aiogram={AIOGRAM_VERSION} - "
             f"routers={len(routers)} - "
             f"backend={type(backend.active).__name__} - "
+            f"cities={cities_count} - "
             f"bot={type(bot).__name__}"
         )
