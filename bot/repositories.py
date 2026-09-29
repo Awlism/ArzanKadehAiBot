@@ -46,7 +46,7 @@ async def update_user_role(
     if role not in VALID_MODES:
         return False
 
-    cursor = await sqlite_backend.execute(
+    result = await backend.execute(
         """
         UPDATE users
         SET active_mode = ?,
@@ -61,13 +61,13 @@ async def update_user_role(
         ),
     )
 
-    return cursor.rowcount == 1
+    return result.rowcount == 1
 
 
 async def user_has_any_seller(
     user_id: int,
 ) -> bool:
-    row = await db.fetchone(
+    row = await backend.fetchone(
         """
         SELECT 1
         FROM sellers
@@ -87,7 +87,7 @@ async def user_has_any_seller(
 async def get_active_mode(
     user_id: int,
 ) -> str:
-    row = await db.fetchone(
+    row = await backend.fetchone(
         """
         SELECT active_mode
         FROM users
@@ -100,7 +100,7 @@ async def get_active_mode(
     if row and row["active_mode"] in VALID_MODES:
         return row["active_mode"]
 
-    admin = await db.fetchone(
+    admin = await backend.fetchone(
         """
         SELECT telegram_id
         FROM users
@@ -132,7 +132,7 @@ async def set_active_mode(
             "Admin mode is restricted to the configured admin user."
         )
 
-    cursor = await sqlite_backend.execute(
+    result = await backend.execute(
         """
         UPDATE users
         SET active_mode = ?,
@@ -147,13 +147,13 @@ async def set_active_mode(
         ),
     )
 
-    return cursor.rowcount == 1
+    return result.rowcount == 1
 
 
 async def is_admin_user_id(
     user_id: int,
 ) -> bool:
-    row = await db.fetchone(
+    row = await backend.fetchone(
         """
         SELECT telegram_id
         FROM users
