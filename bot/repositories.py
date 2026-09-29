@@ -13,9 +13,7 @@ from .constants import (
     COMPARE_MAX_ITEMS,
     VALID_MODES,
 )
-from .database import db
 from .backend import backend
-from .sqlite_backend import sqlite_backend
 from .database_backend import DatabaseIntegrityError
 from .utils import now_iso
 
@@ -548,7 +546,7 @@ async def get_seller_statistics(
 async def get_seller_claim(
     claim_id: int,
 ) -> Optional[dict[str, Any]]:
-    return await db.fetchone(
+    return await backend.fetchone(
         """
         SELECT
             sc.*,
@@ -577,7 +575,7 @@ async def get_pending_seller_claims(
     if limit < 1:
         return []
 
-    return await db.fetchall(
+    return await backend.fetchall(
         """
         SELECT
             sc.*,
@@ -604,7 +602,7 @@ async def get_pending_seller_claims(
 async def get_seller_claims_for_seller(
     seller_id: int,
 ) -> list[dict[str, Any]]:
-    return await db.fetchall(
+    return await backend.fetchall(
         """
         SELECT
             sc.*,
@@ -628,7 +626,7 @@ async def get_seller_claims_for_seller(
 async def get_user_seller_claims(
     user_id: int,
 ) -> list[dict[str, Any]]:
-    return await db.fetchall(
+    return await backend.fetchall(
         """
         SELECT
             sc.*,
@@ -662,7 +660,7 @@ async def create_seller_claim(
       PENDING claims for the same seller/user pair.
     """
 
-    seller = await db.fetchone(
+    seller = await backend.fetchone(
         """
         SELECT
             id,
@@ -688,7 +686,7 @@ async def create_seller_claim(
     ):
         return None
 
-    existing = await db.fetchone(
+    existing = await backend.fetchone(
         """
         SELECT
             id,
@@ -722,7 +720,7 @@ async def create_seller_claim(
     now = now_iso()
 
     try:
-        result = await sqlite_backend.execute(
+        result = await backend.execute(
             """
             INSERT INTO seller_claims (
                 seller_id,
@@ -742,7 +740,7 @@ async def create_seller_claim(
         )
 
     except DatabaseIntegrityError:
-        pending = await db.fetchone(
+        pending = await backend.fetchone(
             """
             SELECT id
             FROM seller_claims
@@ -781,7 +779,7 @@ async def approve_seller_claim(
     now = now_iso()
 
     try:
-        async with sqlite_backend.transaction() as transaction:
+        async with backend.transaction() as transaction:
             claim_row = await transaction.fetchone(
                 """
                 SELECT
@@ -922,7 +920,7 @@ async def reject_seller_claim(
 
     now = now_iso()
 
-    cursor = await sqlite_backend.execute(
+    result = await backend.execute(
         """
         UPDATE seller_claims
         SET
@@ -937,7 +935,7 @@ async def reject_seller_claim(
         ),
     )
 
-    return cursor.rowcount == 1
+    return result.rowcount == 1
 
 
 # ============================================================================
@@ -949,7 +947,7 @@ async def is_favorite(
     user_id: int,
     product_id: int,
 ) -> bool:
-    row = await db.fetchone(
+    row = await backend.fetchone(
         """
         SELECT 1
         FROM favorites
@@ -970,7 +968,7 @@ async def add_favorite(
     user_id: int,
     product_id: int,
 ) -> bool:
-    await sqlite_backend.execute(
+    await backend.execute(
         """
         INSERT OR IGNORE INTO favorites (
             user_id,
@@ -993,7 +991,7 @@ async def remove_favorite(
     user_id: int,
     product_id: int,
 ) -> bool:
-    await sqlite_backend.execute(
+    await backend.execute(
         """
         DELETE FROM favorites
         WHERE user_id = ?
@@ -1011,7 +1009,7 @@ async def remove_favorite(
 async def get_user_favorites(
     user_id: int,
 ) -> list[dict[str, Any]]:
-    return await db.fetchall(
+    return await backend.fetchall(
         """
         SELECT
             p.*,
@@ -1040,7 +1038,7 @@ async def is_seller_favorite(
     user_id: int,
     seller_id: int,
 ) -> bool:
-    row = await db.fetchone(
+    row = await backend.fetchone(
         """
         SELECT 1
         FROM seller_favorites
@@ -1067,7 +1065,7 @@ async def toggle_seller_favorite(
     )
 
     if existing:
-        cursor = await sqlite_backend.execute(
+        result = await backend.execute(
             """
             DELETE FROM seller_favorites
             WHERE user_id = ?
@@ -1079,9 +1077,9 @@ async def toggle_seller_favorite(
             ),
         )
 
-        return cursor.rowcount == 1
+        return result.rowcount == 1
 
-    cursor = await sqlite_backend.execute(
+    result = await backend.execute(
         """
         INSERT OR IGNORE INTO seller_favorites (
             user_id,
@@ -1097,14 +1095,14 @@ async def toggle_seller_favorite(
         ),
     )
 
-    return cursor.rowcount == 1
+    return result.rowcount == 1
 
 
 async def add_seller_favorite(
     user_id: int,
     seller_id: int,
 ) -> bool:
-    await sqlite_backend.execute(
+    await backend.execute(
         """
         INSERT OR IGNORE INTO seller_favorites (
             user_id,
@@ -1127,7 +1125,7 @@ async def remove_seller_favorite(
     user_id: int,
     seller_id: int,
 ) -> bool:
-    await sqlite_backend.execute(
+    await backend.execute(
         """
         DELETE FROM seller_favorites
         WHERE user_id = ?
@@ -1145,7 +1143,7 @@ async def remove_seller_favorite(
 async def count_seller_favorites(
     seller_id: int,
 ) -> int:
-    row = await db.fetchone(
+    row = await backend.fetchone(
         """
         SELECT COUNT(*) AS c
         FROM seller_favorites
@@ -1160,7 +1158,7 @@ async def count_seller_favorites(
 async def get_user_seller_favorites(
     user_id: int,
 ) -> list[dict[str, Any]]:
-    return await db.fetchall(
+    return await backend.fetchall(
         """
         SELECT s.*
         FROM seller_favorites sf
@@ -1181,7 +1179,7 @@ async def get_user_seller_favorites(
 async def get_seller_reviews(
     seller_id: int,
 ) -> list[dict[str, Any]]:
-    return await db.fetchall(
+    return await backend.fetchall(
         """
         SELECT
             r.*,
@@ -1200,7 +1198,7 @@ async def get_seller_reviews(
 async def get_product_reviews(
     product_id: int,
 ) -> list[dict[str, Any]]:
-    return await db.fetchall(
+    return await backend.fetchall(
         """
         SELECT
             r.*,
@@ -1240,7 +1238,7 @@ async def create_review(
     if seller_id < 1:
         return False
 
-    seller = await db.fetchone(
+    seller = await backend.fetchone(
         """
         SELECT id
         FROM sellers
@@ -1264,7 +1262,7 @@ async def create_review(
         if product_id < 1:
             return False
 
-        product = await db.fetchone(
+        product = await backend.fetchone(
             """
             SELECT id
             FROM products
@@ -1284,7 +1282,7 @@ async def create_review(
         review_seller_id = None
         review_product_id = product_id
 
-    existing = await db.fetchone(
+    existing = await backend.fetchone(
         """
         SELECT id
         FROM reviews
@@ -1312,7 +1310,7 @@ async def create_review(
     if existing is not None:
         return False
 
-    await sqlite_backend.execute(
+    await backend.execute(
         """
         INSERT INTO reviews (
             user_id,
@@ -1361,7 +1359,7 @@ async def create_report(
     product_id: Optional[int] = None
 
     if target_type == "seller":
-        seller = await db.fetchone(
+        seller = await backend.fetchone(
             """
             SELECT id
             FROM sellers
@@ -1377,7 +1375,7 @@ async def create_report(
         seller_id = target_id
 
     else:
-        product = await db.fetchone(
+        product = await backend.fetchone(
             """
             SELECT id
             FROM products
@@ -1392,7 +1390,7 @@ async def create_report(
 
         product_id = target_id
 
-    await sqlite_backend.execute(
+    await backend.execute(
         """
         INSERT INTO reports (
             user_id,
@@ -1422,7 +1420,7 @@ async def has_open_report(
     product_id: Optional[int],
 ) -> bool:
     if seller_id is not None:
-        row = await db.fetchone(
+        row = await backend.fetchone(
             """
             SELECT 1
             FROM reports
@@ -1437,7 +1435,7 @@ async def has_open_report(
             ),
         )
     elif product_id is not None:
-        row = await db.fetchone(
+        row = await backend.fetchone(
             """
             SELECT 1
             FROM reports
@@ -1463,7 +1461,7 @@ async def get_pending_reports(
     if limit < 1:
         return []
 
-    return await db.fetchall(
+    return await backend.fetchall(
         """
         SELECT *
         FROM reports
@@ -1491,7 +1489,7 @@ async def update_report_status(
     if status not in valid_statuses:
         return False
 
-    cursor = await sqlite_backend.execute(
+    result = await backend.execute(
         """
         UPDATE reports
         SET status = ?
@@ -1503,7 +1501,7 @@ async def update_report_status(
         ),
     )
 
-    return cursor.rowcount == 1
+    return result.rowcount == 1
 
 
 # ============================================================================
@@ -1528,7 +1526,7 @@ async def has_open_request(
     topic: Optional[str] = None,
 ) -> bool:
     if topic is None:
-        row = await db.fetchone(
+        row = await backend.fetchone(
             """
             SELECT 1
             FROM requests
@@ -1543,7 +1541,7 @@ async def has_open_request(
             ),
         )
     else:
-        row = await db.fetchone(
+        row = await backend.fetchone(
             """
             SELECT 1
             FROM requests
@@ -1602,7 +1600,7 @@ async def create_request(
         if seller_id < 1:
             return None
 
-        seller = await db.fetchone(
+        seller = await backend.fetchone(
             """
             SELECT id
             FROM sellers
@@ -1615,7 +1613,7 @@ async def create_request(
         if seller is None:
             return None
 
-    user = await db.fetchone(
+    user = await backend.fetchone(
         """
         SELECT id
         FROM users
@@ -1630,7 +1628,7 @@ async def create_request(
 
     now = now_iso()
 
-    cursor = await sqlite_backend.execute(
+    result = await backend.execute(
         """
         INSERT INTO requests (
             user_id,
@@ -1656,8 +1654,8 @@ async def create_request(
     )
 
     return (
-        int(cursor.lastrowid)
-        if cursor and cursor.lastrowid is not None
+        int(result.lastrowid)
+        if result.lastrowid is not None
         else None
     )
 
@@ -1665,7 +1663,7 @@ async def create_request(
 async def get_request(
     request_id: int,
 ) -> Optional[dict[str, Any]]:
-    return await db.fetchone(
+    return await backend.fetchone(
         """
         SELECT *
         FROM requests
@@ -1679,7 +1677,7 @@ async def get_request(
 async def get_user_requests(
     user_id: int,
 ) -> list[dict[str, Any]]:
-    return await db.fetchall(
+    return await backend.fetchall(
         """
         SELECT *
         FROM requests
@@ -1702,7 +1700,7 @@ async def get_pending_requests(
     if limit < 1:
         return []
 
-    return await db.fetchall(
+    return await backend.fetchall(
         """
         SELECT *
         FROM requests
@@ -1734,7 +1732,7 @@ async def update_request_status(
     if status not in valid_statuses:
         return False
 
-    cursor = await sqlite_backend.execute(
+    result = await backend.execute(
         """
         UPDATE requests
         SET status = ?,
@@ -1748,7 +1746,7 @@ async def update_request_status(
         ),
     )
 
-    return cursor.rowcount == 1
+    return result.rowcount == 1
 
 
 # ============================================================================
@@ -1763,7 +1761,7 @@ async def get_user_notifications(
     if limit < 1:
         return []
 
-    return await db.fetchall(
+    return await backend.fetchall(
         """
         SELECT *
         FROM notifications
@@ -1782,7 +1780,7 @@ async def mark_notification_read(
     notification_id: int,
     user_id: int,
 ) -> bool:
-    cursor = await sqlite_backend.execute(
+    result = await backend.execute(
         """
         UPDATE notifications
         SET is_read = 1
@@ -1795,7 +1793,7 @@ async def mark_notification_read(
         ),
     )
 
-    return cursor.rowcount == 1
+    return result.rowcount == 1
 
 
 # ============================================================================
@@ -1806,7 +1804,7 @@ async def mark_notification_read(
 async def get_referral_by_seller(
     seller_id: int,
 ) -> Optional[dict[str, Any]]:
-    return await db.fetchone(
+    return await backend.fetchone(
         """
         SELECT *
         FROM referrals
@@ -1820,7 +1818,7 @@ async def get_referral_by_seller(
 async def get_referral_count(
     seller_id: int,
 ) -> int:
-    row = await db.fetchone(
+    row = await backend.fetchone(
         """
         SELECT COUNT(*) AS c
         FROM referrals
@@ -1835,7 +1833,7 @@ async def get_referral_count(
 async def get_referral_rewards(
     seller_id: int,
 ) -> list[dict[str, Any]]:
-    return await db.fetchall(
+    return await backend.fetchall(
         """
         SELECT *
         FROM referral_rewards
@@ -1869,7 +1867,7 @@ async def create_order(
     if quantity < 1:
         return None
 
-    product = await db.fetchone(
+    product = await backend.fetchone(
         """
         SELECT
             id,
@@ -1898,7 +1896,7 @@ async def create_order(
     total_price = int(unit_price) * int(quantity)
     now = now_iso()
 
-    cursor = await sqlite_backend.execute(
+    result = await backend.execute(
         """
         INSERT INTO orders (
             buyer_user_id,
@@ -1924,8 +1922,8 @@ async def create_order(
     )
 
     return (
-        int(cursor.lastrowid)
-        if cursor and cursor.lastrowid is not None
+        int(result.lastrowid)
+        if result.lastrowid is not None
         else None
     )
 
@@ -1933,7 +1931,7 @@ async def create_order(
 async def get_order(
     order_id: int,
 ) -> Optional[dict[str, Any]]:
-    return await db.fetchone(
+    return await backend.fetchone(
         """
         SELECT *
         FROM orders
@@ -1947,7 +1945,7 @@ async def get_order(
 async def list_orders_for_buyer(
     buyer_user_id: int,
 ) -> list[dict[str, Any]]:
-    return await db.fetchall(
+    return await backend.fetchall(
         """
         SELECT
             o.*,
@@ -1968,7 +1966,7 @@ async def list_orders_for_buyer(
 async def list_orders_for_seller(
     seller_id: int,
 ) -> list[dict[str, Any]]:
-    return await db.fetchall(
+    return await backend.fetchall(
         """
         SELECT
             o.*,
@@ -2005,7 +2003,7 @@ async def update_order_status(
     if status not in ORDER_STATUSES:
         return False
 
-    cursor = await sqlite_backend.execute(
+    result = await backend.execute(
         """
         UPDATE orders
         SET status = ?,
@@ -2019,7 +2017,7 @@ async def update_order_status(
         ),
     )
 
-    return cursor.rowcount == 1
+    return result.rowcount == 1
 
 
 # ============================================================================
@@ -2034,7 +2032,7 @@ async def create_audit_log(
     entity_id: Optional[int] = None,
     details: Optional[str] = None,
 ) -> bool:
-    await sqlite_backend.execute(
+    await backend.execute(
         """
         INSERT INTO audit_log (
             actor_user_id,
@@ -2065,7 +2063,7 @@ async def get_audit_logs(
     if limit < 1:
         return []
 
-    return await db.fetchall(
+    return await backend.fetchall(
         """
         SELECT *
         FROM audit_log
@@ -2099,7 +2097,7 @@ COMPARE_INTRO_TEXT = (
 async def get_compare_selection(
     user_id: int,
 ) -> list[int]:
-    rows = await db.fetchall(
+    rows = await backend.fetchall(
         """
         SELECT product_id
         FROM compare_selections
@@ -2135,54 +2133,38 @@ async def set_compare_selection(
 
     now = now_iso()
 
-    try:
-        async with sqlite_backend.transaction() as transaction:
+    async with backend.transaction() as transaction:
+        await transaction.execute(
+            """
+            DELETE FROM compare_selections
+            WHERE user_id = ?;
+            """,
+            (user_id,),
+        )
+
+        for position, product_id in enumerate(
+            normalized,
+            start=1,
+        ):
             await transaction.execute(
                 """
-                DELETE FROM compare_selections
-                WHERE user_id = ?;
-                """,
-                (user_id,),
-            )
-
-            for position, product_id in enumerate(
-                normalized,
-                start=1,
-            ):
-                await transaction.execute(
-                    """
-                    INSERT INTO compare_selections (
-                        user_id,
-                        product_id,
-                        position,
-                        created_at,
-                        updated_at
-                    )
-                    VALUES (?, ?, ?, ?, ?);
-                    """,
-                    (
-                        user_id,
-                        product_id,
-                        position,
-                        now,
-                        now,
-                    ),
+                INSERT INTO compare_selections (
+                    user_id,
+                    product_id,
+                    position,
+                    created_at,
+                    updated_at
                 )
-
-    except Exception:
-        raise
-
-
-async def clear_compare_selection(
-    user_id: int,
-) -> None:
-    await sqlite_backend.execute(
-        """
-        DELETE FROM compare_selections
-        WHERE user_id = ?;
-        """,
-        (user_id,),
-    )
+                VALUES (?, ?, ?, ?, ?);
+                """,
+                (
+                    user_id,
+                    product_id,
+                    position,
+                    now,
+                    now,
+                ),
+            )
 
 
 def compare_add(
@@ -2208,7 +2190,7 @@ def compare_add(
 async def has_seen_compare_intro(
     user_id: int,
 ) -> bool:
-    row = await db.fetchone(
+    row = await backend.fetchone(
         """
         SELECT has_seen_compare_intro
         FROM users
@@ -2227,7 +2209,7 @@ async def has_seen_compare_intro(
 async def mark_compare_intro_seen(
     user_id: int,
 ) -> None:
-    await sqlite_backend.execute(
+    await backend.execute(
         """
         UPDATE users
         SET has_seen_compare_intro = 1,
@@ -2275,7 +2257,7 @@ async def get_compare_products(
         "?" for _ in normalized_ids
     )
 
-    return await db.fetchall(
+    return await backend.fetchall(
         f"""
         SELECT
             p.*,
@@ -2302,7 +2284,7 @@ async def execute(
     query: str,
     params: tuple[Any, ...] = (),
 ):
-    return await sqlite_backend.execute(
+    return await backend.execute(
         query,
         params,
     )
@@ -2312,7 +2294,7 @@ async def fetchone(
     query: str,
     params: tuple[Any, ...] = (),
 ):
-    return await db.fetchone(
+    return await backend.fetchone(
         query,
         params,
     )
@@ -2322,7 +2304,7 @@ async def fetchall(
     query: str,
     params: tuple[Any, ...] = (),
 ):
-    return await db.fetchall(
+    return await backend.fetchall(
         query,
         params,
     )
