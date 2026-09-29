@@ -8,6 +8,8 @@ class Default(WorkerEntrypoint):
         from aiogram import Bot, Dispatcher
         from aiogram import __version__ as AIOGRAM_VERSION
 
+        from bot.backend import backend
+        from bot.d1_backend import D1Backend
         from bot.handlers import (
             account,
             ads,
@@ -22,6 +24,11 @@ class Default(WorkerEntrypoint):
             seller,
             support,
         )
+
+        # Connect the application backend to Cloudflare D1.
+        d1_backend = D1Backend(self.env.DB)
+        backend.set_backend(d1_backend)
+        await backend.connect()
 
         dp = Dispatcher()
 
@@ -46,9 +53,9 @@ class Default(WorkerEntrypoint):
         bot = Bot(token="000000000:TEST")
 
         return Response(
-            f"ArzanKadeh handlers OK - "
+            f"ArzanKadeh D1 backend OK - "
             f"aiogram={AIOGRAM_VERSION} - "
             f"routers={len(routers)} - "
-            f"dispatcher={type(dp).__name__} - "
+            f"backend={type(backend.active).__name__} - "
             f"bot={type(bot).__name__}"
         )
