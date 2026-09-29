@@ -23,7 +23,8 @@ from ..constants import (
     EMOJI_SELLERS,
     PAGE_SIZE_LIST,
 )
-from ..database import CATEGORY_TREE, CITY_NAMES, db
+from ..database import CATEGORY_TREE, CITY_NAMES
+from ..backend import backend
 from ..keyboards import kb_add_back, kb_pagination_row
 from ..states import SearchStates
 from ..utils import (
@@ -1039,7 +1040,7 @@ async def _fuzzy_keyword_search(
         SEARCH_MAX_CANDIDATES
     )
 
-    rows = await db.fetchall(
+    rows = await backend.fetchall(
         "SELECT DISTINCT "
         "p.*, "
         "s.name AS seller_name, "
@@ -1369,7 +1370,7 @@ async def search_sellers(
         SEARCH_MAX_CANDIDATES
     )
 
-    rows = await db.fetchall(
+    rows = await backend.fetchall(
         "SELECT "
         "s.*, "
         "c.name AS city_name "
@@ -1427,7 +1428,7 @@ async def resolve_category_ids(
 
     like = f"%{name.strip()}%"
 
-    rows = await db.fetchall(
+    rows = await backend.fetchall(
         """
         SELECT id, parent_id
         FROM categories
@@ -1443,7 +1444,7 @@ async def resolve_category_ids(
         ids.add(row["id"])
 
         if row["parent_id"] is None:
-            children = await db.fetchall(
+            children = await backend.fetchall(
                 """
                 SELECT id
                 FROM categories
@@ -1468,7 +1469,7 @@ async def resolve_city_id(
 
     like = f"%{name.strip()}%"
 
-    row = await db.fetchone(
+    row = await backend.fetchone(
         """
         SELECT id
         FROM cities
@@ -1553,7 +1554,7 @@ async def plain_keyword_search(
         )
     )
 
-    return await db.fetchall(
+    return await backend.fetchall(
         query_sql,
         params,
     )
@@ -1722,7 +1723,7 @@ class SearchEngine:
             SEARCH_MAX_CANDIDATES
         )
 
-        rows = await db.fetchall(
+        rows = await backend.fetchall(
             query,
             params,
         )
