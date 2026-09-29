@@ -11,7 +11,7 @@ IMPORTANT:
 - It must not import aiosqlite or the SQLite database module.
 - Application/repository code should depend on DatabaseBackend instead.
 - D1 uses prepared statements with bound parameters.
-- D1 batch() is used to provide atomic multi-statement transactions.
+- D1Database.batch() is used for atomic multi-statement writes.
 """
 
 from __future__ import annotations
@@ -32,9 +32,20 @@ class D1Transaction:
     """
     Transaction adapter for Cloudflare D1.
 
-    D1 does not expose SQLite-style BEGIN/COMMIT operations through the
-    Worker Binding API. Multiple statements are therefore collected and
-    committed atomically through D1Database.batch().
+    Cloudflare D1 does not expose SQLite-style BEGIN/COMMIT statements
+    through the Worker Binding API.
+
+    Therefore:
+
+    - write statements are queued;
+    - the queued statements are committed atomically with batch();
+    - if the context exits with an exception, nothing is committed;
+    - read operations are executed immediately against D1 and are NOT
+      part of the atomic batch.
+
+    This distinction is intentional. A D1 batch can atomically execute
+    multiple statements, but it cannot use the result of one statement
+    to dynamically construct later statements inside the same batch.
     """
 
     def __init__(
@@ -45,14 +56,21 @@ class D1Transaction:
     ) -> None:
         self._database = database
         self._immediate = immediate
+
         self._statements: list[Any] = []
-        self._results: list[Any] = []
+        self._batch_results: list[Any] = []
+
         self._active = False
+        self._committed = False
 
     async def __aenter__(self) -> "D1Transaction":
+        if self._active:
+            raise RuntimeError("Transaction is already active.")
+
         self._active = True
+        self._committed = False
         self._statements = []
-        self._results = []
+        self._batch_results = []
 
         return self
 
@@ -67,10 +85,11 @@ class D1Transaction:
                 return None
 
             if not self._statements:
+                self._committed = True
                 return None
 
             try:
-                self._results = await self._database.batch(
+                results = await self._database.batch(
                     self._statements
                 )
             except Exception as exc:
@@ -81,6 +100,22 @@ class D1Transaction:
 
                 raise
 
+            if results is None:
+                self._batch_results = []
+            elif hasattr(results, "to_py"):
+                converted = results.to_py()
+
+                if isinstance(converted, (list, tuple)):
+                    self._batch_results = list(converted)
+                else:
+                    self._batch_results = [converted]
+            elif isinstance(results, (list, tuple)):
+                self._batch_results = list(results)
+            else:
+                self._batch_results = [results]
+
+            self._committed = True
+
             return None
 
         finally:
@@ -89,7 +124,9 @@ class D1Transaction:
 
     def _require_active(self) -> None:
         if not self._active:
-            raise RuntimeError("Transaction is not active.")
+            raise RuntimeError(
+                "Transaction is not active."
+            )
 
     def _prepare(
         self,
@@ -119,7 +156,20 @@ class D1Transaction:
         query: str,
         params: Params = None,
     ) -> DatabaseResult:
-        statement = self._prepare(query, params)
+        """
+        Queue a write statement for the final D1 batch.
+
+        The statement is NOT executed immediately.
+
+        Consequently rowcount/lastrowid are not available at this point.
+        The actual D1 results become available only after the context
+        manager commits the batch.
+        """
+        statement = self._prepare(
+            query,
+            params,
+        )
+
         self._statements.append(statement)
 
         return DatabaseResult()
@@ -129,7 +179,18 @@ class D1Transaction:
         query: str,
         params: Params = None,
     ) -> Optional[dict[str, Any]]:
-        statement = self._prepare(query, params)
+        """
+        Execute a read immediately.
+
+        D1 batch() cannot expose the result of one statement to Python
+        before subsequent statements in the same batch are constructed.
+        Therefore reads are intentionally executed outside the queued
+        write batch.
+        """
+        statement = self._prepare(
+            query,
+            params,
+        )
 
         try:
             result = await statement.first()
@@ -151,7 +212,15 @@ class D1Transaction:
         query: str,
         params: Params = None,
     ) -> list[dict[str, Any]]:
-        statement = self._prepare(query, params)
+        """
+        Execute a read immediately.
+
+        See fetchone() for the D1 transaction limitation.
+        """
+        statement = self._prepare(
+            query,
+            params,
+        )
 
         try:
             result = await statement.run()
@@ -170,10 +239,17 @@ class D1Transaction:
         query: str,
         parameters: Iterable[Params],
     ) -> DatabaseResult:
+        """
+        Queue multiple write statements for one atomic D1 batch.
+        """
         self._require_active()
 
         for params in parameters:
-            statement = self._prepare(query, params)
+            statement = self._prepare(
+                query,
+                params,
+            )
+
             self._statements.append(statement)
 
         return DatabaseResult()
@@ -189,7 +265,9 @@ class D1Backend:
 
     def __init__(self, database: Any) -> None:
         if database is None:
-            raise ValueError("D1 database binding is required.")
+            raise ValueError(
+                "D1 database binding is required."
+            )
 
         self._database = database
         self._connected = False
@@ -210,7 +288,9 @@ class D1Backend:
 
     def _require_database(self) -> Any:
         if self._database is None:
-            raise RuntimeError("D1 database binding is not available.")
+            raise RuntimeError(
+                "D1 database binding is not available."
+            )
 
         return self._database
 
@@ -242,7 +322,10 @@ class D1Backend:
         query: str,
         params: Params = None,
     ) -> DatabaseResult:
-        statement = self._prepare(query, params)
+        statement = self._prepare(
+            query,
+            params,
+        )
 
         try:
             result = await statement.run()
@@ -261,7 +344,10 @@ class D1Backend:
         query: str,
         params: Params = None,
     ) -> Optional[dict[str, Any]]:
-        statement = self._prepare(query, params)
+        statement = self._prepare(
+            query,
+            params,
+        )
 
         try:
             result = await statement.first()
@@ -283,7 +369,10 @@ class D1Backend:
         query: str,
         params: Params = None,
     ) -> list[dict[str, Any]]:
-        statement = self._prepare(query, params)
+        statement = self._prepare(
+            query,
+            params,
+        )
 
         try:
             result = await statement.run()
@@ -304,7 +393,7 @@ class D1Backend:
     ) -> DatabaseResult:
         database = self._require_database()
 
-        statements = []
+        statements: list[Any] = []
 
         for params in parameters:
             statement = database.prepare(query)
@@ -324,7 +413,9 @@ class D1Backend:
             return DatabaseResult()
 
         try:
-            results = await database.batch(statements)
+            results = await database.batch(
+                statements
+            )
         except Exception as exc:
             if _is_integrity_error(exc):
                 raise DatabaseIntegrityError(
@@ -364,10 +455,10 @@ def _to_dict(row: Any) -> dict[str, Any]:
 
     try:
         return dict(row)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
         raise TypeError(
             f"Unsupported D1 row type: {type(row)!r}"
-        )
+        ) from exc
 
 
 def _extract_rows(result: Any) -> list[dict[str, Any]]:
@@ -380,12 +471,18 @@ def _extract_rows(result: Any) -> list[dict[str, Any]]:
     if hasattr(result, "results"):
         rows = result.results
     elif isinstance(result, dict):
-        rows = result.get("results", [])
+        rows = result.get(
+            "results",
+            [],
+        )
     else:
         rows = []
 
     if hasattr(rows, "to_py"):
         rows = rows.to_py()
+
+    if rows is None:
+        return []
 
     return [
         _to_dict(row)
@@ -425,14 +522,21 @@ def _batch_to_database_result(
     if hasattr(results, "to_py"):
         results = results.to_py()
 
-    if not isinstance(results, (list, tuple)):
-        return _result_to_database_result(results)
+    if not isinstance(
+        results,
+        (list, tuple),
+    ):
+        return _result_to_database_result(
+            results
+        )
 
     total_rowcount = 0
     lastrowid: Optional[int] = None
 
     for result in results:
-        converted = _result_to_database_result(result)
+        converted = _result_to_database_result(
+            result
+        )
 
         total_rowcount += converted.rowcount
 
@@ -453,7 +557,10 @@ def _extract_meta(result: Any) -> Any:
         return result.meta
 
     if isinstance(result, dict):
-        return result.get("meta", {})
+        return result.get(
+            "meta",
+            {},
+        )
 
     return {}
 
@@ -462,7 +569,10 @@ def _get_int(
     mapping: Any,
     key: str,
 ) -> int:
-    value = _get_value(mapping, key)
+    value = _get_value(
+        mapping,
+        key,
+    )
 
     if value is None:
         return 0
@@ -477,7 +587,10 @@ def _get_optional_int(
     mapping: Any,
     key: str,
 ) -> Optional[int]:
-    value = _get_value(mapping, key)
+    value = _get_value(
+        mapping,
+        key,
+    )
 
     if value is None:
         return None
@@ -496,7 +609,10 @@ def _get_value(
         return mapping.get(key)
 
     if hasattr(mapping, key):
-        return getattr(mapping, key)
+        return getattr(
+            mapping,
+            key,
+        )
 
     if hasattr(mapping, "to_py"):
         converted = mapping.to_py()
@@ -507,7 +623,9 @@ def _get_value(
     return None
 
 
-def _is_integrity_error(exc: Exception) -> bool:
+def _is_integrity_error(
+    exc: Exception,
+) -> bool:
     """
     Detect D1/SQLite constraint errors without importing SQLite.
 
