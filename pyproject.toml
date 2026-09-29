@@ -3,6 +3,9 @@ name = "arzankadehaibot"
 version = "0.1.0"
 description = "ArzanKadeh AI Cloudflare Python Worker"
 requires-python = ">=3.12"
+dependencies = [
+    "aiogram>=3.7,<4",
+]
 
 [dependency-groups]
 dev = [
