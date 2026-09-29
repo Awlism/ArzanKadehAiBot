@@ -15,4 +15,4 @@ class Default(WorkerEntrypoint):
         return Response(
             "ArzanKadeh D1 OK\n"
             + "\n".join(tables)
-        )
+        ) 
