@@ -17,7 +17,7 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from ..database import db
+from ..backend import backend
 from ..repositories import (
     get_active_mode,
     set_active_mode,
@@ -257,7 +257,7 @@ async def _go_to_start(
         else None
     )
 
-    row = await db.fetchone(
+    row = await backend.fetchone(
         """
         SELECT role_chosen
         FROM users
@@ -389,7 +389,7 @@ async def _handle_referral_deep_link(
         match.group(1)
     )
 
-    seller = await db.fetchone(
+    seller = await backend.fetchone(
         """
         SELECT id, owner_user_id
         FROM sellers
