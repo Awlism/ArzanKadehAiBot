@@ -4,14 +4,14 @@ ArzanKadeh AI
 Cloudflare Worker entrypoint
 
 Current stage:
-- Connect Worker -> D1Backend -> BackendProxy -> D1.
+- Connect Worker -> Worker D1Backend -> D1.
 - Do not import Telegram/aiogram application code here yet.
 """
 
 from workers import WorkerEntrypoint, Response
 
-from bot.backend import backend
-from bot.d1_backend import D1Backend
+from worker_backend.backend import backend
+from worker_backend.d1_backend import D1Backend
 
 
 class Default(WorkerEntrypoint):
