@@ -76,8 +76,31 @@ def _back_keyboard(
     }
 
 
+async def _is_favorite(
+    db: Any,
+    user_id: int,
+    product_id: int,
+) -> bool:
+    row = await db.fetchone(
+        """
+        SELECT id
+        FROM favorites
+        WHERE user_id = ?
+          AND product_id = ?
+        LIMIT 1;
+        """,
+        (
+            user_id,
+            product_id,
+        ),
+    )
+
+    return row is not None
+
+
 def _product_keyboard(
     product: dict[str, Any],
+    is_favorite: bool = False,
 ) -> dict[str, Any]:
     product_id = int(
         product["id"]
@@ -94,14 +117,24 @@ def _product_keyboard(
     else:
         back_callback = "main"
 
+    favorite_text = (
+        "💔 حذف از علاقه‌مندی‌ها"
+        if is_favorite
+        else "❤️ افزودن به علاقه‌مندی‌ها"
+    )
+
+    favorite_callback = (
+        f"unfavorite:{product_id}"
+        if is_favorite
+        else f"favorite:{product_id}"
+    )
+
     return {
         "inline_keyboard": [
             [
                 {
-                    "text": "❤️ افزودن به علاقه‌مندی‌ها",
-                    "callback_data": (
-                        f"favorite:{product_id}"
-                    ),
+                    "text": favorite_text,
+                    "callback_data": favorite_callback,
                 }
             ],
             [
@@ -416,19 +449,21 @@ async def handle_product_detail(
     await db.execute(
         """
         INSERT INTO audit_log (
+            actor_user_id,
             action,
             entity_type,
             entity_id,
-            actor_user_id,
+            details,
             created_at
         )
-        VALUES (?, ?, ?, ?, ?);
+        VALUES (?, ?, ?, ?, ?, ?);
         """,
         (
+            int(user["id"]),
             "view_product",
             "product",
             product_id,
-            int(user["id"]),
+            None,
             now,
         ),
     )
@@ -446,6 +481,12 @@ async def handle_product_detail(
             True,
         )
         return
+
+    is_favorite = await _is_favorite(
+        db,
+        int(user["id"]),
+        product_id,
+    )
 
     rating = product.get(
         "rating"
@@ -526,13 +567,360 @@ async def handle_product_detail(
         callback_query,
         "\n".join(lines),
         _product_keyboard(
-            product
+            product,
+            is_favorite=is_favorite,
         ),
     )
 
     await _answer_callback(
         telegram,
         callback_query,
+    )
+
+
+async def handle_favorite_add(
+    db: Any,
+    telegram: Any,
+    callback_query: dict[str, Any],
+) -> None:
+    """
+    Add a product to the user's favorites.
+    """
+
+    callback_data = str(
+        callback_query.get(
+            "data",
+            "",
+        )
+    )
+
+    product_id = _parse_product_id(
+        callback_data
+    )
+
+    if product_id is None:
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ شناسه نامعتبر است.",
+            True,
+        )
+        return
+
+    callback_user = callback_query.get(
+        "from"
+    )
+
+    if not isinstance(
+        callback_user,
+        dict,
+    ):
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ اطلاعات کاربر نامعتبر است.",
+            True,
+        )
+        return
+
+    try:
+        user = await _ensure_user(
+            db,
+            callback_user,
+        )
+    except (
+        ValueError,
+        RuntimeError,
+    ):
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ اطلاعات کاربر نامعتبر است.",
+            True,
+        )
+        return
+
+    product = await _get_product(
+        db,
+        product_id,
+    )
+
+    if product is None:
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ این محصول یافت نشد.",
+            True,
+        )
+        return
+
+    try:
+        await db.execute(
+            """
+            INSERT INTO favorites (
+                user_id,
+                product_id,
+                created_at
+            )
+            VALUES (?, ?, ?);
+            """,
+            (
+                int(user["id"]),
+                product_id,
+                _now_iso(),
+            ),
+        )
+    except Exception as exc:
+        message = str(exc).lower()
+
+        if (
+            "unique" in message
+            or "constraint" in message
+        ):
+            await _answer_callback(
+                telegram,
+                callback_query,
+                "این محصول از قبل در علاقه‌مندی‌هاست ❤️",
+                True,
+            )
+
+            await _render_product_after_action(
+                db,
+                telegram,
+                callback_query,
+                int(user["id"]),
+                product_id,
+            )
+            return
+
+        raise
+
+    await _answer_callback(
+        telegram,
+        callback_query,
+        "❤️ به علاقه‌مندی‌ها اضافه شد.",
+        True,
+    )
+
+    await _render_product_after_action(
+        db,
+        telegram,
+        callback_query,
+        int(user["id"]),
+        product_id,
+    )
+
+
+async def handle_favorite_remove(
+    db: Any,
+    telegram: Any,
+    callback_query: dict[str, Any],
+) -> None:
+    """
+    Remove a product from the user's favorites.
+    """
+
+    callback_data = str(
+        callback_query.get(
+            "data",
+            "",
+        )
+    )
+
+    product_id = _parse_product_id(
+        callback_data
+    )
+
+    if product_id is None:
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ شناسه نامعتبر است.",
+            True,
+        )
+        return
+
+    callback_user = callback_query.get(
+        "from"
+    )
+
+    if not isinstance(
+        callback_user,
+        dict,
+    ):
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ اطلاعات کاربر نامعتبر است.",
+            True,
+        )
+        return
+
+    try:
+        user = await _ensure_user(
+            db,
+            callback_user,
+        )
+    except (
+        ValueError,
+        RuntimeError,
+    ):
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ اطلاعات کاربر نامعتبر است.",
+            True,
+        )
+        return
+
+    result = await db.execute(
+        """
+        DELETE FROM favorites
+        WHERE user_id = ?
+          AND product_id = ?;
+        """,
+        (
+            int(user["id"]),
+            product_id,
+        ),
+    )
+
+    if getattr(
+        result,
+        "rowcount",
+        0,
+    ) != 1:
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "این محصول دیگر در علاقه‌مندی‌ها نیست.",
+            True,
+        )
+
+        await _render_product_after_action(
+            db,
+            telegram,
+            callback_query,
+            int(user["id"]),
+            product_id,
+        )
+        return
+
+    await _answer_callback(
+        telegram,
+        callback_query,
+        "💔 از علاقه‌مندی‌ها حذف شد.",
+        True,
+    )
+
+    await _render_product_after_action(
+        db,
+        telegram,
+        callback_query,
+        int(user["id"]),
+        product_id,
+    )
+
+
+async def _render_product_after_action(
+    db: Any,
+    telegram: Any,
+    callback_query: dict[str, Any],
+    user_id: int,
+    product_id: int,
+) -> None:
+    product = await _get_product(
+        db,
+        product_id,
+    )
+
+    if product is None:
+        return
+
+    is_favorite = await _is_favorite(
+        db,
+        user_id,
+        product_id,
+    )
+
+    rating = product.get(
+        "rating"
+    )
+
+    review_count = product.get(
+        "review_count"
+    )
+
+    if rating is None:
+        rating_text = "0.0"
+    else:
+        try:
+            rating_text = f"{float(rating):.1f}"
+        except (
+            TypeError,
+            ValueError,
+        ):
+            rating_text = "0.0"
+
+    if review_count is None:
+        review_count = 0
+
+    lines = [
+        (
+            "🛍️ <b>"
+            f"{_html(product.get('name'))}"
+            "</b>"
+        ),
+        "",
+        _html(
+            product.get(
+                "description"
+            )
+            or "بدون توضیحات"
+        ),
+        "",
+        (
+            "💰 "
+            f"{_format_price(product.get('price'))}"
+        ),
+        (
+            "🏪 "
+            f"{_html(product.get('seller_name'))}"
+        ),
+        (
+            "📍 "
+            f"{_html(product.get('city_name') or 'نامشخص')}"
+        ),
+        (
+            "⭐ "
+            f"{rating_text}"
+            f" ({_html(review_count)} نظر)"
+        ),
+    ]
+
+    seller_status = product.get(
+        "seller_status"
+    )
+
+    if seller_status:
+        lines.append(
+            f"🔹 وضعیت فروشنده: "
+            f"{_html(seller_status)}"
+        )
+
+    if product.get("stock_status") == "OUT_OF_STOCK":
+        lines.append(
+            "⛔️ ناموجود"
+        )
+
+    await _edit_callback_message(
+        telegram,
+        callback_query,
+        "\n".join(lines),
+        _product_keyboard(
+            product,
+            is_favorite=is_favorite,
+        ),
     )
 
 
@@ -623,4 +1011,6 @@ def _now_iso() -> str:
 
 __all__ = [
     "handle_product_detail",
+    "handle_favorite_add",
+    "handle_favorite_remove",
 ]
