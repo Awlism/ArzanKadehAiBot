@@ -8,15 +8,16 @@ This module intentionally does not import aiogram.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from html import escape
 from typing import Any
 
 
-COMPARE_MAX_ITEMS = 2
+COMPARE_MAX_ITEMS = 4
 
 COMPARE_INTRO_TEXT = (
     "⚖️ مقایسه چیه؟\n"
-    "دو محصول رو کنار هم بذار تا راحت‌تر انتخاب کنی. ✨"
+    "تا چهار محصول رو کنار هم بذار تا راحت‌تر انتخاب کنی. ✨"
 )
 
 
@@ -69,6 +70,14 @@ def _format_price(
     return f"{number:,.2f} تومان"
 
 
+def _now_iso() -> str:
+    return datetime.now(
+        timezone.utc
+    ).isoformat(
+        timespec="seconds"
+    )
+
+
 async def _get_user_by_telegram_id(
     db: Any,
     telegram_id: int,
@@ -103,42 +112,58 @@ async def _ensure_user(
         telegram_id,
     )
 
-    if existing is not None:
-        return existing
-
     username = user.get("username")
     first_name = user.get("first_name")
     last_name = user.get("last_name")
 
     now = _now_iso()
 
-    await db.execute(
-        """
-        INSERT INTO users (
-            telegram_id,
-            username,
-            first_name,
-            last_name,
-            created_at,
-            updated_at
+    if existing is None:
+        await db.execute(
+            """
+            INSERT INTO users (
+                telegram_id,
+                username,
+                first_name,
+                last_name,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(telegram_id)
+            DO UPDATE SET
+                username = excluded.username,
+                first_name = excluded.first_name,
+                last_name = excluded.last_name,
+                updated_at = excluded.updated_at;
+            """,
+            (
+                telegram_id,
+                username,
+                first_name,
+                last_name,
+                now,
+                now,
+            ),
         )
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(telegram_id)
-        DO UPDATE SET
-            username = excluded.username,
-            first_name = excluded.first_name,
-            last_name = excluded.last_name,
-            updated_at = excluded.updated_at;
-        """,
-        (
-            telegram_id,
-            username,
-            first_name,
-            last_name,
-            now,
-            now,
-        ),
-    )
+    else:
+        await db.execute(
+            """
+            UPDATE users
+            SET username = ?,
+                first_name = ?,
+                last_name = ?,
+                updated_at = ?
+            WHERE telegram_id = ?;
+            """,
+            (
+                username,
+                first_name,
+                last_name,
+                now,
+                telegram_id,
+            ),
+        )
 
     existing = await _get_user_by_telegram_id(
         db,
@@ -151,16 +176,6 @@ async def _ensure_user(
         )
 
     return existing
-
-
-def _now_iso() -> str:
-    from datetime import datetime, timezone
-
-    return datetime.now(
-        timezone.utc
-    ).isoformat(
-        timespec="seconds"
-    )
 
 
 async def _get_selection(
@@ -284,7 +299,7 @@ def _compare_add(
 
     return (
         current,
-        "added_need_one_more",
+        "added_need_more",
     )
 
 
@@ -469,7 +484,9 @@ async def _answer_callback(
     text: str | None = None,
     show_alert: bool = False,
 ) -> None:
-    callback_id = callback_query.get("id")
+    callback_id = callback_query.get(
+        "id"
+    )
 
     if not callback_id:
         return
@@ -487,7 +504,9 @@ async def _edit_callback_message(
     text: str,
     reply_markup: dict[str, Any] | None = None,
 ) -> None:
-    message = callback_query.get("message")
+    message = callback_query.get(
+        "message"
+    )
 
     if not isinstance(
         message,
@@ -495,7 +514,9 @@ async def _edit_callback_message(
     ):
         return
 
-    chat = message.get("chat")
+    chat = message.get(
+        "chat"
+    )
 
     if not isinstance(
         chat,
@@ -503,8 +524,13 @@ async def _edit_callback_message(
     ):
         return
 
-    chat_id = chat.get("id")
-    message_id = message.get("message_id")
+    chat_id = chat.get(
+        "id"
+    )
+
+    message_id = message.get(
+        "message_id"
+    )
 
     if chat_id is None:
         return
@@ -534,6 +560,7 @@ async def handle_compare(
 
     It redirects to the compare list.
     """
+
     await handle_compare_list(
         db,
         telegram,
@@ -692,6 +719,10 @@ async def handle_compare_list(
 
     lines = [
         "⚖️ <b>مقایسه محصولات</b>",
+        "",
+        (
+            f"📊 مقایسه {len(products)} محصول"
+        ),
         "",
     ]
 
@@ -854,12 +885,6 @@ async def handle_compare_start(
         product_id,
     )
 
-    await _set_selection(
-        db,
-        user_id,
-        new_selection,
-    )
-
     if outcome == "already_in_selection":
         await _answer_callback(
             telegram,
@@ -881,13 +906,19 @@ async def handle_compare_start(
         )
         return
 
+    await _set_selection(
+        db,
+        user_id,
+        new_selection,
+    )
+
     if outcome == "added_ready":
         await _answer_callback(
             telegram,
             callback_query,
             (
-                "✅ اضافه شد! حالا می‌تونی "
-                "مقایسه رو ببینی."
+                "✅ محصول چهارم اضافه شد! "
+                "حالا مقایسه آماده‌ست."
             ),
             True,
         )
