@@ -1,12 +1,33 @@
 # -*- coding: utf-8 -*-
+"""
+ArzanKadeh AI
+Cloudflare Worker entrypoint
+
+Current stage:
+- Connect Worker -> D1Backend -> BackendProxy -> D1.
+- Do not import Telegram/aiogram application code here yet.
+"""
 
 from workers import WorkerEntrypoint, Response
+
+from bot.backend import backend
+from bot.d1_backend import D1Backend
 
 
 class Default(WorkerEntrypoint):
     async def fetch(self, request):
         try:
-            result = await self.env.DB.prepare(
+            d1_backend = D1Backend(
+                self.env.DB
+            )
+
+            backend.set_backend(
+                d1_backend
+            )
+
+            await backend.connect()
+
+            rows = await backend.fetchall(
                 """
                 SELECT
                     name
@@ -14,15 +35,15 @@ class Default(WorkerEntrypoint):
                 WHERE type = 'table'
                 ORDER BY name;
                 """
-            ).all()
+            )
 
             tables = [
                 row["name"]
-                for row in result.results
+                for row in rows
             ]
 
             body = (
-                "ArzanKadeh Worker + D1 OK\n\n"
+                "ArzanKadeh Worker + D1Backend OK\n\n"
                 f"Tables: {len(tables)}\n"
                 f"{', '.join(tables)}"
             )
@@ -31,7 +52,7 @@ class Default(WorkerEntrypoint):
 
         except Exception as exc:
             return Response(
-                "ArzanKadeh Worker D1 ERROR\n\n"
+                "ArzanKadeh Worker D1Backend ERROR\n\n"
                 f"{type(exc).__name__}: {exc}",
                 status=500,
             )
