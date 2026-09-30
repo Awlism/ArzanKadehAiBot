@@ -15,7 +15,8 @@ class WorkerRouter:
     """
     Routes Telegram updates to Worker-side handlers.
 
-    Handlers will be added incrementally.
+    Handlers are registered per request so that
+    Cloudflare Worker requests do not share state.
     """
 
     def __init__(
