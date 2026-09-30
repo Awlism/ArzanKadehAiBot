@@ -26,6 +26,13 @@ from worker.webhook import (
 
 from worker.router import WorkerRouter
 from worker.start import handle_start
+from worker.compare import (
+    handle_compare,
+    handle_compare_drop,
+    handle_compare_list,
+    handle_compare_reset,
+    handle_compare_start,
+)
 from worker.telegram import TelegramClient
 
 
@@ -138,26 +145,43 @@ class Default(WorkerEntrypoint):
 
         router = WorkerRouter()
 
-        if (
-            update_type == "message"
-            and _is_start_command(
-                update["message"]
-            )
-        ):
-            telegram = TelegramClient(
-                self.env
+        telegram = TelegramClient(
+            self.env
+        )
+
+        if update_type == "message":
+            message = update.get(
+                "message"
             )
 
-            async def message_handler(
-                message,
+            if _is_start_command(
+                message
             ):
-                return await handle_start(
+
+                async def message_handler(
                     message,
+                ):
+                    return await handle_start(
+                        message,
+                        telegram,
+                    )
+
+                router.set_message_handler(
+                    message_handler
+                )
+
+        elif update_type == "callback_query":
+
+            async def callback_handler(
+                callback_query,
+            ):
+                return await _handle_callback_query(
+                    callback_query,
                     telegram,
                 )
 
-            router.set_message_handler(
-                message_handler
+            router.set_callback_handler(
+                callback_handler
             )
 
         await router.dispatch(
@@ -172,6 +196,73 @@ class Default(WorkerEntrypoint):
             body,
             status=200,
         )
+
+
+async def _handle_callback_query(
+    callback_query,
+    telegram,
+):
+    """
+    Route Worker callback queries to the
+    appropriate business handler.
+    """
+
+    if not isinstance(
+        callback_query,
+        dict,
+    ):
+        return None
+
+    callback_data = callback_query.get(
+        "data"
+    )
+
+    if not isinstance(
+        callback_data,
+        str,
+    ):
+        return None
+
+    if callback_data == "compare":
+        return await handle_compare(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if callback_data == "comparelist":
+        return await handle_compare_list(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if callback_data.startswith(
+        "comparestart:"
+    ):
+        return await handle_compare_start(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if callback_data.startswith(
+        "comparedrop:"
+    ):
+        return await handle_compare_drop(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if callback_data == "comparereset":
+        return await handle_compare_reset(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    return None
 
 
 def _is_start_command(
