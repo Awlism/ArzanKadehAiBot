@@ -25,6 +25,8 @@ from worker.webhook import (
 )
 
 from worker.router import router
+from worker.start import handle_start
+from worker.telegram import TelegramClient
 
 
 class Default(WorkerEntrypoint):
@@ -120,9 +122,36 @@ class Default(WorkerEntrypoint):
                 status=400,
             )
 
+        d1_backend = D1Backend(
+            self.env.DB
+        )
+
+        backend.set_backend(
+            d1_backend
+        )
+
+        await backend.connect()
+
         update_type = detect_update_type(
             update
         )
+
+        if (
+            update_type == "message"
+            and _is_start_command(
+                update["message"]
+            )
+        ):
+            telegram = TelegramClient(
+                self.env
+            )
+
+            router.set_message_handler(
+                lambda message: handle_start(
+                    message,
+                    telegram,
+                )
+            )
 
         await router.dispatch(
             update
@@ -136,6 +165,42 @@ class Default(WorkerEntrypoint):
             body,
             status=200,
         )
+
+
+def _is_start_command(
+    message,
+) -> bool:
+    if not isinstance(
+        message,
+        dict,
+    ):
+        return False
+
+    text = message.get(
+        "text"
+    )
+
+    if not isinstance(
+        text,
+        str,
+    ):
+        return False
+
+    text = text.strip()
+
+    if not text:
+        return False
+
+    command = text.split(
+        maxsplit=1
+    )[0]
+
+    return (
+        command == "/start"
+        or command.startswith(
+            "/start@"
+        )
+    )
 
 
 __all__ = [
