@@ -26,7 +26,11 @@ from worker.webhook import (
 
 from worker.router import WorkerRouter
 from worker.start import handle_start
-from worker.products import handle_product_detail
+from worker.products import (
+    handle_product_detail,
+    handle_favorite_add,
+    handle_favorite_remove,
+)
 from worker.compare import (
     handle_compare,
     handle_compare_drop,
@@ -228,6 +232,24 @@ async def _handle_callback_query(
         "product:"
     ):
         return await handle_product_detail(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if callback_data.startswith(
+        "favorite:"
+    ):
+        return await handle_favorite_add(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if callback_data.startswith(
+        "unfavorite:"
+    ):
+        return await handle_favorite_remove(
             backend,
             telegram,
             callback_query,
