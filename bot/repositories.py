@@ -15,7 +15,6 @@ from .constants import (
 )
 from .backend import backend
 from .database_backend import DatabaseIntegrityError
-from .utils import now_iso
 from .time_utils import now_iso
 
 
