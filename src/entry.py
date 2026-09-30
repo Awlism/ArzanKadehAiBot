@@ -5,7 +5,7 @@ Cloudflare Worker entrypoint.
 
 Routes:
 - GET  / -> D1 health check
-- POST / -> Telegram webhook foundation
+- POST / -> Telegram webhook router
 
 No aiogram is imported here.
 """
@@ -14,6 +14,7 @@ from workers import WorkerEntrypoint, Response
 
 from worker_backend.backend import backend
 from worker_backend.d1_backend import D1Backend
+
 from worker.webhook import (
     InvalidWebhookPayloadError,
     UnauthorizedWebhookError,
@@ -23,9 +24,14 @@ from worker.webhook import (
     verify_webhook_secret,
 )
 
+from worker.router import router
+
 
 class Default(WorkerEntrypoint):
-    async def fetch(self, request):
+    async def fetch(
+        self,
+        request,
+    ):
         try:
             method = request.method
 
@@ -49,7 +55,9 @@ class Default(WorkerEntrypoint):
                 status=500,
             )
 
-    async def _health_check(self):
+    async def _health_check(
+        self,
+    ):
         d1_backend = D1Backend(
             self.env.DB
         )
@@ -113,6 +121,10 @@ class Default(WorkerEntrypoint):
             )
 
         update_type = detect_update_type(
+            update
+        )
+
+        await router.dispatch(
             update
         )
 
