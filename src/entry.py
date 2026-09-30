@@ -24,7 +24,7 @@ from worker.webhook import (
     verify_webhook_secret,
 )
 
-from worker.router import router
+from worker.router import WorkerRouter
 from worker.start import handle_start
 from worker.telegram import TelegramClient
 
@@ -136,6 +136,8 @@ class Default(WorkerEntrypoint):
             update
         )
 
+        router = WorkerRouter()
+
         if (
             update_type == "message"
             and _is_start_command(
@@ -146,11 +148,16 @@ class Default(WorkerEntrypoint):
                 self.env
             )
 
-            router.set_message_handler(
-                lambda message: handle_start(
+            async def message_handler(
+                message,
+            ):
+                return await handle_start(
                     message,
                     telegram,
                 )
+
+            router.set_message_handler(
+                message_handler
             )
 
         await router.dispatch(
