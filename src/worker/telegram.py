@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from workers import fetch
+
 
 class TelegramAPIError(Exception):
     """Base error for Telegram Bot API failures."""
