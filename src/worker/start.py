@@ -26,17 +26,27 @@ def _get_message_user(
 ) -> Optional[dict[str, Any]]:
     user = message.get("from")
 
-    if not isinstance(user, dict):
+    if not isinstance(
+        user,
+        dict,
+    ):
         return None
 
-    telegram_id = user.get("id")
+    telegram_id = user.get(
+        "id"
+    )
 
     if telegram_id is None:
         return None
 
     try:
-        telegram_id = int(telegram_id)
-    except (TypeError, ValueError):
+        telegram_id = int(
+            telegram_id
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
         return None
 
     if telegram_id < 1:
@@ -48,38 +58,65 @@ def _get_message_user(
 def _get_chat_id(
     message: dict[str, Any],
 ) -> Optional[int]:
-    chat = message.get("chat")
+    chat = message.get(
+        "chat"
+    )
 
-    if not isinstance(chat, dict):
+    if not isinstance(
+        chat,
+        dict,
+    ):
         return None
 
-    chat_id = chat.get("id")
+    chat_id = chat.get(
+        "id"
+    )
 
     if chat_id is None:
         return None
 
     try:
-        return int(chat_id)
-    except (TypeError, ValueError):
+        return int(
+            chat_id
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
         return None
 
 
 def _get_start_parameter(
     message: dict[str, Any],
 ) -> Optional[str]:
-    text = message.get("text")
+    text = message.get(
+        "text"
+    )
 
-    if not isinstance(text, str):
+    if not isinstance(
+        text,
+        str,
+    ):
         return None
 
     text = text.strip()
 
-    if not text.startswith("/start"):
+    if not text:
         return None
 
     parts = text.split(
         maxsplit=1
     )
+
+    command = parts[0]
+
+    if (
+        command != "/start"
+        and not command.startswith(
+            "/start@"
+        )
+    ):
+        return None
 
     if len(parts) < 2:
         return None
@@ -95,18 +132,6 @@ async def _ensure_user(
     telegram_id = int(
         user["id"]
     )
-
-    existing = await backend.fetchone(
-        """
-        SELECT *
-        FROM users
-        WHERE telegram_id = ?
-        LIMIT 1;
-        """,
-        (telegram_id,),
-    )
-
-    now = _now_iso()
 
     first_name = user.get(
         "first_name"
@@ -136,35 +161,7 @@ async def _ensure_user(
         else None
     )
 
-    if existing is not None:
-        await backend.execute(
-            """
-            UPDATE users
-            SET
-                username = ?,
-                first_name = ?,
-                last_name = ?,
-                updated_at = ?
-            WHERE telegram_id = ?;
-            """,
-            (
-                username,
-                first_name,
-                last_name,
-                now,
-                telegram_id,
-            ),
-        )
-
-        return await backend.fetchone(
-            """
-            SELECT *
-            FROM users
-            WHERE telegram_id = ?
-            LIMIT 1;
-            """,
-            (telegram_id,),
-        )
+    now = _now_iso()
 
     await backend.execute(
         """
@@ -173,8 +170,6 @@ async def _ensure_user(
             username,
             first_name,
             last_name,
-            active_mode,
-            role_chosen,
             created_at,
             updated_at
         )
@@ -183,11 +178,15 @@ async def _ensure_user(
             ?,
             ?,
             ?,
-            NULL,
-            0,
             ?,
             ?
-        );
+        )
+        ON CONFLICT(telegram_id)
+        DO UPDATE SET
+            username = excluded.username,
+            first_name = excluded.first_name,
+            last_name = excluded.last_name,
+            updated_at = excluded.updated_at;
         """,
         (
             telegram_id,
@@ -206,7 +205,9 @@ async def _ensure_user(
         WHERE telegram_id = ?
         LIMIT 1;
         """,
-        (telegram_id,),
+        (
+            telegram_id,
+        ),
     )
 
 
@@ -222,7 +223,10 @@ async def handle_start(
         message
     )
 
-    if user is None or chat_id is None:
+    if (
+        user is None
+        or chat_id is None
+    ):
         return False
 
     await _ensure_user(
@@ -263,7 +267,10 @@ async def _handle_start_parameter(
 
 
 def _now_iso() -> str:
-    from datetime import datetime, timezone
+    from datetime import (
+        datetime,
+        timezone,
+    )
 
     return datetime.now(
         timezone.utc
