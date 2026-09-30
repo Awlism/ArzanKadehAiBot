@@ -38,6 +38,9 @@ from worker.compare import (
     handle_compare_reset,
     handle_compare_start,
 )
+from worker.seller import (
+    handle_seller_detail,
+)
 from worker.telegram import TelegramClient
 
 
@@ -250,6 +253,15 @@ async def _handle_callback_query(
         "unfavorite:"
     ):
         return await handle_favorite_remove(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if callback_data.startswith(
+        "seller:"
+    ):
+        return await handle_seller_detail(
             backend,
             telegram,
             callback_query,
