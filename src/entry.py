@@ -26,6 +26,7 @@ from worker.webhook import (
 
 from worker.router import WorkerRouter
 from worker.start import handle_start
+from worker.products import handle_product_detail
 from worker.compare import (
     handle_compare,
     handle_compare_drop,
@@ -222,6 +223,15 @@ async def _handle_callback_query(
         str,
     ):
         return None
+
+    if callback_data.startswith(
+        "product:"
+    ):
+        return await handle_product_detail(
+            backend,
+            telegram,
+            callback_query,
+        )
 
     if callback_data == "compare":
         return await handle_compare(
