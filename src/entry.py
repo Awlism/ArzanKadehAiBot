@@ -67,9 +67,7 @@ from worker.report import (
     handle_report_start,
 )
 
-from worker.hot import (
-    handle_hot,
-)
+from worker.hot import handle_hot
 
 from worker.discovery import (
     handle_near_me,
@@ -78,9 +76,7 @@ from worker.discovery import (
     handle_top_sellers,
 )
 
-from worker.favorites import (
-    handle_favorites_list,
-)
+from worker.favorites import handle_favorites_list
 
 from worker.seller_registration import (
     handle_register_seller_start,
@@ -122,9 +118,7 @@ from worker.profile import (
     handle_pick_city,
 )
 
-from worker.requests import (
-    handle_my_requests,
-)
+from worker.requests import handle_my_requests
 
 from worker.store_status import (
     handle_store_status,
@@ -209,90 +203,20 @@ def _button(
 def _main_menu_keyboard() -> dict[str, list[list[dict[str, str]]]]:
     return {
         "inline_keyboard": [
-            [
-                _button(
-                    "🔎 جستجوی محصول",
-                    "search",
-                )
-            ],
-            [
-                _button(
-                    "🏪 فروشگاه‌ها",
-                    "sellers:0",
-                )
-            ],
-            [
-                _button(
-                    "📂 دسته‌بندی‌ها",
-                    "cat:0:0",
-                )
-            ],
-            [
-                _button(
-                    "🔥 داغ‌ترین‌ها",
-                    "hot",
-                )
-            ],
-            [
-                _button(
-                    "🆕 جدیدهای امروز",
-                    "newtoday",
-                )
-            ],
-            [
-                _button(
-                    "⭐ انتخاب ارزانکده",
-                    "picks",
-                )
-            ],
-            [
-                _button(
-                    "📍 نزدیک من",
-                    "nearme",
-                )
-            ],
-            [
-                _button(
-                    "🏆 فروشندگان برتر",
-                    "topsellers",
-                )
-            ],
-            [
-                _button(
-                    "❤️ علاقه‌مندی‌ها",
-                    "favorites:0",
-                )
-            ],
-            [
-                _button(
-                    "⚖️ مقایسه",
-                    "comparelist",
-                )
-            ],
-            [
-                _button(
-                    "🏪 ثبت فروشگاه من",
-                    "registerseller",
-                )
-            ],
-            [
-                _button(
-                    "📢 تبلیغ در ارزانکده",
-                    "publicads",
-                )
-            ],
-            [
-                _button(
-                    "👤 حساب کاربری",
-                    "account",
-                )
-            ],
-            [
-                _button(
-                    "🔄 شروع دوباره",
-                    "restart_button",
-                )
-            ],
+            [_button("🔎 جستجوی محصول", "search")],
+            [_button("🏪 فروشگاه‌ها", "sellers:0")],
+            [_button("📂 دسته‌بندی‌ها", "cat:0:0")],
+            [_button("🔥 داغ‌ترین‌ها", "hot")],
+            [_button("🆕 جدیدهای امروز", "newtoday")],
+            [_button("⭐ انتخاب ارزانکده", "picks")],
+            [_button("📍 نزدیک من", "nearme")],
+            [_button("🏆 فروشندگان برتر", "topsellers")],
+            [_button("❤️ علاقه‌مندی‌ها", "favorites:0")],
+            [_button("⚖️ مقایسه", "comparelist")],
+            [_button("🏪 ثبت فروشگاه من", "registerseller")],
+            [_button("📢 تبلیغ در ارزانکده", "publicads")],
+            [_button("👤 حساب کاربری", "account")],
+            [_button("🔄 شروع دوباره", "restart_button")],
         ]
     }
 
@@ -370,9 +294,7 @@ class Default(WorkerEntrypoint):
                 return await self._health_check()
 
             if method == "POST":
-                return await self._handle_webhook(
-                    request
-                )
+                return await self._handle_webhook(request)
 
             return Response(
                 "Method Not Allowed",
@@ -386,23 +308,16 @@ class Default(WorkerEntrypoint):
                 status=500,
             )
 
-    async def _health_check(
-        self,
-    ):
-        d1_backend = D1Backend(
-            self.env.DB
-        )
+    async def _health_check(self):
+        d1_backend = D1Backend(self.env.DB)
 
-        backend.set_backend(
-            d1_backend
-        )
+        backend.set_backend(d1_backend)
 
         await backend.connect()
 
         rows = await backend.fetchall(
             """
-            SELECT
-                name
+            SELECT name
             FROM sqlite_master
             WHERE type = 'table'
             ORDER BY name;
@@ -451,34 +366,22 @@ class Default(WorkerEntrypoint):
                 status=400,
             )
 
-        d1_backend = D1Backend(
-            self.env.DB
-        )
+        d1_backend = D1Backend(self.env.DB)
 
-        backend.set_backend(
-            d1_backend
-        )
+        backend.set_backend(d1_backend)
 
         await backend.connect()
 
-        update_type = detect_update_type(
-            update
-        )
+        update_type = detect_update_type(update)
 
         router = WorkerRouter()
 
-        telegram = TelegramClient(
-            self.env
-        )
+        telegram = TelegramClient(self.env)
 
         if update_type == "message":
 
-            async def message_handler(
-                message,
-            ):
-                if _is_start_command(
-                    message
-                ):
+            async def message_handler(message):
+                if _is_start_command(message):
                     return await handle_start(
                         message,
                         telegram,
@@ -496,9 +399,7 @@ class Default(WorkerEntrypoint):
 
         elif update_type == "callback_query":
 
-            async def callback_handler(
-                callback_query,
-            ):
+            async def callback_handler(callback_query):
                 return await _handle_callback_query(
                     callback_query,
                     telegram,
@@ -509,9 +410,7 @@ class Default(WorkerEntrypoint):
                 callback_handler
             )
 
-        await router.dispatch(
-            update
-        )
+        await router.dispatch(update)
 
         body = build_webhook_response_body(
             update_type
@@ -528,20 +427,13 @@ async def _handle_callback_query(
     telegram,
     env,
 ):
-    """
-    Route all Worker callback queries to
-    their corresponding business handlers.
-    """
-
     if not isinstance(
         callback_query,
         dict,
     ):
         return None
 
-    callback_data = callback_query.get(
-        "data"
-    )
+    callback_data = callback_query.get("data")
 
     if not isinstance(
         callback_data,
@@ -551,7 +443,6 @@ async def _handle_callback_query(
 
     data = callback_data
 
-    # Main navigation
     if data in (
         "main",
         "restart_button",
@@ -561,7 +452,6 @@ async def _handle_callback_query(
             telegram,
         )
 
-    # Categories
     if data.startswith("cat:"):
         return await handle_category(
             backend,
@@ -569,7 +459,6 @@ async def _handle_callback_query(
             callback_query,
         )
 
-    # Public product detail
     if data.startswith("product:"):
         return await handle_product_detail(
             backend,
@@ -577,7 +466,6 @@ async def _handle_callback_query(
             callback_query,
         )
 
-    # Product favorites
     if data.startswith("favorite:"):
         return await handle_favorite_add(
             backend,
@@ -599,7 +487,6 @@ async def _handle_callback_query(
             callback_query,
         )
 
-    # Seller list / detail
     if data.startswith("sellers:"):
         return await handle_sellers_list(
             backend,
@@ -628,7 +515,6 @@ async def _handle_callback_query(
             callback_query,
         )
 
-    # Reviews
     if data.startswith("reviewstart:"):
         return await handle_review_start(
             callback_query,
@@ -641,7 +527,6 @@ async def _handle_callback_query(
             telegram,
         )
 
-    # Reports
     if data.startswith("reportreason:"):
         return await handle_report_reason(
             callback_query,
@@ -660,7 +545,6 @@ async def _handle_callback_query(
             telegram,
         )
 
-    # Compare
     if data == "compare":
         return await handle_compare(
             backend,
@@ -696,7 +580,6 @@ async def _handle_callback_query(
             callback_query,
         )
 
-    # Discovery
     if data == "hot":
         return await handle_hot(
             backend,
@@ -732,7 +615,6 @@ async def _handle_callback_query(
             callback_query,
         )
 
-    # Seller registration
     if data == "registerseller":
         return await handle_register_seller_start(
             backend,
@@ -754,7 +636,6 @@ async def _handle_callback_query(
             callback_query,
         )
 
-    # Search
     if data == "search":
         return await handle_search_start(
             backend,
@@ -769,7 +650,6 @@ async def _handle_callback_query(
             callback_query,
         )
 
-    # Public advertising
     if data == "publicads":
         return await handle_public_ads(
             backend,
@@ -811,6 +691,7 @@ async def _handle_callback_query(
             backend,
             telegram,
             callback_query,
+            env,
         )
 
     if data.startswith("setmode:"):
@@ -818,9 +699,9 @@ async def _handle_callback_query(
             backend,
             telegram,
             callback_query,
+            env,
         )
 
-    # Support
     if data.startswith("supportstart:"):
         return await handle_support_start(
             backend,
@@ -835,7 +716,6 @@ async def _handle_callback_query(
             callback_query,
         )
 
-    # Notifications
     if data == "notifications":
         return await handle_notifications(
             backend,
@@ -850,7 +730,6 @@ async def _handle_callback_query(
             callback_query,
         )
 
-    # Profile
     if data == "myprofile":
         return await handle_my_profile(
             backend,
@@ -872,7 +751,6 @@ async def _handle_callback_query(
             callback_query,
         )
 
-    # Requests
     if data == "myrequests":
         return await handle_my_requests(
             backend,
@@ -880,7 +758,6 @@ async def _handle_callback_query(
             callback_query,
         )
 
-    # Store status
     if data == "storestatus":
         return await handle_store_status(
             backend,
@@ -895,7 +772,6 @@ async def _handle_callback_query(
             callback_query,
         )
 
-    # Shop toggle callback is generated by shop.py.
     if data.startswith("storetoggle:"):
         return await handle_shop_toggle_active(
             backend,
@@ -903,7 +779,6 @@ async def _handle_callback_query(
             callback_query,
         )
 
-    # Product statistics
     if data == "mystats":
         return await handle_my_stats(
             backend,
@@ -925,7 +800,6 @@ async def _handle_callback_query(
             callback_query,
         )
 
-    # Referrals
     if data == "reflist":
         return await handle_referral_list(
             backend,
@@ -940,7 +814,6 @@ async def _handle_callback_query(
             callback_query,
         )
 
-    # Product management
     if data == "myproducts":
         return await handle_my_products(
             backend,
@@ -1011,7 +884,6 @@ async def _handle_callback_query(
             callback_query,
         )
 
-    # Shop management
     if data == "myshop":
         return await handle_my_shop(
             backend,
@@ -1074,6 +946,7 @@ async def _handle_callback_query(
             backend,
             telegram,
             callback_query,
+            env,
         )
 
     # Seller claims
@@ -1154,8 +1027,9 @@ async def _handle_callback_query(
             env,
         )
 
-    if data.startswith("adminadview:") or data.startswith(
-        "adsadmindetail:"
+    if (
+        data.startswith("adminadview:")
+        or data.startswith("adsadmindetail:")
     ):
         return await handle_admin_ad_view(
             backend,
@@ -1240,9 +1114,7 @@ def _is_start_command(
     ):
         return False
 
-    text = message.get(
-        "text"
-    )
+    text = message.get("text")
 
     if not isinstance(
         text,
@@ -1255,15 +1127,11 @@ def _is_start_command(
     if not text:
         return False
 
-    command = text.split(
-        maxsplit=1
-    )[0]
+    command = text.split(maxsplit=1)[0]
 
     return (
         command == "/start"
-        or command.startswith(
-            "/start@"
-        )
+        or command.startswith("/start@")
     )
 
 
