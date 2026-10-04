@@ -40,6 +40,7 @@ from worker.compare import (
     handle_compare_start,
 )
 from worker.seller import (
+    handle_sellers_list,
     handle_seller_detail,
     handle_seller_favorite_add,
     handle_seller_favorite_remove,
@@ -279,6 +280,15 @@ async def _handle_callback_query(
         "sunfav:"
     ):
         return await handle_seller_favorite_remove(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if callback_data.startswith(
+        "sellers:"
+    ):
+        return await handle_sellers_list(
             backend,
             telegram,
             callback_query,
