@@ -876,7 +876,7 @@ async def _approve_claim(
         ):
             return False
 
-        approved = await transaction.execute(
+        await transaction.execute(
             """
             UPDATE seller_claims
             SET
@@ -903,10 +903,7 @@ async def _approve_claim(
             ),
         )
 
-        if approved.rowcount != 1:
-            return False
-
-        seller_updated = await transaction.execute(
+        await transaction.execute(
             """
             UPDATE sellers
             SET
@@ -938,9 +935,6 @@ async def _approve_claim(
                 claim["user_id"],
             ),
         )
-
-        if seller_updated.rowcount != 1:
-            return False
 
         await transaction.execute(
             """
