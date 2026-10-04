@@ -492,6 +492,17 @@ async def _seller_keyboard(
     keyboard.append(
         [
             {
+                "text": "🚩 گزارش",
+                "callback_data": (
+                    f"report:seller:{seller_id}"
+                ),
+            }
+        ]
+    )
+
+    keyboard.append(
+        [
+            {
                 "text": "🔙 بازگشت",
                 "callback_data": "sellers:0",
             }
