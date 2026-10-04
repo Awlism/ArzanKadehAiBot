@@ -26,6 +26,7 @@ from worker.webhook import (
 
 from worker.router import WorkerRouter
 from worker.start import handle_start
+from worker.messages import handle_message
 from worker.products import (
     handle_product_detail,
     handle_favorite_add,
@@ -42,6 +43,10 @@ from worker.seller import (
     handle_seller_detail,
     handle_seller_favorite_add,
     handle_seller_favorite_remove,
+)
+from worker.review import (
+    handle_review_start,
+    handle_review_rating,
 )
 from worker.telegram import TelegramClient
 
@@ -160,25 +165,26 @@ class Default(WorkerEntrypoint):
         )
 
         if update_type == "message":
-            message = update.get(
-                "message"
-            )
 
-            if _is_start_command(
-                message
+            async def message_handler(
+                message,
             ):
-
-                async def message_handler(
-                    message,
+                if _is_start_command(
+                    message
                 ):
                     return await handle_start(
                         message,
                         telegram,
                     )
 
-                router.set_message_handler(
-                    message_handler
+                return await handle_message(
+                    message,
+                    telegram,
                 )
+
+            router.set_message_handler(
+                message_handler
+            )
 
         elif update_type == "callback_query":
 
@@ -285,6 +291,22 @@ async def _handle_callback_query(
             backend,
             telegram,
             callback_query,
+        )
+
+    if callback_data.startswith(
+        "reviewstart:"
+    ):
+        return await handle_review_start(
+            callback_query,
+            telegram,
+        )
+
+    if callback_data.startswith(
+        "reviewrate:"
+    ):
+        return await handle_review_rating(
+            callback_query,
+            telegram,
         )
 
     if callback_data == "compare":
