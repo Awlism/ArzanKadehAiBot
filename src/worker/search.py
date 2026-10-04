@@ -160,13 +160,10 @@ STOPWORDS = [
 
 _NORMALIZED_COLOR_WORDS = sorted(
     {
-        normalize
-        for normalize in (
-            normalize_persian_text(
-                word
-            )
-            for word in COLOR_WORDS
+        normalize_persian_text(
+            word
         )
+        for word in COLOR_WORDS
     },
     key=len,
     reverse=True,
@@ -1031,143 +1028,68 @@ def _score_product(
         )
 
         if normalized_term in name:
-            score += 12
-        elif normalized_term in description:
-            score += 6
+            score += 10
 
-    if (
-        city_id
-        and row["seller_city_id"]
-        == city_id
-    ):
-        score += 18
+        if normalized_term in description:
+            score += 4
 
-    price = row["price"]
+    if city_id is not None:
+        if row["city_id"] == city_id:
+            score += 15
 
-    if price is not None:
-        if (
-            structured.min_price is not None
-            and price < structured.min_price
-        ):
-            score -= 30
-
-        if (
-            structured.max_price is not None
-            and price > structured.max_price
-        ):
-            score -= 30
-
-        if (
-            structured.min_price is not None
-            or structured.max_price is not None
-        ):
-            if (
-                (
-                    structured.min_price is None
-                    or price >= structured.min_price
-                )
-                and (
-                    structured.max_price is None
-                    or price <= structured.max_price
-                )
-            ):
-                score += 15
-
-    rating = float(
-        row["rating"] or 0
-    )
-    review_count = int(
-        row["review_count"] or 0
-    )
-    views = int(
-        row["views"] or 0
-    )
-
-    score += (
-        min(
-            max(rating, 0),
-            5,
-        )
-        * 2
-    )
     score += min(
-        review_count,
-        50,
-    ) * 0.1
+        float(row["rating"] or 0),
+        5.0,
+    ) * 1.5
+
     score += min(
-        views,
-        500,
-    ) * 0.01
+        int(row["views"] or 0),
+        10000,
+    ) / 10000
 
     return score
 
 
-async def _resolve_category_ids(
+async def _category_ids_for_name(
     db: Any,
-    name: Optional[str],
+    category_name: Optional[str],
 ) -> set[int]:
-    if not name:
+    if not category_name:
         return set()
 
     rows = await db.fetchall(
         """
-        SELECT id, parent_id
+        SELECT id
         FROM categories
-        WHERE name LIKE ?
-        LIMIT 5;
+        WHERE name = ?;
         """,
         (
-            f"%{name.strip()}%",
+            category_name,
         ),
     )
 
-    ids: set[int] = set()
-
-    for row in rows:
-        category_id = int(
-            row["id"]
-        )
-
-        ids.add(
-            category_id
-        )
-
-        if row["parent_id"] is None:
-            children = await db.fetchall(
-                """
-                SELECT id
-                FROM categories
-                WHERE parent_id = ?;
-                """,
-                (
-                    category_id,
-                ),
-            )
-
-            ids.update(
-                int(child["id"])
-                for child in children
-            )
-
-    return ids
+    return {
+        int(row["id"])
+        for row in rows
+    }
 
 
-async def _resolve_city_id(
+async def _city_id_for_name(
     db: Any,
-    name: Optional[str],
+    city_name: Optional[str],
 ) -> int | None:
-    if not name:
+    if not city_name:
         return None
 
     row = await db.fetchone(
         """
         SELECT id
         FROM cities
-        WHERE name LIKE ?
+        WHERE name = ?
         LIMIT 1;
         """,
         (
-            f"%{name.strip()}%",
+            city_name,
         ),
     )
 
@@ -1179,55 +1101,27 @@ async def _resolve_city_id(
     )
 
 
-async def _fetch_products(
-    db: Any,
-    where_clause: str,
-    params: list[Any],
-) -> list[dict[str, Any]]:
-    params = list(params)
-    params.append(
-        SEARCH_MAX_CANDIDATES
-    )
-
-    return await db.fetchall(
-        """
-        SELECT
-            p.*,
-            s.name AS seller_name,
-            s.city_id AS seller_city_id,
-            c.name AS category_name
-        FROM products p
-        JOIN sellers s
-            ON s.id = p.seller_id
-        LEFT JOIN categories c
-            ON c.id = p.category_id
-        WHERE
-            COALESCE(s.is_active, 1) = 1
-            AND (
-                %s
-            )
-        LIMIT ?;
-        """
-        % where_clause,
-        params,
-    )
-
-
 async def _structured_search(
     db: Any,
     structured: StructuredQuery,
 ) -> list[dict[str, Any]]:
-    category_ids = await _resolve_category_ids(
-        db,
-        structured.category,
+    category_ids = (
+        await _category_ids_for_name(
+            db,
+            structured.category,
+        )
     )
 
-    city_id = await _resolve_city_id(
-        db,
-        structured.city,
+    city_id = (
+        await _city_id_for_name(
+            db,
+            structured.city,
+        )
     )
 
-    conditions: list[str] = []
+    conditions = [
+        "COALESCE(s.is_active, 1) = 1"
+    ]
     params: list[Any] = []
 
     if category_ids:
@@ -1241,10 +1135,10 @@ async def _structured_search(
         )
 
         params.extend(
-            category_ids
+            sorted(category_ids)
         )
 
-    if city_id:
+    if city_id is not None:
         conditions.append(
             "s.city_id = ?"
         )
@@ -1252,14 +1146,30 @@ async def _structured_search(
             city_id
         )
 
-    keyword_tokens = _keyword_tokens(
+    if structured.min_price is not None:
+        conditions.append(
+            "p.price >= ?"
+        )
+        params.append(
+            structured.min_price
+        )
+
+    if structured.max_price is not None:
+        conditions.append(
+            "p.price <= ?"
+        )
+        params.append(
+            structured.max_price
+        )
+
+    tokens = _keyword_tokens(
         structured
     )
 
-    if keyword_tokens:
-        token_conditions: list[str] = []
+    if tokens:
+        token_conditions = []
 
-        for token in keyword_tokens:
+        for token in tokens:
             like = f"%{token}%"
 
             token_conditions.append(
@@ -1268,7 +1178,6 @@ async def _structured_search(
                     p.name LIKE ?
                     OR p.description LIKE ?
                     OR s.name LIKE ?
-                    OR s.description LIKE ?
                     OR c.name LIKE ?
                 )
                 """
@@ -1280,99 +1189,75 @@ async def _structured_search(
                     like,
                     like,
                     like,
-                    like,
                 ]
             )
 
         conditions.append(
             "("
-            + " OR ".join(
+            + " AND ".join(
                 token_conditions
             )
             + ")"
         )
 
-    for term in (
-        structured.color,
-        structured.gender,
-    ):
-        if not term:
+    where_clause = " AND ".join(
+        conditions
+    )
+
+    rows = await db.fetchall(
+        f"""
+        SELECT
+            p.*,
+            s.name AS seller_name,
+            s.city_id AS city_id,
+            c.name AS category_name,
+            city.name AS city_name
+        FROM products p
+        JOIN sellers s
+            ON s.id = p.seller_id
+        LEFT JOIN categories c
+            ON c.id = p.category_id
+        LEFT JOIN cities city
+            ON city.id = s.city_id
+        WHERE {where_clause}
+        ORDER BY
+            p.rating DESC,
+            p.views DESC,
+            p.id DESC
+        LIMIT ?;
+        """,
+        params + [
+            SEARCH_MAX_CANDIDATES
+        ],
+    )
+
+    scored = []
+
+    for row in rows:
+        score = _score_product(
+            row,
+            structured,
+            category_ids,
+            city_id,
+        )
+
+        if score <= 0:
             continue
 
-        like = f"%{term}%"
-
-        conditions.append(
-            """
+        scored.append(
             (
-                p.name LIKE ?
-                OR p.description LIKE ?
-            )
-            """
-        )
-
-        params.extend(
-            [
-                like,
-                like,
-            ]
-        )
-
-    if structured.max_price is not None:
-        conditions.append(
-            """
-            (
-                p.price IS NOT NULL
-                AND p.price <= ?
-            )
-            """
-        )
-        params.append(
-            structured.max_price
-        )
-
-    if structured.min_price is not None:
-        conditions.append(
-            """
-            (
-                p.price IS NOT NULL
-                AND p.price >= ?
-            )
-            """
-        )
-        params.append(
-            structured.min_price
-        )
-
-    where_clause = (
-        " AND ".join(
-            conditions
-        )
-        if conditions
-        else "1=1"
-    )
-
-    rows = await _fetch_products(
-        db,
-        where_clause,
-        params,
-    )
-
-    scored = [
-        (
-            _score_product(
+                score,
                 row,
-                structured,
-                category_ids,
-                city_id,
-            ),
-            row,
+            )
         )
-        for row in rows
-    ]
 
     scored.sort(
         key=lambda pair: (
             pair[0],
+            float(
+                pair[1]["rating"]
+                or 0
+            ),
             int(
                 pair[1]["views"]
                 or 0
@@ -1395,20 +1280,16 @@ async def _structured_search(
 
 async def _plain_search(
     db: Any,
-    query: str,
+    structured: StructuredQuery,
 ) -> list[dict[str, Any]]:
-    tokens = [
-        token
-        for token in _tokenize(
-            query
-        )
-        if token not in _STOPWORD_TOKENS
-    ]
+    tokens = _keyword_tokens(
+        structured
+    )
 
     if not tokens:
         return []
 
-    conditions: list[str] = []
+    conditions = []
     params: list[Any] = []
 
     for token in tokens:
@@ -1420,7 +1301,6 @@ async def _plain_search(
                 p.name LIKE ?
                 OR p.description LIKE ?
                 OR s.name LIKE ?
-                OR s.description LIKE ?
                 OR c.name LIKE ?
             )
             """
@@ -1432,149 +1312,105 @@ async def _plain_search(
                 like,
                 like,
                 like,
-                like,
             ]
         )
 
-    rows = await _fetch_products(
-        db,
-        " OR ".join(
+    params.append(
+        SEARCH_MAX_CANDIDATES
+    )
+
+    rows = await db.fetchall(
+        """
+        SELECT
+            p.*,
+            s.name AS seller_name,
+            s.city_id AS city_id,
+            c.name AS category_name,
+            city.name AS city_name
+        FROM products p
+        JOIN sellers s
+            ON s.id = p.seller_id
+        LEFT JOIN categories c
+            ON c.id = p.category_id
+        LEFT JOIN cities city
+            ON city.id = s.city_id
+        WHERE
+            COALESCE(s.is_active, 1) = 1
+            AND (
+                %s
+            )
+        ORDER BY
+            p.rating DESC,
+            p.views DESC,
+            p.id DESC
+        LIMIT ?;
+        """
+        % " AND ".join(
             conditions
         ),
         params,
     )
 
-    structured = StructuredQuery(
-        raw_query=query,
-        keyword=" ".join(
-            tokens
-        ),
-    )
-
-    scored = [
-        (
-            _score_product(
-                row,
-                structured,
-                set(),
-                None,
-            ),
-            row,
-        )
-        for row in rows
-    ]
-
-    scored.sort(
-        key=lambda pair: (
-            pair[0],
-            int(
-                pair[1]["views"]
-                or 0
-            ),
-            int(
-                pair[1]["id"]
-                or 0
-            ),
-        ),
-        reverse=True,
-    )
-
-    return [
-        row
-        for _score, row in scored[
-            :PLAIN_SEARCH_LIMIT
-        ]
+    return rows[
+        :SEARCH_RESULT_LIMIT
     ]
 
 
 async def _fuzzy_search(
     db: Any,
-    query: str,
     structured: StructuredQuery,
 ) -> list[dict[str, Any]]:
-    query_tokens = [
-        token
-        for token in _tokenize(
-            query
-        )
-        if token not in _STOPWORD_TOKENS
-    ]
+    tokens = _keyword_tokens(
+        structured
+    )
 
-    fuzzy_tokens = [
-        token
-        for token in query_tokens
-        if (
-            TYPO_MIN_TOKEN_LENGTH
-            <= len(token)
-            <= TYPO_MAX_TOKEN_LENGTH
-        )
-    ]
-
-    if not fuzzy_tokens:
+    if not tokens:
         return []
 
-    conditions: list[str] = []
-    params: list[Any] = []
+    params = [
+        SEARCH_MAX_CANDIDATES
+    ]
 
-    for token in fuzzy_tokens:
-        like = f"%{token[:3]}%"
-
-        conditions.append(
-            """
-            (
-                p.name LIKE ?
-                OR p.description LIKE ?
-                OR s.name LIKE ?
-                OR s.description LIKE ?
-                OR c.name LIKE ?
-            )
-            """
-        )
-
-        params.extend(
-            [
-                like,
-                like,
-                like,
-                like,
-                like,
-            ]
-        )
-
-    rows = await _fetch_products(
-        db,
-        " OR ".join(
-            conditions
-        ),
+    rows = await db.fetchall(
+        """
+        SELECT
+            p.*,
+            s.name AS seller_name,
+            s.city_id AS city_id,
+            c.name AS category_name,
+            city.name AS city_name
+        FROM products p
+        JOIN sellers s
+            ON s.id = p.seller_id
+        LEFT JOIN categories c
+            ON c.id = p.category_id
+        LEFT JOIN cities city
+            ON city.id = s.city_id
+        WHERE
+            COALESCE(s.is_active, 1) = 1
+        ORDER BY
+            p.rating DESC,
+            p.views DESC,
+            p.id DESC
+        LIMIT ?;
+        """,
         params,
     )
 
-    scored: list[
-        tuple[
-            float,
-            dict[str, Any],
-        ]
-    ] = []
+    scored = []
 
     for row in rows:
-        fuzzy_score = _row_fuzzy_score(
+        score = _row_fuzzy_score(
             row,
-            fuzzy_tokens,
+            tokens,
         )
 
-        if fuzzy_score <= 0:
+        if score <= 0:
             continue
-
-        normal_score = _score_product(
-            row,
-            structured,
-            set(),
-            None,
-        )
 
         scored.append(
             (
-                fuzzy_score + normal_score,
+                score,
                 row,
             )
         )
@@ -1582,6 +1418,10 @@ async def _fuzzy_search(
     scored.sort(
         key=lambda pair: (
             pair[0],
+            float(
+                pair[1]["rating"]
+                or 0
+            ),
             int(
                 pair[1]["views"]
                 or 0
@@ -1597,115 +1437,60 @@ async def _fuzzy_search(
     return [
         row
         for _score, row in scored[
-            :PLAIN_SEARCH_LIMIT
+            :SEARCH_RESULT_LIMIT
         ]
     ]
 
 
 async def _search_products(
     db: Any,
-    query: str,
+    raw_query: str,
 ) -> tuple[
     StructuredQuery,
     list[dict[str, Any]],
     str,
 ]:
-    structured = await LocalQueryParser().parse(
+    parser = LocalQueryParser()
+
+    structured = await parser.parse(
         db,
-        query,
+        raw_query,
     )
 
     if structured.has_any_extracted_field():
-        candidates = [
+        rows = await _structured_search(
+            db,
             structured,
-            StructuredQuery(
-                raw_query=structured.raw_query,
-                keyword=structured.keyword,
-                category=structured.category,
-                city=structured.city,
-                color=structured.color,
-                gender=structured.gender,
-            ),
-            StructuredQuery(
-                raw_query=structured.raw_query,
-                keyword=structured.keyword,
-                category=structured.category,
-                color=structured.color,
-                gender=structured.gender,
-            ),
-            StructuredQuery(
-                raw_query=structured.raw_query,
-                keyword=structured.keyword,
-                category=structured.category,
-            ),
-        ]
+        )
 
-        seen: set[
-            tuple[Any, ...]
-        ] = set()
-
-        for candidate in candidates:
-            signature = (
-                candidate.keyword,
-                candidate.category,
-                candidate.city,
-                candidate.min_price,
-                candidate.max_price,
-                candidate.color,
-                candidate.gender,
+        if rows:
+            return (
+                structured,
+                rows,
+                "structured",
             )
 
-            if signature in seen:
-                continue
-
-            seen.add(
-                signature
-            )
-
-            if not candidate.has_any_extracted_field():
-                continue
-
-            results = await _structured_search(
-                db,
-                candidate,
-            )
-
-            if results:
-                return (
-                    candidate,
-                    results,
-                    "structured",
-                )
-
-    plain = await _plain_search(
+    rows = await _plain_search(
         db,
-        query,
+        structured,
     )
 
-    if plain:
+    if rows:
         return (
             structured,
-            plain,
+            rows,
             "plain",
         )
 
-    fuzzy = await _fuzzy_search(
+    rows = await _fuzzy_search(
         db,
-        query,
         structured,
     )
 
-    if fuzzy:
-        return (
-            structured,
-            fuzzy,
-            "fuzzy",
-        )
-
     return (
         structured,
-        [],
-        "plain",
+        rows,
+        "fuzzy" if rows else "plain",
     )
 
 
@@ -1713,83 +1498,66 @@ def _seller_score(
     row: dict[str, Any],
     tokens: list[str],
 ) -> float:
-    if not tokens:
-        return 0.0
-
     score = 0.0
 
-    score += _field_match_score(
-        tokens,
-        row["name"] or "",
-        exact_phrase_score=45,
-        token_score=15,
-        all_tokens_bonus=20,
-        partial_token_score=5,
+    fields = (
+        (
+            row["name"] or "",
+            20.0,
+        ),
+        (
+            row["description"] or "",
+            6.0,
+        ),
+        (
+            row["city_name"] or "",
+            4.0,
+        ),
     )
 
-    score += _field_match_score(
-        tokens,
-        row["description"] or "",
-        exact_phrase_score=8,
-        token_score=4,
-        all_tokens_bonus=6,
-        partial_token_score=2,
-    )
-
-    score += _field_match_score(
-        tokens,
-        row["city_name"] or "",
-        exact_phrase_score=12,
-        token_score=6,
-        all_tokens_bonus=8,
-        partial_token_score=2,
-    )
-
-    rating = float(
-        row["rating"] or 0
-    )
-    reviews = int(
-        row["review_count"] or 0
-    )
-    views = int(
-        row["views"] or 0
-    )
-
-    score += (
-        min(
-            max(rating, 0),
-            5,
+    for value, weight in fields:
+        normalized = normalize_persian_text(
+            value
         )
-        * 2
-    )
+
+        for token in tokens:
+            if token in normalized:
+                score += weight
+
     score += min(
-        reviews,
-        50,
-    ) * 0.1
+        float(row["rating"] or 0),
+        5.0,
+    ) * 1.5
+
     score += min(
-        views,
-        500,
-    ) * 0.01
+        int(row["views"] or 0),
+        10000,
+    ) / 10000
 
     return score
 
 
 async def _search_sellers(
     db: Any,
-    query: str,
+    raw_query: str,
 ) -> list[dict[str, Any]]:
+    normalized = normalize_persian_text(
+        raw_query
+    )
+
     tokens = [
         token
         for token in _tokenize(
-            query
+            normalized
         )
-        if token not in _STOPWORD_TOKENS
+        if token
+        not in _STOPWORD_TOKENS
     ]
 
     if not tokens:
         return []
 
-    conditions: list[str] = []
+    conditions = []
     params: list[Any] = []
 
     for token in tokens:
