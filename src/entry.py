@@ -44,6 +44,10 @@ from worker.seller import (
     handle_seller_favorite_add,
     handle_seller_favorite_remove,
 )
+from worker.review import (
+    handle_review_rating,
+    handle_review_start,
+)
 from worker.state import ensure_state_table
 from worker.telegram import TelegramClient
 
@@ -246,6 +250,22 @@ async def _handle_callback_query(
         str,
     ):
         return None
+
+    if callback_data.startswith(
+        "reviewstart:"
+    ):
+        return await handle_review_start(
+            callback_query,
+            telegram,
+        )
+
+    if callback_data.startswith(
+        "reviewrate:"
+    ):
+        return await handle_review_rating(
+            callback_query,
+            telegram,
+        )
 
     if callback_data.startswith(
         "product:"
