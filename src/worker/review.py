@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from worker.state import set_state
+from worker.state import get_state, set_state
 from worker.telegram import TelegramClient
 from worker_backend.backend import backend
 
@@ -18,7 +18,7 @@ from worker_backend.backend import backend
 REVIEW_STATE = "review:waiting_text"
 
 
-def _get_callback_user_id(
+def _get_callback_telegram_id(
     callback_query: dict[str, Any],
 ) -> Optional[int]:
     user = callback_query.get("from")
@@ -26,10 +26,37 @@ def _get_callback_user_id(
     if not isinstance(user, dict):
         return None
 
-    user_id = user.get("id")
+    telegram_id = user.get("id")
 
     try:
-        user_id = int(user_id)
+        telegram_id = int(telegram_id)
+    except (TypeError, ValueError):
+        return None
+
+    if telegram_id < 1:
+        return None
+
+    return telegram_id
+
+
+async def _get_internal_user_id(
+    telegram_id: int,
+) -> Optional[int]:
+    row = await backend.fetchone(
+        """
+        SELECT id
+        FROM users
+        WHERE telegram_id = ?
+        LIMIT 1;
+        """,
+        (telegram_id,),
+    )
+
+    if row is None:
+        return None
+
+    try:
+        user_id = int(row["id"])
     except (TypeError, ValueError):
         return None
 
@@ -227,42 +254,29 @@ async def _has_existing_review(
     return False
 
 
-def _rating_keyboard(
-    target_type: str,
-    target_id: int,
-) -> dict[str, Any]:
+def _rating_keyboard() -> dict[str, Any]:
     return {
         "inline_keyboard": [
             [
                 {
                     "text": "⭐ 1",
-                    "callback_data": (
-                        "reviewrate:1"
-                    ),
+                    "callback_data": "reviewrate:1",
                 },
                 {
                     "text": "⭐ 2",
-                    "callback_data": (
-                        "reviewrate:2"
-                    ),
+                    "callback_data": "reviewrate:2",
                 },
                 {
                     "text": "⭐ 3",
-                    "callback_data": (
-                        "reviewrate:3"
-                    ),
+                    "callback_data": "reviewrate:3",
                 },
                 {
                     "text": "⭐ 4",
-                    "callback_data": (
-                        "reviewrate:4"
-                    ),
+                    "callback_data": "reviewrate:4",
                 },
                 {
                     "text": "⭐ 5",
-                    "callback_data": (
-                        "reviewrate:5"
-                    ),
+                    "callback_data": "reviewrate:5",
                 },
             ],
         ],
@@ -292,7 +306,7 @@ async def handle_review_start(
 
     target_type, target_id = parsed
 
-    user_id = _get_callback_user_id(
+    telegram_id = _get_callback_telegram_id(
         callback_query
     )
 
@@ -305,7 +319,7 @@ async def handle_review_start(
     )
 
     if (
-        user_id is None
+        telegram_id is None
         or chat_id is None
     ):
         return False
@@ -314,6 +328,17 @@ async def handle_review_start(
         await telegram.answer_callback_query(
             callback_query_id
         )
+
+    user_id = await _get_internal_user_id(
+        telegram_id
+    )
+
+    if user_id is None:
+        await telegram.send_message(
+            chat_id,
+            "حساب کاربری پیدا نشد. اول /start رو بزن.",
+        )
+        return True
 
     target = await _get_target(
         target_type,
@@ -361,10 +386,7 @@ async def handle_review_start(
             f"برای «{target_name}» چه امتیازی می‌دی؟\n\n"
             "امتیازت رو از ۱ تا ۵ انتخاب کن ⭐"
         ),
-        reply_markup=_rating_keyboard(
-            target_type,
-            target_id,
-        ),
+        reply_markup=_rating_keyboard(),
     )
 
     return True
@@ -391,7 +413,7 @@ async def handle_review_rating(
     if rating is None:
         return False
 
-    user_id = _get_callback_user_id(
+    telegram_id = _get_callback_telegram_id(
         callback_query
     )
 
@@ -404,7 +426,7 @@ async def handle_review_rating(
     )
 
     if (
-        user_id is None
+        telegram_id is None
         or chat_id is None
     ):
         return False
@@ -414,7 +436,16 @@ async def handle_review_rating(
             callback_query_id
         )
 
-    from worker.state import get_state
+    user_id = await _get_internal_user_id(
+        telegram_id
+    )
+
+    if user_id is None:
+        await telegram.send_message(
+            chat_id,
+            "حساب کاربری پیدا نشد. اول /start رو بزن.",
+        )
+        return True
 
     state = await get_state(
         backend,
@@ -471,6 +502,17 @@ async def handle_review_rating(
         await telegram.send_message(
             chat_id,
             "اطلاعات ثبت نظر نامعتبره. دوباره شروع کن.",
+        )
+        return True
+
+    if await _has_existing_review(
+        user_id,
+        target_type,
+        target_id,
+    ):
+        await telegram.send_message(
+            chat_id,
+            "قبلاً برای این مورد نظر ثبت کردی.",
         )
         return True
 
