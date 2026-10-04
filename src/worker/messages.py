@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from worker.review import handle_review_text
+from worker.report import handle_report_text
 from worker.state import get_state
 from worker.telegram import TelegramClient
 from worker_backend.backend import backend
@@ -117,6 +118,12 @@ async def _handle_active_state(
 
     if state_name == "review:waiting_text":
         return await handle_review_text(
+            message,
+            telegram,
+        )
+
+    if state_name == "report:waiting_description":
+        return await handle_report_text(
             message,
             telegram,
         )
