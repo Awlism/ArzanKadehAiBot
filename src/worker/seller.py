@@ -454,6 +454,17 @@ async def _seller_keyboard(
     keyboard.append(
         [
             {
+                "text": "⭐ ثبت نظر",
+                "callback_data": (
+                    f"reviewstart:seller:{seller_id}"
+                ),
+            }
+        ]
+    )
+
+    keyboard.append(
+        [
+            {
                 "text": "🔙 بازگشت",
                 "callback_data": "sellers:0",
             }
