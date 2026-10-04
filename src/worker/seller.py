@@ -336,8 +336,10 @@ async def _get_seller(
     )
 
 
-def _seller_keyboard(
+async def _seller_keyboard(
+    db: Any,
     seller: dict[str, Any],
+    user_id: int,
 ) -> dict[str, Any]:
     seller_id = int(
         seller["id"]
@@ -350,6 +352,24 @@ def _seller_keyboard(
     )
 
     keyboard: list[list[dict[str, Any]]] = []
+
+    is_favorite = await _is_seller_favorite(
+        db,
+        user_id,
+        seller_id,
+    )
+
+    favorite_text = (
+        "💔 حذف از علاقه‌مندی‌ها"
+        if is_favorite
+        else "❤️ ذخیره فروشگاه"
+    )
+
+    favorite_callback = (
+        f"sunfav:{seller_id}"
+        if is_favorite
+        else f"sfav:{seller_id}"
+    )
 
     if is_active:
         instagram = _instagram_url(
@@ -425,6 +445,15 @@ def _seller_keyboard(
     keyboard.append(
         [
             {
+                "text": favorite_text,
+                "callback_data": favorite_callback,
+            }
+        ]
+    )
+
+    keyboard.append(
+        [
+            {
                 "text": "🔙 بازگشت",
                 "callback_data": "sellers:0",
             }
@@ -436,6 +465,364 @@ def _seller_keyboard(
     }
 
 
+async def _is_seller_favorite(
+    db: Any,
+    user_id: int,
+    seller_id: int,
+) -> bool:
+    row = await db.fetchone(
+        """
+        SELECT 1
+        FROM seller_favorites
+        WHERE user_id = ?
+          AND seller_id = ?
+        LIMIT 1;
+        """,
+        (
+            user_id,
+            seller_id,
+        ),
+    )
+
+    return row is not None
+
+
+async def handle_seller_favorite_add(
+    db: Any,
+    telegram: Any,
+    callback_query: dict[str, Any],
+) -> None:
+    callback_data = str(callback_query.get("data", ""))
+    seller_id = _parse_seller_id(callback_data)
+
+    if seller_id is None:
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ شناسه فروشگاه نامعتبر است.",
+            True,
+        )
+        return
+
+    callback_user = callback_query.get("from")
+
+    if not isinstance(callback_user, dict):
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ اطلاعات کاربر نامعتبر است.",
+            True,
+        )
+        return
+
+    try:
+        user = await _ensure_user(
+            db,
+            callback_user,
+        )
+    except (ValueError, RuntimeError):
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ اطلاعات کاربر نامعتبر است.",
+            True,
+        )
+        return
+
+    seller = await _get_seller(
+        db,
+        seller_id,
+    )
+
+    if seller is None:
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ این فروشگاه یافت نشد.",
+            True,
+        )
+        return
+
+    await db.execute(
+        """
+        INSERT OR IGNORE INTO seller_favorites (
+            user_id,
+            seller_id,
+            created_at
+        )
+        VALUES (?, ?, ?);
+        """,
+        (
+            int(user["id"]),
+            seller_id,
+            _now_iso(),
+        ),
+    )
+
+    await db.execute(
+        """
+        INSERT INTO events (
+            user_id,
+            event_type,
+            entity_type,
+            entity_id,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?);
+        """,
+        (
+            int(user["id"]),
+            "favorite_add",
+            "seller",
+            seller_id,
+            _now_iso(),
+        ),
+    )
+
+    await _render_seller_detail(
+        db,
+        telegram,
+        callback_query,
+        seller_id,
+        int(user["id"]),
+    )
+
+    await _answer_callback(
+        telegram,
+        callback_query,
+        "❤️ ذخیره شد!",
+        True,
+    )
+
+
+async def handle_seller_favorite_remove(
+    db: Any,
+    telegram: Any,
+    callback_query: dict[str, Any],
+) -> None:
+    callback_data = str(callback_query.get("data", ""))
+    seller_id = _parse_seller_id(callback_data)
+
+    if seller_id is None:
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ شناسه فروشگاه نامعتبر است.",
+            True,
+        )
+        return
+
+    callback_user = callback_query.get("from")
+
+    if not isinstance(callback_user, dict):
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ اطلاعات کاربر نامعتبر است.",
+            True,
+        )
+        return
+
+    try:
+        user = await _ensure_user(
+            db,
+            callback_user,
+        )
+    except (ValueError, RuntimeError):
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ اطلاعات کاربر نامعتبر است.",
+            True,
+        )
+        return
+
+    seller = await _get_seller(
+        db,
+        seller_id,
+    )
+
+    if seller is None:
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ این فروشگاه یافت نشد.",
+            True,
+        )
+        return
+
+    result = await db.execute(
+        """
+        DELETE FROM seller_favorites
+        WHERE user_id = ?
+          AND seller_id = ?;
+        """,
+        (
+            int(user["id"]),
+            seller_id,
+        ),
+    )
+
+    if getattr(
+        result,
+        "rowcount",
+        0,
+    ) != 1:
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "این فروشگاه دیگر در علاقه‌مندی‌ها نیست.",
+            True,
+        )
+        return
+
+    await db.execute(
+        """
+        INSERT INTO events (
+            user_id,
+            event_type,
+            entity_type,
+            entity_id,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?);
+        """,
+        (
+            int(user["id"]),
+            "favorite_remove",
+            "seller",
+            seller_id,
+            _now_iso(),
+        ),
+    )
+
+    await _render_seller_detail(
+        db,
+        telegram,
+        callback_query,
+        seller_id,
+        int(user["id"]),
+    )
+
+    await _answer_callback(
+        telegram,
+        callback_query,
+        "از علاقه‌مندی‌ها حذف شد 💔",
+        True,
+    )
+
+
+async def _render_seller_detail(
+    db: Any,
+    telegram: Any,
+    callback_query: dict[str, Any],
+    seller_id: int,
+    user_id: int,
+) -> None:
+    seller = await _get_seller(
+        db,
+        seller_id,
+    )
+
+    if seller is None:
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ این فروشگاه یافت نشد.",
+            True,
+        )
+        return
+
+    message = callback_query.get(
+        "message"
+    )
+
+    if not isinstance(
+        message,
+        dict,
+    ):
+        return
+
+    chat = message.get("chat")
+
+    if not isinstance(
+        chat,
+        dict,
+    ):
+        return
+
+    chat_id = chat.get("id")
+    message_id = message.get("message_id")
+
+    if chat_id is None or message_id is None:
+        return
+
+    status = str(
+        seller.get("status") or ""
+    ).upper()
+
+    lines = [
+        (
+            f"🏪 <b>{_html(seller.get('name') or 'فروشگاه')}</b>"
+        ),
+        "",
+        (
+            _html(seller.get("description"))
+            if seller.get("description")
+            else "بدون توضیحات"
+        ),
+        "",
+        (
+            f"📍 {_html(seller.get('city_name') or 'نامشخص')}"
+        ),
+        (
+            f"⭐ {float(seller.get('rating') or 0):.1f} "
+            f"({_html(seller.get('review_count') or 0)} نظر)"
+        ),
+        (
+            f"{_status_badge(status)} "
+            f"{_html(status)}"
+        ),
+    ]
+
+    if status == "UNCLAIMED":
+        lines.extend(
+            [
+                "",
+                "این صفحه هنوز توسط صاحب کسب‌وکار تأیید نشده است.",
+            ]
+        )
+
+    is_active = (
+        bool(seller.get("is_active"))
+        if seller.get("is_active") is not None
+        else True
+    )
+
+    if not is_active:
+        lines.extend(
+            [
+                "",
+                (
+                    "🔴 این فروشگاه موقتاً غیرفعال است "
+                    "و فعلاً امکان ارتباط جدید ندارد."
+                ),
+            ]
+        )
+
+    await telegram.edit_message_text(
+        chat_id,
+        int(message_id),
+        "\n".join(lines),
+        reply_markup=await _seller_keyboard(
+            db,
+            seller,
+            user_id,
+        ),
+        parse_mode="HTML",
+    )
+
+
 async def handle_seller_detail(
     db: Any,
     telegram: Any,
@@ -444,8 +831,8 @@ async def handle_seller_detail(
     """
     Render the public seller detail screen.
 
-    Seller favorite/review/report actions are intentionally
-    routed in later Worker migration steps.
+    Seller favorite actions are handled by dedicated
+    Worker handlers.
     """
 
     callback_data = str(
@@ -664,8 +1051,10 @@ async def handle_seller_detail(
         chat_id,
         int(message_id),
         "\n".join(lines),
-        reply_markup=_seller_keyboard(
-            seller
+        reply_markup=await _seller_keyboard(
+            db,
+            seller,
+            int(user["id"]),
         ),
         parse_mode="HTML",
     )
@@ -708,4 +1097,6 @@ def _now_iso() -> str:
 
 __all__ = [
     "handle_seller_detail",
+    "handle_seller_favorite_add",
+    "handle_seller_favorite_remove",
 ]
