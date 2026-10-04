@@ -40,6 +40,8 @@ from worker.compare import (
 )
 from worker.seller import (
     handle_seller_detail,
+    handle_seller_favorite_add,
+    handle_seller_favorite_remove,
 )
 from worker.telegram import TelegramClient
 
@@ -253,6 +255,24 @@ async def _handle_callback_query(
         "unfavorite:"
     ):
         return await handle_favorite_remove(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if callback_data.startswith(
+        "sfav:"
+    ):
+        return await handle_seller_favorite_add(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if callback_data.startswith(
+        "sunfav:"
+    ):
+        return await handle_seller_favorite_remove(
             backend,
             telegram,
             callback_query,
