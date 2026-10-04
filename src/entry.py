@@ -26,7 +26,6 @@ from worker.webhook import (
 
 from worker.router import WorkerRouter
 from worker.start import handle_start
-from worker.messages import handle_message
 from worker.products import (
     handle_product_detail,
     handle_favorite_add,
@@ -44,11 +43,6 @@ from worker.seller import (
     handle_seller_favorite_add,
     handle_seller_favorite_remove,
 )
-from worker.review import (
-    handle_review_rating,
-    handle_review_start,
-)
-from worker.state import ensure_state_table
 from worker.telegram import TelegramClient
 
 
@@ -92,10 +86,6 @@ class Default(WorkerEntrypoint):
         )
 
         await backend.connect()
-
-        await ensure_state_table(
-            backend
-        )
 
         rows = await backend.fetchall(
             """
@@ -159,10 +149,6 @@ class Default(WorkerEntrypoint):
 
         await backend.connect()
 
-        await ensure_state_table(
-            backend
-        )
-
         update_type = detect_update_type(
             update
         )
@@ -178,25 +164,21 @@ class Default(WorkerEntrypoint):
                 "message"
             )
 
-            async def message_handler(
-                message,
+            if _is_start_command(
+                message
             ):
-                if _is_start_command(
-                    message
+
+                async def message_handler(
+                    message,
                 ):
                     return await handle_start(
                         message,
                         telegram,
                     )
 
-                return await handle_message(
-                    message,
-                    telegram,
+                router.set_message_handler(
+                    message_handler
                 )
-
-            router.set_message_handler(
-                message_handler
-            )
 
         elif update_type == "callback_query":
 
@@ -250,22 +232,6 @@ async def _handle_callback_query(
         str,
     ):
         return None
-
-    if callback_data.startswith(
-        "reviewstart:"
-    ):
-        return await handle_review_start(
-            callback_query,
-            telegram,
-        )
-
-    if callback_data.startswith(
-        "reviewrate:"
-    ):
-        return await handle_review_rating(
-            callback_query,
-            telegram,
-        )
 
     if callback_data.startswith(
         "product:"
