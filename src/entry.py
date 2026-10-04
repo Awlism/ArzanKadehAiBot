@@ -27,6 +27,7 @@ from worker.webhook import (
 from worker.router import WorkerRouter
 from worker.start import handle_start
 from worker.messages import handle_message
+from worker.categories import handle_category
 from worker.products import (
     handle_product_detail,
     handle_favorite_add,
@@ -244,6 +245,15 @@ async def _handle_callback_query(
         str,
     ):
         return None
+
+    if callback_data.startswith(
+        "cat:"
+    ):
+        return await handle_category(
+            backend,
+            telegram,
+            callback_query,
+        )
 
     if callback_data.startswith(
         "product:"
