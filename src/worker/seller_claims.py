@@ -23,52 +23,32 @@ def _html(value: Any) -> str:
     if value is None:
         return ""
 
-    return escape(
-        str(value),
-        quote=False,
-    )
+    return escape(str(value), quote=False)
 
 
-def _button(
-    text: str,
-    callback_data: str,
-) -> dict[str, Any]:
+def _button(text: str, callback_data: str) -> dict[str, Any]:
     return {
         "text": text,
         "callback_data": callback_data,
     }
 
 
-def _keyboard(
-    rows: list[list[dict[str, Any]]],
-) -> dict[str, Any]:
+def _keyboard(rows: list[list[dict[str, Any]]]) -> dict[str, Any]:
     return {
         "inline_keyboard": rows,
     }
 
 
-def _back_button(
-    callback_data: str,
-) -> list[dict[str, Any]]:
+def _back_button(callback_data: str) -> list[dict[str, Any]]:
     return [
-        _button(
-            "🔙 بازگشت",
-            callback_data,
-        )
+        _button("🔙 بازگشت", callback_data)
     ]
 
 
-def _parse_positive_int(
-    value: Any,
-) -> Optional[int]:
+def _parse_positive_int(value: Any) -> Optional[int]:
     try:
-        parsed = int(
-            str(value).strip()
-        )
-    except (
-        TypeError,
-        ValueError,
-    ):
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
         return None
 
     if parsed < 1:
@@ -79,45 +59,19 @@ def _parse_positive_int(
 
 def _callback_context(
     callback_query: dict[str, Any],
-) -> tuple[
-    Optional[int],
-    Optional[int],
-]:
-    message = (
-        callback_query.get("message")
-        or {}
-    )
+) -> tuple[Optional[int], Optional[int]]:
+    message = callback_query.get("message") or {}
+    chat = message.get("chat") or {}
+    user = callback_query.get("from") or {}
 
-    chat = (
-        message.get("chat")
-        or {}
-    )
+    chat_id = _parse_positive_int(chat.get("id"))
+    telegram_user_id = _parse_positive_int(user.get("id"))
 
-    user = (
-        callback_query.get("from")
-        or {}
-    )
-
-    chat_id = _parse_positive_int(
-        chat.get("id")
-    )
-
-    telegram_user_id = _parse_positive_int(
-        user.get("id")
-    )
-
-    return (
-        chat_id,
-        telegram_user_id,
-    )
+    return chat_id, telegram_user_id
 
 
 def _now_iso() -> str:
-    return datetime.now(
-        timezone.utc
-    ).isoformat(
-        timespec="seconds"
-    )
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 async def _ensure_user(
@@ -173,9 +127,7 @@ async def _ensure_user(
             "Failed to resolve internal user id."
         )
 
-    return int(
-        row["id"]
-    )
+    return int(row["id"])
 
 
 async def _answer_callback(
@@ -185,9 +137,7 @@ async def _answer_callback(
     text: Optional[str] = None,
     show_alert: bool = False,
 ) -> None:
-    callback_id = callback_query.get(
-        "id"
-    )
+    callback_id = callback_query.get("id")
 
     if not callback_id:
         return
@@ -203,32 +153,15 @@ async def _edit_callback(
     telegram: TelegramClient,
     callback_query: dict[str, Any],
     text: str,
-    keyboard: Optional[
-        dict[str, Any]
-    ] = None,
+    keyboard: Optional[dict[str, Any]] = None,
 ) -> None:
-    message = (
-        callback_query.get("message")
-        or {}
-    )
+    message = callback_query.get("message") or {}
+    chat = message.get("chat") or {}
 
-    chat = (
-        message.get("chat")
-        or {}
-    )
+    chat_id = _parse_positive_int(chat.get("id"))
+    message_id = _parse_positive_int(message.get("message_id"))
 
-    chat_id = _parse_positive_int(
-        chat.get("id")
-    )
-
-    message_id = _parse_positive_int(
-        message.get("message_id")
-    )
-
-    if (
-        chat_id is None
-        or message_id is None
-    ):
+    if chat_id is None or message_id is None:
         return
 
     await telegram.edit_message_text(
@@ -311,13 +244,8 @@ def _is_admin(
         return False
 
     try:
-        return int(configured) == int(
-            telegram_user_id
-        )
-    except (
-        TypeError,
-        ValueError,
-    ):
+        return int(configured) == int(telegram_user_id)
+    except (TypeError, ValueError):
         return False
 
 
@@ -396,9 +324,7 @@ async def _create_claim(
     if not seller:
         return None
 
-    if str(
-        seller["status"] or ""
-    ).upper() != "UNCLAIMED":
+    if str(seller["status"] or "").upper() != "UNCLAIMED":
         return None
 
     if user_id in (
@@ -425,14 +351,10 @@ async def _create_claim(
     )
 
     if existing:
-        status = str(
-            existing["status"] or ""
-        ).upper()
+        status = str(existing["status"] or "").upper()
 
         if status == "PENDING":
-            return int(
-                existing["id"]
-            )
+            return int(existing["id"])
 
         if status == "APPROVED":
             return None
@@ -481,49 +403,40 @@ async def _create_claim(
         if pending is None:
             return None
 
-        return int(
-            pending["id"]
-        )
+        return int(pending["id"])
 
-    if result.lastrowid is None:
-        pending = await db.fetchone(
-            """
-            SELECT id
-            FROM seller_claims
-            WHERE seller_id = ?
-              AND user_id = ?
-              AND status = 'PENDING'
-            ORDER BY id DESC
-            LIMIT 1;
-            """,
-            (
-                seller_id,
-                user_id,
-            ),
-        )
+    if result.lastrowid is not None:
+        return int(result.lastrowid)
 
-        if pending is None:
-            return None
-
-        return int(
-            pending["id"]
-        )
-
-    return int(
-        result.lastrowid
+    pending = await db.fetchone(
+        """
+        SELECT id
+        FROM seller_claims
+        WHERE seller_id = ?
+          AND user_id = ?
+          AND status = 'PENDING'
+        ORDER BY id DESC
+        LIMIT 1;
+        """,
+        (
+            seller_id,
+            user_id,
+        ),
     )
+
+    if pending is None:
+        return None
+
+    return int(pending["id"])
 
 
 async def handle_claim(
     db: Any,
     telegram: TelegramClient,
     callback_query: dict[str, Any],
+    env: Any,
 ) -> None:
-    data = str(
-        callback_query.get("data")
-        or ""
-    )
-
+    data = str(callback_query.get("data") or "")
     parts = data.split(":", 1)
 
     if len(parts) != 2:
@@ -535,9 +448,7 @@ async def handle_claim(
         )
         return
 
-    seller_id = _parse_positive_int(
-        parts[1]
-    )
+    seller_id = _parse_positive_int(parts[1])
 
     if seller_id is None:
         await _answer_callback(
@@ -548,14 +459,9 @@ async def handle_claim(
         )
         return
 
-    user = (
-        callback_query.get("from")
-        or {}
-    )
+    user = callback_query.get("from") or {}
 
-    telegram_user_id = _parse_positive_int(
-        user.get("id")
-    )
+    telegram_user_id = _parse_positive_int(user.get("id"))
 
     if telegram_user_id is None:
         await _answer_callback(
@@ -593,9 +499,7 @@ async def handle_claim(
         )
         return
 
-    status = str(
-        seller.get("status") or ""
-    ).upper()
+    status = str(seller.get("status") or "").upper()
 
     if status != "UNCLAIMED":
         await _answer_callback(
@@ -646,22 +550,17 @@ async def handle_claim(
         db,
         user_id,
         "seller_claim_requested",
-        seller_id,
-        details=str(claim_id),
+        claim_id,
+        details=f"seller_id={seller_id}",
     )
 
     admin_chat_id = None
 
     try:
-        admin_chat_id = int(
-            env_value := callback_query.get(
-                "_admin_chat_id"
-            )
-        )
-    except (
-        TypeError,
-        ValueError,
-    ):
+        configured = env.ADMIN_CHAT_ID
+        if configured is not None:
+            admin_chat_id = int(configured)
+    except (AttributeError, TypeError, ValueError):
         admin_chat_id = None
 
     if admin_chat_id:
@@ -670,8 +569,7 @@ async def handle_claim(
                 admin_chat_id,
                 (
                     "📩 <b>درخواست مالکیت جدید</b>\n\n"
-                    f"🏪 فروشگاه: "
-                    f"{_html(seller['name'])}\n"
+                    f"🏪 فروشگاه: {_html(seller['name'])}\n"
                     f"🆔 Seller ID: {seller_id}\n"
                     f"👤 User ID: {user_id}\n"
                     f"📋 Claim ID: {claim_id}"
@@ -698,9 +596,7 @@ async def handle_seller_claims_admin(
     callback_query: dict[str, Any],
     env: Any,
 ) -> None:
-    _, telegram_user_id = _callback_context(
-        callback_query
-    )
+    _, telegram_user_id = _callback_context(callback_query)
 
     if telegram_user_id is None:
         await _answer_callback(
@@ -711,10 +607,7 @@ async def handle_seller_claims_admin(
         )
         return
 
-    if not _is_admin(
-        env,
-        telegram_user_id,
-    ):
+    if not _is_admin(env, telegram_user_id):
         await _answer_callback(
             telegram,
             callback_query,
@@ -726,20 +619,15 @@ async def handle_seller_claims_admin(
         )
         return
 
-    claims = await _get_pending_claims(
-        db
-    )
+    claims = await _get_pending_claims(db)
 
-    rows: list[
-        list[dict[str, Any]]
-    ] = []
+    rows: list[list[dict[str, Any]]] = []
 
     if not claims:
         text = (
             "🏪 <b>مالکیت فروشگاه‌ها</b>\n\n"
             "📭 درخواست مالکیتی در انتظار بررسی نیست."
         )
-
     else:
         lines = [
             "🏪 <b>مالکیت فروشگاه‌ها</b>",
@@ -752,9 +640,7 @@ async def handle_seller_claims_admin(
                 or (
                     f"@{claim['claimant_username']}"
                     if claim["claimant_username"]
-                    else str(
-                        claim["claimant_telegram_id"]
-                    )
+                    else str(claim["claimant_telegram_id"])
                 )
             )
 
@@ -770,10 +656,7 @@ async def handle_seller_claims_admin(
                             f"🏪 "
                             f"{str(claim['seller_name'])[:30]}"
                         ),
-                        (
-                            "sellerclaimdetail:"
-                            f"{claim['id']}"
-                        ),
+                        f"sellerclaimdetail:{claim['id']}",
                     )
                 ]
             )
@@ -781,25 +664,15 @@ async def handle_seller_claims_admin(
             rows.append(
                 [
                     _button(
-                        (
-                            f"👤 "
-                            f"{str(claimant)[:30]}"
-                        ),
-                        (
-                            "sellerclaimdetail:"
-                            f"{claim['id']}"
-                        ),
+                        f"👤 {str(claimant)[:30]}",
+                        f"sellerclaimdetail:{claim['id']}",
                     )
                 ]
             )
 
-        text = "\n".join(
-            lines
-        )
+        text = "\n".join(lines)
 
-    rows.append(
-        _back_button("adminhome")
-    )
+    rows.append(_back_button("adminhome"))
 
     await _edit_callback(
         telegram,
@@ -820,9 +693,7 @@ async def handle_seller_claim_detail(
     callback_query: dict[str, Any],
     env: Any,
 ) -> None:
-    _, telegram_user_id = _callback_context(
-        callback_query
-    )
+    _, telegram_user_id = _callback_context(callback_query)
 
     if telegram_user_id is None:
         await _answer_callback(
@@ -833,10 +704,7 @@ async def handle_seller_claim_detail(
         )
         return
 
-    if not _is_admin(
-        env,
-        telegram_user_id,
-    ):
+    if not _is_admin(env, telegram_user_id):
         await _answer_callback(
             telegram,
             callback_query,
@@ -848,11 +716,7 @@ async def handle_seller_claim_detail(
         )
         return
 
-    data = str(
-        callback_query.get("data")
-        or ""
-    )
-
+    data = str(callback_query.get("data") or "")
     parts = data.split(":", 1)
 
     if len(parts) != 2:
@@ -864,9 +728,7 @@ async def handle_seller_claim_detail(
         )
         return
 
-    claim_id = _parse_positive_int(
-        parts[1]
-    )
+    claim_id = _parse_positive_int(parts[1])
 
     if claim_id is None:
         await _answer_callback(
@@ -886,9 +748,7 @@ async def handle_seller_claim_detail(
         await _answer_callback(
             telegram,
             callback_query,
-            text=(
-                "⚠️ این درخواست مالکیت یافت نشد."
-            ),
+            text="⚠️ این درخواست مالکیت یافت نشد.",
             show_alert=True,
         )
         return
@@ -898,15 +758,11 @@ async def handle_seller_claim_detail(
         or (
             f"@{claim['claimant_username']}"
             if claim["claimant_username"]
-            else str(
-                claim["claimant_telegram_id"]
-            )
+            else str(claim["claimant_telegram_id"])
         )
     )
 
-    status = str(
-        claim["status"] or ""
-    ).upper()
+    status = str(claim["status"] or "").upper()
 
     status_labels = {
         "PENDING": "در انتظار بررسی",
@@ -917,26 +773,14 @@ async def handle_seller_claim_detail(
     lines = [
         "🏪 <b>جزئیات درخواست مالکیت</b>",
         "",
-        (
-            "فروشگاه: "
-            f"<b>{_html(claim['seller_name'])}</b>"
-        ),
-        (
-            "درخواست‌دهنده: "
-            f"{_html(claimant_name)}"
-        ),
-        (
-            "آیدی تلگرام: "
-            f"{_html(claim['claimant_telegram_id'])}"
-        ),
+        f"فروشگاه: <b>{_html(claim['seller_name'])}</b>",
+        f"درخواست‌دهنده: {_html(claimant_name)}",
+        f"آیدی تلگرام: {_html(claim['claimant_telegram_id'])}",
         (
             "وضعیت: "
             f"{_html(status_labels.get(status, status))}"
         ),
-        (
-            "تاریخ ثبت: "
-            f"{_html(claim['created_at'])}"
-        ),
+        f"تاریخ ثبت: {_html(claim['created_at'])}",
     ]
 
     if claim.get("message"):
@@ -948,35 +792,23 @@ async def handle_seller_claim_detail(
             ]
         )
 
-    rows: list[
-        list[dict[str, Any]]
-    ] = []
+    rows: list[list[dict[str, Any]]] = []
 
     if status == "PENDING":
         rows.append(
             [
                 _button(
                     "✅ تأیید مالکیت",
-                    (
-                        "sellerclaim:approve:"
-                        f"{claim_id}"
-                    ),
+                    f"sellerclaim:approve:{claim_id}",
                 ),
                 _button(
                     "❌ رد مالکیت",
-                    (
-                        "sellerclaim:reject:"
-                        f"{claim_id}"
-                    ),
+                    f"sellerclaim:reject:{claim_id}",
                 ),
             ]
         )
 
-    rows.append(
-        _back_button(
-            "sellerclaimsadmin"
-        )
-    )
+    rows.append(_back_button("sellerclaimsadmin"))
 
     await _edit_callback(
         telegram,
@@ -994,7 +826,6 @@ async def handle_seller_claim_detail(
 async def _approve_claim(
     db: Any,
     claim_id: int,
-    admin_user_id: int,
 ) -> bool:
     now = _now_iso()
 
@@ -1041,8 +872,7 @@ async def _approve_claim(
 
         if (
             seller["owner_user_id"] is not None
-            and seller["owner_user_id"]
-            != claim["user_id"]
+            and seller["owner_user_id"] != claim["user_id"]
         ):
             return False
 
@@ -1160,9 +990,7 @@ async def handle_seller_claim_decision(
     callback_query: dict[str, Any],
     env: Any,
 ) -> None:
-    _, telegram_user_id = _callback_context(
-        callback_query
-    )
+    _, telegram_user_id = _callback_context(callback_query)
 
     if telegram_user_id is None:
         await _answer_callback(
@@ -1173,10 +1001,7 @@ async def handle_seller_claim_decision(
         )
         return
 
-    if not _is_admin(
-        env,
-        telegram_user_id,
-    ):
+    if not _is_admin(env, telegram_user_id):
         await _answer_callback(
             telegram,
             callback_query,
@@ -1188,11 +1013,7 @@ async def handle_seller_claim_decision(
         )
         return
 
-    data = str(
-        callback_query.get("data")
-        or ""
-    )
-
+    data = str(callback_query.get("data") or "")
     parts = data.split(":")
 
     if len(parts) != 3:
@@ -1206,10 +1027,7 @@ async def handle_seller_claim_decision(
 
     _, action, claim_id_raw = parts
 
-    if action not in (
-        "approve",
-        "reject",
-    ):
+    if action not in ("approve", "reject"):
         await _answer_callback(
             telegram,
             callback_query,
@@ -1218,9 +1036,7 @@ async def handle_seller_claim_decision(
         )
         return
 
-    claim_id = _parse_positive_int(
-        claim_id_raw
-    )
+    claim_id = _parse_positive_int(claim_id_raw)
 
     if claim_id is None:
         await _answer_callback(
@@ -1240,9 +1056,7 @@ async def handle_seller_claim_decision(
         await _answer_callback(
             telegram,
             callback_query,
-            text=(
-                "⚠️ این درخواست مالکیت یافت نشد."
-            ),
+            text="⚠️ این درخواست مالکیت یافت نشد.",
             show_alert=True,
         )
         return
@@ -1262,22 +1076,15 @@ async def handle_seller_claim_decision(
     admin_user_id = await _ensure_user(
         db,
         telegram_user_id,
-        username=(
-            callback_query.get("from") or {}
-        ).get("username"),
-        first_name=(
-            callback_query.get("from") or {}
-        ).get("first_name"),
-        last_name=(
-            callback_query.get("from") or {}
-        ).get("last_name"),
+        username=(callback_query.get("from") or {}).get("username"),
+        first_name=(callback_query.get("from") or {}).get("first_name"),
+        last_name=(callback_query.get("from") or {}).get("last_name"),
     )
 
     if action == "approve":
         updated = await _approve_claim(
             db,
             claim_id,
-            admin_user_id,
         )
     else:
         updated = await _reject_claim(
@@ -1289,9 +1096,7 @@ async def handle_seller_claim_decision(
         await _answer_callback(
             telegram,
             callback_query,
-            text=(
-                "⚠️ به‌روزرسانی درخواست انجام نشد."
-            ),
+            text="⚠️ به‌روزرسانی درخواست انجام نشد.",
             show_alert=True,
         )
         return
@@ -1314,9 +1119,7 @@ async def handle_seller_claim_decision(
             ),
         )
 
-        answer_text = (
-            "✅ مالکیت فروشگاه با موفقیت تأیید شد."
-        )
+        answer_text = "✅ مالکیت فروشگاه با موفقیت تأیید شد."
 
     else:
         await _notify_user(
@@ -1330,22 +1133,13 @@ async def handle_seller_claim_decision(
             ),
         )
 
-        answer_text = (
-            "❌ درخواست مالکیت رد شد."
-        )
+        answer_text = "❌ درخواست مالکیت رد شد."
 
     await _answer_callback(
         telegram,
         callback_query,
         text=answer_text,
         show_alert=True,
-    )
-
-    await handle_seller_claims_admin(
-        db,
-        telegram,
-        callback_query,
-        env,
     )
 
 
