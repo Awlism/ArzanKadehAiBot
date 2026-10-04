@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from worker_backend.backend import backend
+from worker.referrals import record_referral_if_new
 from worker.telegram import TelegramClient
 
 
@@ -229,9 +230,12 @@ async def handle_start(
     ):
         return False
 
-    await _ensure_user(
+    db_user = await _ensure_user(
         user
     )
+
+    if db_user is None:
+        return False
 
     start_parameter = _get_start_parameter(
         message
@@ -239,7 +243,7 @@ async def handle_start(
 
     if start_parameter:
         await _handle_start_parameter(
-            user,
+            db_user,
             start_parameter,
         )
 
@@ -258,12 +262,54 @@ async def _handle_start_parameter(
     """
     Handle Telegram /start deep-link parameters.
 
-    Seller referral/deep-link behavior will be migrated
-    here in a later step.
+    Supported referral format:
+        /start shop_<seller_id>
     """
 
-    del user
-    del parameter
+    if not parameter.startswith(
+        "shop_"
+    ):
+        return
+
+    seller_id_text = parameter[
+        len("shop_"):
+    ].strip()
+
+    try:
+        seller_id = int(
+            seller_id_text
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return
+
+    if seller_id < 1:
+        return
+
+    user_id = user.get(
+        "id"
+    )
+
+    try:
+        referred_user_id = int(
+            user_id
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return
+
+    if referred_user_id < 1:
+        return
+
+    await record_referral_if_new(
+        backend,
+        seller_id,
+        referred_user_id,
+    )
 
 
 def _now_iso() -> str:
