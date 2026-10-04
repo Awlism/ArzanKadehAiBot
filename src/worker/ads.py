@@ -422,7 +422,7 @@ async def _audit(
     await db.execute(
         """
         INSERT INTO audit_log (
-            user_id,
+            actor_user_id,
             action,
             entity_type,
             entity_id,
@@ -438,6 +438,56 @@ async def _audit(
             request_id,
             code,
             _now_iso(),
+        ),
+    )
+
+
+async def _notify_admin(
+    telegram: Any,
+    env: Any,
+    *,
+    request_id: int,
+    topic: str,
+    telegram_user_id: int,
+) -> None:
+    admin_chat_id = getattr(
+        env,
+        "ADMIN_CHAT_ID",
+        None,
+    )
+
+    admin_chat_id = _parse_int(
+        admin_chat_id
+    )
+
+    if admin_chat_id is None:
+        return
+
+    await _send(
+        telegram,
+        admin_chat_id,
+        (
+            "📢 <b>درخواست تبلیغ جدید</b>\n\n"
+            f"🆔 درخواست: <code>{request_id}</code>\n"
+            f"👤 کاربر تلگرام: <code>{telegram_user_id}</code>\n"
+            f"📌 نوع تبلیغ: {_html(topic)}\n"
+            "📋 وضعیت: <b>PENDING</b>"
+        ),
+        _keyboard(
+            [
+                [
+                    _button(
+                        "👀 مشاهده درخواست",
+                        f"adminadview:{request_id}",
+                    )
+                ],
+                [
+                    _button(
+                        "📢 مدیریت تبلیغات",
+                        "adsadmin",
+                    )
+                ],
+            ]
         ),
     )
 
@@ -631,6 +681,7 @@ async def handle_ad_confirm(
     db: Any,
     telegram: Any,
     callback_query: dict[str, Any],
+    env: Any,
 ) -> None:
     """
     Create a seller advertisement request.
@@ -746,6 +797,19 @@ async def handle_ad_confirm(
         request_id,
         code,
     )
+
+    try:
+        await _notify_admin(
+            telegram,
+            env,
+            request_id=request_id,
+            topic=topic,
+            telegram_user_id=telegram_user_id,
+        )
+    except Exception:
+        # Admin notification must not make an already-created
+        # advertisement request appear as failed to the seller.
+        pass
 
     chat_id, _ = _callback_context(
         callback_query
