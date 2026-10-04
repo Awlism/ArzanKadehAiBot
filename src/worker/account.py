@@ -199,40 +199,40 @@ async def _get_active_mode(
 
 
 async def _is_admin(
-    db: Any,
+    env: Any,
     telegram_user_id: int,
 ) -> bool:
     """
-    Admin authorization is intentionally configuration-driven.
+    Authorize admin mode from the Worker environment.
 
-    The Worker environment may expose ADMIN_CHAT_ID.
-    No admin ID is hard-coded in source.
+    ADMIN_CHAT_ID is the same configuration source used
+    by the Worker admin modules.
     """
 
-    try:
-        # The D1-backed Worker entry layer may expose this
-        # through the database user identity.  The actual
-        # environment authorization is handled by entry.py
-        # when the final integration is wired.
-        #
-        # Keep this function conservative: without an
-        # explicit authorization source, the user is not admin.
-        admin_chat_id = getattr(
-            db,
-            "admin_chat_id",
-            None,
-        )
-    except Exception:
-        admin_chat_id = None
+    admin_chat_id = getattr(
+        env,
+        "ADMIN_CHAT_ID",
+        None,
+    )
 
     if admin_chat_id is None:
+        return False
+
+    admin_chat_id = str(
+        admin_chat_id
+    ).strip()
+
+    if not admin_chat_id:
         return False
 
     try:
         return int(admin_chat_id) == int(
             telegram_user_id
         )
-    except (TypeError, ValueError):
+    except (
+        TypeError,
+        ValueError,
+    ):
         return False
 
 
@@ -518,6 +518,7 @@ async def handle_account(
     db: Any,
     telegram: Any,
     callback_query: dict[str, Any],
+    env: Any,
 ) -> None:
     """
     Role-aware account entry point.
@@ -561,7 +562,7 @@ async def handle_account(
 
     if mode == "admin":
         if await _is_admin(
-            db,
+            env,
             telegram_user_id,
         ):
             await _render_admin_panel(
@@ -615,6 +616,7 @@ async def handle_set_mode(
     db: Any,
     telegram: Any,
     callback_query: dict[str, Any],
+    env: Any,
 ) -> None:
     """
     Switch the active mode of the current user.
@@ -683,7 +685,7 @@ async def handle_set_mode(
 
     if mode == "admin":
         if not await _is_admin(
-            db,
+            env,
             telegram_user_id,
         ):
             await _answer_callback(
