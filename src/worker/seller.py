@@ -13,6 +13,9 @@ import re
 from typing import Any
 
 
+PAGE_SIZE_LIST = 8
+
+
 def _html(value: Any) -> str:
     if value is None:
         return ""
@@ -43,6 +46,30 @@ def _parse_seller_id(
         return None
 
     return seller_id
+
+
+def _parse_sellers_page(
+    callback_data: str,
+) -> int | None:
+    if not callback_data.startswith(
+        "sellers:"
+    ):
+        return None
+
+    _, value = callback_data.split(
+        ":",
+        1,
+    )
+
+    try:
+        page = int(value)
+    except (TypeError, ValueError):
+        return None
+
+    if page < 0:
+        return None
+
+    return page
 
 
 def _status_badge(
@@ -498,6 +525,263 @@ async def _is_seller_favorite(
     return row is not None
 
 
+async def handle_sellers_list(
+    db: Any,
+    telegram: Any,
+    callback_query: dict[str, Any],
+) -> None:
+    """
+    Render the paginated public seller list.
+
+    Callback format:
+        sellers:<page>
+    """
+
+    callback_data = str(
+        callback_query.get(
+            "data",
+            "",
+        )
+    )
+
+    page = _parse_sellers_page(
+        callback_data
+    )
+
+    if page is None:
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ صفحه نامعتبر است.",
+            True,
+        )
+        return
+
+    callback_user = callback_query.get(
+        "from"
+    )
+
+    if not isinstance(
+        callback_user,
+        dict,
+    ):
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ اطلاعات کاربر نامعتبر است.",
+            True,
+        )
+        return
+
+    try:
+        await _ensure_user(
+            db,
+            callback_user,
+        )
+    except (
+        ValueError,
+        RuntimeError,
+    ):
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ اطلاعات کاربر نامعتبر است.",
+            True,
+        )
+        return
+
+    sellers = await db.fetchall(
+        """
+        SELECT
+            *
+        FROM sellers
+        ORDER BY
+            rating DESC,
+            views DESC,
+            id DESC;
+        """
+    )
+
+    message = callback_query.get(
+        "message"
+    )
+
+    if not isinstance(
+        message,
+        dict,
+    ):
+        await _answer_callback(
+            telegram,
+            callback_query,
+        )
+        return
+
+    chat = message.get(
+        "chat"
+    )
+
+    if not isinstance(
+        chat,
+        dict,
+    ):
+        await _answer_callback(
+            telegram,
+            callback_query,
+        )
+        return
+
+    chat_id = chat.get(
+        "id"
+    )
+    message_id = message.get(
+        "message_id"
+    )
+
+    if (
+        chat_id is None
+        or message_id is None
+    ):
+        await _answer_callback(
+            telegram,
+            callback_query,
+        )
+        return
+
+    if not sellers:
+        await telegram.edit_message_text(
+            chat_id,
+            int(message_id),
+            "🏪 <b>فروشگاه‌ها</b>\n\n"
+            "فعلاً فروشگاهی ثبت نشده است.",
+            reply_markup=_back_keyboard(),
+            parse_mode="HTML",
+        )
+
+        await _answer_callback(
+            telegram,
+            callback_query,
+        )
+        return
+
+    total = len(sellers)
+    total_pages = (
+        total + PAGE_SIZE_LIST - 1
+    ) // PAGE_SIZE_LIST
+
+    if page >= total_pages:
+        page = total_pages - 1
+
+    offset = (
+        page * PAGE_SIZE_LIST
+    )
+
+    page_rows = sellers[
+        offset:offset + PAGE_SIZE_LIST
+    ]
+
+    keyboard: list[
+        list[dict[str, Any]]
+    ] = []
+
+    for seller in page_rows:
+        seller_id = int(
+            seller["id"]
+        )
+
+        status = str(
+            seller.get("status") or ""
+        ).upper()
+
+        badge = _status_badge(
+            status
+        )
+
+        seller_name = (
+            seller.get("name")
+            or "فروشگاه بدون نام"
+        )
+
+        keyboard.append(
+            [
+                {
+                    "text": (
+                        f"🏪 {badge} "
+                        f"{_html(seller_name)}"
+                    ),
+                    "callback_data": (
+                        f"seller:{seller_id}"
+                    ),
+                }
+            ]
+        )
+
+    pagination: list[
+        dict[str, Any]
+    ] = []
+
+    if page > 0:
+        pagination.append(
+            {
+                "text": "◀️ قبلی",
+                "callback_data": (
+                    f"sellers:{page - 1}"
+                ),
+            }
+        )
+
+    if page + 1 < total_pages:
+        pagination.append(
+            {
+                "text": "بعدی ▶️",
+                "callback_data": (
+                    f"sellers:{page + 1}"
+                ),
+            }
+        )
+
+    if pagination:
+        keyboard.append(
+            pagination
+        )
+
+    if page > 0:
+        keyboard.append(
+            [
+                {
+                    "text": "🔙 صفحه اول",
+                    "callback_data": "sellers:0",
+                }
+            ]
+        )
+
+    start_number = offset + 1
+    end_number = offset + len(
+        page_rows
+    )
+
+    text = (
+        "🏪 <b>فروشگاه‌ها</b>\n\n"
+        f"نمایش {start_number} تا {end_number} "
+        f"از {total} فروشگاه\n"
+        f"صفحه {page + 1} از {total_pages}"
+    )
+
+    await telegram.edit_message_text(
+        chat_id,
+        int(message_id),
+        text,
+        reply_markup={
+            "inline_keyboard": keyboard
+        },
+        parse_mode="HTML",
+    )
+
+    await _answer_callback(
+        telegram,
+        callback_query,
+    )
+
+
 async def handle_seller_favorite_add(
     db: Any,
     telegram: Any,
@@ -754,7 +1038,9 @@ async def _render_seller_detail(
     ):
         return
 
-    chat = message.get("chat")
+    chat = message.get(
+        "chat"
+    )
 
     if not isinstance(
         chat,
@@ -762,10 +1048,17 @@ async def _render_seller_detail(
     ):
         return
 
-    chat_id = chat.get("id")
-    message_id = message.get("message_id")
+    chat_id = chat.get(
+        "id"
+    )
+    message_id = message.get(
+        "message_id"
+    )
 
-    if chat_id is None or message_id is None:
+    if (
+        chat_id is None
+        or message_id is None
+    ):
         return
 
     status = str(
@@ -805,7 +1098,7 @@ async def _render_seller_detail(
         )
 
     is_active = (
-        bool(seller.get("is_active"))
+        bool(seller["is_active"])
         if seller.get("is_active") is not None
         else True
     )
@@ -1036,7 +1329,9 @@ async def handle_seller_detail(
         )
         return
 
-    chat = message.get("chat")
+    chat = message.get(
+        "chat"
+    )
 
     if not isinstance(
         chat,
@@ -1048,10 +1343,17 @@ async def handle_seller_detail(
         )
         return
 
-    chat_id = chat.get("id")
-    message_id = message.get("message_id")
+    chat_id = chat.get(
+        "id"
+    )
+    message_id = message.get(
+        "message_id"
+    )
 
-    if chat_id is None or message_id is None:
+    if (
+        chat_id is None
+        or message_id is None
+    ):
         await _answer_callback(
             telegram,
             callback_query,
@@ -1107,6 +1409,7 @@ def _now_iso() -> str:
 
 
 __all__ = [
+    "handle_sellers_list",
     "handle_seller_detail",
     "handle_seller_favorite_add",
     "handle_seller_favorite_remove",
