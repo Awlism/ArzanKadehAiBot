@@ -1024,7 +1024,35 @@ async def _finish_public_ad(
             ),
         )
 
-        request_id = result.lastrowid
+    request_row = await db.fetchone(
+        """
+        SELECT id
+        FROM requests
+        WHERE user_id = ?
+          AND request_type = 'general_ad'
+          AND status = 'PENDING'
+          AND topic = ?
+        ORDER BY id DESC
+        LIMIT 1;
+        """,
+        (
+            user_id,
+            title.strip(),
+        ),
+    )
+
+    request_id = (
+        int(request_row["id"])
+        if request_row is not None
+        else None
+    )
+
+    if request_id is None:
+        await clear_state(
+            db,
+            user_id,
+        )
+        return
 
     await clear_state(
         db,
