@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from worker.review import handle_review_text
 from worker.state import get_state
 from worker.telegram import TelegramClient
 from worker_backend.backend import backend
@@ -24,24 +25,59 @@ async def handle_message(
 
     The active persistent Worker state is loaded from D1 so
     multi-request flows can continue across webhook requests.
-
-    Feature-specific state handling is intentionally left to
-    the corresponding feature handlers.
     """
 
     user = message.get("from")
 
-    if not isinstance(user, dict):
+    if not isinstance(
+        user,
+        dict,
+    ):
         return None
 
-    user_id = user.get("id")
+    telegram_id = user.get(
+        "id"
+    )
 
-    if user_id is None:
+    if telegram_id is None:
         return None
 
     try:
-        user_id = int(user_id)
-    except (TypeError, ValueError):
+        telegram_id = int(
+            telegram_id
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return None
+
+    if telegram_id < 1:
+        return None
+
+    user_row = await backend.fetchone(
+        """
+        SELECT id
+        FROM users
+        WHERE telegram_id = ?
+        LIMIT 1;
+        """,
+        (
+            telegram_id,
+        ),
+    )
+
+    if user_row is None:
+        return None
+
+    try:
+        user_id = int(
+            user_row["id"]
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
         return None
 
     state = await get_state(
@@ -67,14 +103,23 @@ async def _handle_active_state(
 ) -> Any:
     """
     Dispatch an active persistent state.
-
-    Feature-specific states will be connected here one by one.
     """
 
-    state_name = state.get("state")
+    state_name = state.get(
+        "state"
+    )
 
-    if not isinstance(state_name, str):
+    if not isinstance(
+        state_name,
+        str,
+    ):
         return None
+
+    if state_name == "review:waiting_text":
+        return await handle_review_text(
+            message,
+            telegram,
+        )
 
     return None
 
