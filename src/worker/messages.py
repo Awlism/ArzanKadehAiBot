@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from worker.admin import handle_admin_user_search_message
+from worker.admin_ads import handle_admin_ad_message
 from worker.product_management import handle_product_message
 from worker.publicads import handle_public_ad_message
 from worker.report import handle_report_text
@@ -187,6 +188,17 @@ async def _handle_active_state(
         return await handle_admin_user_search_message(
             message,
             telegram,
+            env,
+        )
+
+    if state_name == "admin_ad_setting":
+        if env is None:
+            return None
+
+        return await handle_admin_ad_message(
+            backend,
+            telegram,
+            message,
             env,
         )
 
