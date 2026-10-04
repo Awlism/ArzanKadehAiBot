@@ -43,6 +43,7 @@ from worker.seller import (
     handle_seller_favorite_add,
     handle_seller_favorite_remove,
 )
+from worker.state import ensure_state_table
 from worker.telegram import TelegramClient
 
 
@@ -86,6 +87,10 @@ class Default(WorkerEntrypoint):
         )
 
         await backend.connect()
+
+        await ensure_state_table(
+            backend
+        )
 
         rows = await backend.fetchall(
             """
@@ -148,6 +153,10 @@ class Default(WorkerEntrypoint):
         )
 
         await backend.connect()
+
+        await ensure_state_table(
+            backend
+        )
 
         update_type = detect_update_type(
             update
