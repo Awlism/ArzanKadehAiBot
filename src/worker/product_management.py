@@ -695,6 +695,303 @@ async def _render_product_list(
     )
 
 
+async def _render_product_category_picker(
+    db: Any,
+    telegram: Any,
+    callback_query: dict[str, Any],
+    seller_id: int,
+    parent_id: int | None = None,
+    page: int = 0,
+) -> None:
+    if parent_id is None:
+        categories = await db.fetchall(
+            """
+            SELECT
+                id,
+                name
+            FROM categories
+            WHERE parent_id IS NULL
+            ORDER BY id ASC;
+            """
+        )
+    else:
+        categories = await db.fetchall(
+            """
+            SELECT
+                id,
+                name
+            FROM categories
+            WHERE parent_id = ?
+            ORDER BY id ASC;
+            """,
+            (parent_id,),
+        )
+
+    start = max(0, page) * PAGE_SIZE
+    page_rows = categories[
+        start:start + PAGE_SIZE
+    ]
+
+    rows: list[list[dict[str, Any]]] = []
+
+    for category in page_rows:
+        category_id = _parse_id(
+            category.get("id")
+        )
+
+        if category_id is None:
+            continue
+
+        children = await db.fetchone(
+            """
+            SELECT id
+            FROM categories
+            WHERE parent_id = ?
+            LIMIT 1;
+            """,
+            (category_id,),
+        )
+
+        if children is None:
+            callback_data = (
+                f"prodadd:pick:{category_id}"
+            )
+        else:
+            callback_data = (
+                f"prodadd:cat:{category_id}:0"
+            )
+
+        rows.append(
+            [
+                _button(
+                    f"📂 {_html(category.get('name') or 'دسته‌بندی')}",
+                    callback_data,
+                )
+            ]
+        )
+
+    navigation: list[dict[str, Any]] = []
+
+    if page > 0:
+        if parent_id is None:
+            previous_callback = (
+                f"prodadd:cat:0:{page - 1}"
+            )
+        else:
+            previous_callback = (
+                f"prodadd:cat:{parent_id}:{page - 1}"
+            )
+
+        navigation.append(
+            _button(
+                "⬅️ قبلی",
+                previous_callback,
+            )
+        )
+
+    if start + PAGE_SIZE < len(categories):
+        if parent_id is None:
+            next_callback = (
+                f"prodadd:cat:0:{page + 1}"
+            )
+        else:
+            next_callback = (
+                f"prodadd:cat:{parent_id}:{page + 1}"
+            )
+
+        navigation.append(
+            _button(
+                "بعدی ➡️",
+                next_callback,
+            )
+        )
+
+    if navigation:
+        rows.append(navigation)
+
+    if parent_id is None:
+        rows.append(
+            _back(
+                f"prodlist:{seller_id}"
+            )
+        )
+        text = (
+            "📂 <b>دسته‌بندی محصول</b>\n\n"
+            "اول دسته‌بندی اصلی محصولت رو انتخاب کن:"
+        )
+    else:
+        parent = await db.fetchone(
+            """
+            SELECT name
+            FROM categories
+            WHERE id = ?
+            LIMIT 1;
+            """,
+            (parent_id,),
+        )
+
+        parent_name = (
+            parent.get("name")
+            if parent
+            else "دسته‌بندی"
+        )
+
+        rows.append(
+            _back(
+                f"prodadd:cat:0:0"
+            )
+        )
+
+        text = (
+            "📂 <b>انتخاب زیر‌دسته</b>\n\n"
+            f"دسته: <b>{_html(parent_name)}</b>\n\n"
+            "زیر‌دسته محصولت رو انتخاب کن:"
+        )
+
+    await _edit(
+        telegram,
+        callback_query,
+        text,
+        _keyboard(rows),
+    )
+
+    await _answer(
+        telegram,
+        callback_query,
+    )
+
+
+async def _select_product_category(
+    db: Any,
+    telegram: Any,
+    callback_query: dict[str, Any],
+    user_id: int,
+    category_id: int,
+) -> None:
+    category = await db.fetchone(
+        """
+        SELECT
+            id,
+            name,
+            parent_id
+        FROM categories
+        WHERE id = ?
+        LIMIT 1;
+        """,
+        (category_id,),
+    )
+
+    if category is None:
+        await _answer(
+            telegram,
+            callback_query,
+            "⚠️ دسته‌بندی پیدا نشد.",
+            True,
+        )
+        return
+
+    child = await db.fetchone(
+        """
+        SELECT id
+        FROM categories
+        WHERE parent_id = ?
+        LIMIT 1;
+        """,
+        (category_id,),
+    )
+
+    if child is not None:
+        await _answer(
+            telegram,
+            callback_query,
+            "⚠️ اول یکی از زیر‌دسته‌ها رو انتخاب کن.",
+            True,
+        )
+        return
+
+    state = await get_state(
+        db,
+        user_id,
+    )
+
+    if not state or state.get("state") != STATE_NAME:
+        await _answer(
+            telegram,
+            callback_query,
+            "⚠️ فرآیند ثبت محصول منقضی شده. دوباره شروع کن.",
+            True,
+        )
+        return
+
+    state_data = state.get("data") or {}
+    seller_id = _parse_id(
+        state_data.get("seller_id")
+    )
+
+    if seller_id is None:
+        await clear_state(
+            db,
+            user_id,
+        )
+        await _answer(
+            telegram,
+            callback_query,
+            "⚠️ اطلاعات فروشگاه ناقص است.",
+            True,
+        )
+        return
+
+    seller = await _owned_seller(
+        db,
+        user_id,
+        seller_id,
+    )
+
+    if seller is None:
+        await clear_state(
+            db,
+            user_id,
+        )
+        await _answer(
+            telegram,
+            callback_query,
+            "⚠️ شما به این فروشگاه دسترسی ندارید.",
+            True,
+        )
+        return
+
+    state_data["category_id"] = category_id
+
+    await _set_state(
+        db,
+        user_id,
+        "add_name",
+        state_data,
+    )
+
+    await _edit(
+        telegram,
+        callback_query,
+        (
+            "✅ دسته‌بندی انتخاب شد:\n\n"
+            f"📂 <b>{_html(category.get('name'))}</b>\n\n"
+            "🏷️ حالا نام محصول رو بفرست:"
+        ),
+        _keyboard(
+            [
+                _back(
+                    f"prodadd:cat:0:0"
+                )
+            ]
+        ),
+    )
+
+    await _answer(
+        telegram,
+        callback_query,
+    )
+
+
 async def handle_product_add_start(
     db: Any,
     telegram: Any,
@@ -704,11 +1001,146 @@ async def handle_product_add_start(
         callback_query.get("data", "")
     )
 
-    seller_id = _parse_id(
-        data.split(":", 1)[1]
-        if ":" in data
-        else None
-    )
+    parts = data.split(":")
+
+    if (
+        len(parts) >= 2
+        and parts[0] == "prodadd"
+        and parts[1] == "cat"
+    ):
+        user_data = callback_query.get("from") or {}
+
+        try:
+            user = await _ensure_user(
+                db,
+                user_data,
+            )
+        except (ValueError, RuntimeError):
+            await _answer(
+                telegram,
+                callback_query,
+                "⚠️ اطلاعات کاربر نامعتبر است.",
+                True,
+            )
+            return
+
+        user_id = int(user["id"])
+
+        state = await get_state(
+            db,
+            user_id,
+        )
+
+        if not state or state.get("state") != STATE_NAME:
+            await _answer(
+                telegram,
+                callback_query,
+                "⚠️ فرآیند ثبت محصول منقضی شده. دوباره شروع کن.",
+                True,
+            )
+            return
+
+        state_data = state.get("data") or {}
+        seller_id = _parse_id(
+            state_data.get("seller_id")
+        )
+
+        if seller_id is None:
+            await clear_state(
+                db,
+                user_id,
+            )
+            await _answer(
+                telegram,
+                callback_query,
+                "⚠️ اطلاعات فروشگاه ناقص است.",
+                True,
+            )
+            return
+
+        if len(parts) != 4:
+            await _answer(
+                telegram,
+                callback_query,
+                "⚠️ درخواست نامعتبر است.",
+                True,
+            )
+            return
+
+        category_id = _parse_id(parts[2])
+
+        if category_id == 0:
+            parent_id = None
+        else:
+            parent_id = category_id
+
+        page = _parse_id(parts[3])
+        page_index = max(
+            0,
+            (page or 0),
+        )
+
+        await _render_product_category_picker(
+            db,
+            telegram,
+            callback_query,
+            seller_id,
+            parent_id,
+            page_index,
+        )
+        return
+
+    if (
+        len(parts) == 3
+        and parts[0] == "prodadd"
+        and parts[1] == "pick"
+    ):
+        user_data = callback_query.get("from") or {}
+
+        try:
+            user = await _ensure_user(
+                db,
+                user_data,
+            )
+        except (ValueError, RuntimeError):
+            await _answer(
+                telegram,
+                callback_query,
+                "⚠️ اطلاعات کاربر نامعتبر است.",
+                True,
+            )
+            return
+
+        category_id = _parse_id(parts[2])
+
+        if category_id is None:
+            await _answer(
+                telegram,
+                callback_query,
+                "⚠️ دسته‌بندی نامعتبر است.",
+                True,
+            )
+            return
+
+        await _select_product_category(
+            db,
+            telegram,
+            callback_query,
+            int(user["id"]),
+            category_id,
+        )
+        return
+
+    if len(parts) != 2:
+        await _answer(
+            telegram,
+            callback_query,
+            "⚠️ درخواست نامعتبر است.",
+            True,
+        )
+        return
+
+    seller_id = _parse_id(parts[1])
 
     if seller_id is None:
         await _answer(
@@ -753,28 +1185,19 @@ async def handle_product_add_start(
     await _set_state(
         db,
         int(user["id"]),
-        "add_name",
+        "add_category",
         {
             "seller_id": seller_id,
         },
     )
 
-    await _edit(
+    await _render_product_category_picker(
+        db,
         telegram,
         callback_query,
-        "🏷️ نام محصول رو بفرست:",
-        _keyboard(
-            [
-                _back(
-                    f"prodlist:{seller_id}"
-                )
-            ]
-        ),
-    )
-
-    await _answer(
-        telegram,
-        callback_query,
+        seller_id,
+        None,
+        0,
     )
 
 
@@ -920,12 +1343,20 @@ async def _finish_product_add(
         data.get("seller_id")
     )
 
+    category_id = _parse_id(
+        data.get("category_id")
+    )
+
     name = str(
         data.get("name")
         or ""
     ).strip()
 
-    if seller_id is None or not name:
+    if (
+        seller_id is None
+        or category_id is None
+        or not name
+    ):
         await clear_state(
             db,
             user_id,
@@ -959,12 +1390,61 @@ async def _finish_product_add(
         )
         return
 
+    category = await db.fetchone(
+        """
+        SELECT id
+        FROM categories
+        WHERE id = ?
+        LIMIT 1;
+        """,
+        (category_id,),
+    )
+
+    if category is None:
+        await clear_state(
+            db,
+            user_id,
+        )
+
+        await _answer(
+            telegram,
+            callback_query,
+            "⚠️ دسته‌بندی انتخاب‌شده معتبر نیست.",
+            True,
+        )
+        return
+
+    child = await db.fetchone(
+        """
+        SELECT id
+        FROM categories
+        WHERE parent_id = ?
+        LIMIT 1;
+        """,
+        (category_id,),
+    )
+
+    if child is not None:
+        await clear_state(
+            db,
+            user_id,
+        )
+
+        await _answer(
+            telegram,
+            callback_query,
+            "⚠️ باید یک زیر‌دسته نهایی انتخاب شود.",
+            True,
+        )
+        return
+
     now = _now_iso()
 
     result = await db.execute(
         """
         INSERT INTO products (
             seller_id,
+            category_id,
             name,
             description,
             price,
@@ -977,10 +1457,11 @@ async def _finish_product_add(
             created_at,
             updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, 'AVAILABLE', 0, 0, 0, ?, ?);
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'AVAILABLE', 0, 0, 0, ?, ?);
         """,
         (
             seller_id,
+            category_id,
             name,
             data.get("description"),
             data.get("price"),
@@ -1655,6 +2136,9 @@ async def handle_product_message(
     text = str(
         message.get("text") or ""
     ).strip()
+
+    if step == "add_category":
+        return True
 
     if step == "add_name":
         if not text:
