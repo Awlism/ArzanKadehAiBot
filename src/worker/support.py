@@ -221,14 +221,14 @@ async def _get_request_topics(
         """
         SELECT
             id,
-            type,
+            request_type,
             topic,
             message,
             status,
             created_at
         FROM requests
         WHERE user_id = ?
-          AND type = ?
+          AND request_type = ?
         ORDER BY id DESC
         LIMIT 20;
         """,
@@ -255,17 +255,17 @@ async def _has_open_request(
         "APPROVED",
     )
 
-    if topic is None:
-        placeholders = ", ".join(
-            "?" for _ in open_statuses
-        )
+    placeholders = ", ".join(
+        "?" for _ in open_statuses
+    )
 
+    if topic is None:
         row = await db.fetchone(
             f"""
             SELECT 1
             FROM requests
             WHERE user_id = ?
-              AND type = ?
+              AND request_type = ?
               AND status IN ({placeholders})
             LIMIT 1;
             """,
@@ -276,16 +276,12 @@ async def _has_open_request(
             ),
         )
     else:
-        placeholders = ", ".join(
-            "?" for _ in open_statuses
-        )
-
         row = await db.fetchone(
             f"""
             SELECT 1
             FROM requests
             WHERE user_id = ?
-              AND type = ?
+              AND request_type = ?
               AND topic = ?
               AND status IN ({placeholders})
             LIMIT 1;
@@ -740,12 +736,12 @@ async def handle_support_text(
 
     async with db.transaction(
         immediate=True
-    ):
-        result = await db.execute(
+    ) as tx:
+        await tx.execute(
             """
             INSERT INTO requests (
                 user_id,
-                type,
+                request_type,
                 topic,
                 message,
                 status,
@@ -765,36 +761,76 @@ async def handle_support_text(
             ),
         )
 
-        request_id = int(
-            result.lastrowid
-        )
+    request_row = await db.fetchone(
+        """
+        SELECT id
+        FROM requests
+        WHERE user_id = ?
+          AND request_type = 'support'
+          AND topic = ?
+          AND message = ?
+          AND status = 'PENDING'
+          AND created_at = ?
+        ORDER BY id DESC
+        LIMIT 1;
+        """,
+        (
+            user_id,
+            topic,
+            text,
+            now,
+        ),
+    )
 
-        await db.execute(
-            """
-            INSERT INTO audit_log (
-                actor_user_id,
-                action,
-                entity_type,
-                entity_id,
-                details,
-                created_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?);
-            """,
-            (
-                user_id,
-                "support_request_created",
-                "request",
-                request_id,
-                topic,
-                now,
-            ),
-        )
+    request_id = (
+        int(request_row["id"])
+        if request_row is not None
+        else None
+    )
 
+    if request_id is None:
         await clear_state(
             db,
             user_id,
         )
+
+        if chat_id is not None:
+            await telegram.send_message(
+                int(chat_id),
+                (
+                    "⚠️ درخواست ثبت نشد. "
+                    "لطفاً دوباره تلاش کن."
+                ),
+            )
+
+        return
+
+    await db.execute(
+        """
+        INSERT INTO audit_log (
+            actor_user_id,
+            action,
+            entity_type,
+            entity_id,
+            details,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?);
+        """,
+        (
+            user_id,
+            "support_request_created",
+            "request",
+            request_id,
+            topic,
+            now,
+        ),
+    )
+
+    await clear_state(
+        db,
+        user_id,
+    )
 
     if chat_id is not None:
         await telegram.send_message(
