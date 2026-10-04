@@ -49,6 +49,11 @@ from worker.review import (
     handle_review_start,
     handle_review_rating,
 )
+from worker.report import (
+    handle_report_reason,
+    handle_report_skip,
+    handle_report_start,
+)
 from worker.telegram import TelegramClient
 
 
@@ -315,6 +320,28 @@ async def _handle_callback_query(
         "reviewrate:"
     ):
         return await handle_review_rating(
+            callback_query,
+            telegram,
+        )
+
+    if callback_data.startswith(
+        "report:"
+    ):
+        return await handle_report_start(
+            callback_query,
+            telegram,
+        )
+
+    if callback_data.startswith(
+        "reportreason:"
+    ):
+        return await handle_report_reason(
+            callback_query,
+            telegram,
+        )
+
+    if callback_data == "reportskip":
+        return await handle_report_skip(
             callback_query,
             telegram,
         )
