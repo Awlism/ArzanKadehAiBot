@@ -1188,10 +1188,24 @@ async def _handle_callback_query(
             env,
         )
 
-    if data.startswith("adsetprice:") or data.startswith(
-        "adsetduration:"
-    ) or data.startswith("adsetplacement:"):
-        return await handle_admin_ad_decision(
+    if data.startswith("adsetprice:"):
+        return await handle_admin_ad_price_start(
+            backend,
+            telegram,
+            callback_query,
+            env,
+        )
+
+    if data.startswith("adsetduration:"):
+        return await handle_admin_ad_duration_start(
+            backend,
+            telegram,
+            callback_query,
+            env,
+        )
+
+    if data.startswith("adsetplacement:"):
+        return await handle_admin_ad_placement_start(
             backend,
             telegram,
             callback_query,
