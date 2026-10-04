@@ -10,6 +10,10 @@ Routes:
 No aiogram is imported here.
 """
 
+from __future__ import annotations
+
+from typing import Any
+
 from workers import WorkerEntrypoint, Response
 
 from worker_backend.backend import backend
@@ -27,12 +31,16 @@ from worker.webhook import (
 from worker.router import WorkerRouter
 from worker.start import handle_start
 from worker.messages import handle_message
+from worker.telegram import TelegramClient
+
 from worker.categories import handle_category
+
 from worker.products import (
     handle_product_detail,
     handle_favorite_add,
     handle_favorite_remove,
 )
+
 from worker.compare import (
     handle_compare,
     handle_compare_drop,
@@ -40,22 +48,314 @@ from worker.compare import (
     handle_compare_reset,
     handle_compare_start,
 )
+
 from worker.seller import (
     handle_sellers_list,
     handle_seller_detail,
     handle_seller_favorite_add,
     handle_seller_favorite_remove,
 )
+
 from worker.review import (
     handle_review_start,
     handle_review_rating,
 )
+
 from worker.report import (
     handle_report_reason,
     handle_report_skip,
     handle_report_start,
 )
-from worker.telegram import TelegramClient
+
+from worker.hot import (
+    handle_hot,
+)
+
+from worker.discovery import (
+    handle_near_me,
+    handle_new_today,
+    handle_picks,
+    handle_top_sellers,
+)
+
+from worker.favorites import (
+    handle_favorites_list,
+)
+
+from worker.seller_registration import (
+    handle_register_seller_start,
+    handle_register_city,
+    handle_register_skip,
+)
+
+from worker.search import (
+    handle_search_start,
+    handle_search_page,
+)
+
+from worker.publicads import (
+    handle_public_ads,
+    handle_public_ad_models,
+    handle_public_ad_start,
+    handle_public_ad_kind,
+    handle_public_ad_skip,
+)
+
+from worker.account import (
+    handle_account,
+    handle_set_mode,
+)
+
+from worker.support import (
+    handle_support_start,
+    handle_support_topic,
+)
+
+from worker.notifications import (
+    handle_notifications,
+    handle_notification_read,
+)
+
+from worker.profile import (
+    handle_my_profile,
+    handle_set_city,
+    handle_pick_city,
+)
+
+from worker.requests import (
+    handle_my_requests,
+)
+
+from worker.store_status import (
+    handle_store_status,
+    handle_store_status_picked,
+)
+
+from worker.product_stats import (
+    handle_my_stats,
+    handle_stats_home_picked,
+    handle_stats_product,
+)
+
+from worker.referrals import (
+    handle_referral_list,
+    handle_referral_stats,
+)
+
+from worker.product_management import (
+    handle_my_products,
+    handle_product_list,
+    handle_product_add_start,
+    handle_product_add_skip,
+    handle_product_edit_menu,
+    handle_product_field_start,
+    handle_product_stock_menu,
+    handle_product_stock_set,
+    handle_product_delete,
+    handle_product_delete_confirmed,
+)
+
+from worker.shop import (
+    handle_my_shop,
+    handle_shop_view,
+    handle_shop_edit_menu,
+    handle_shop_edit_start,
+    handle_shop_city_start,
+    handle_shop_city_pick,
+    handle_shop_toggle_active,
+)
+
+from worker.ads import (
+    handle_ads,
+    handle_ad_type_detail,
+    handle_ad_confirm,
+)
+
+from worker.seller_claims import (
+    handle_claim,
+    handle_seller_claims_admin,
+    handle_seller_claim_detail,
+    handle_seller_claim_decision,
+)
+
+from worker.admin import (
+    handle_admin_home,
+    handle_admin_users_menu,
+    handle_admin_user_search_start,
+    handle_admin_user_list,
+    handle_admin_user_view,
+)
+
+from worker.admin_ads import (
+    handle_ads_admin,
+    handle_admin_ad_view,
+    handle_admin_ad_price_start,
+    handle_admin_ad_duration_start,
+    handle_admin_ad_placement_start,
+    handle_admin_ad_decision,
+)
+
+
+def _button(
+    text: str,
+    callback_data: str,
+) -> dict[str, str]:
+    return {
+        "text": text,
+        "callback_data": callback_data,
+    }
+
+
+def _main_menu_keyboard() -> dict[str, list[list[dict[str, str]]]]:
+    return {
+        "inline_keyboard": [
+            [
+                _button(
+                    "🔎 جستجوی محصول",
+                    "search",
+                )
+            ],
+            [
+                _button(
+                    "🏪 فروشگاه‌ها",
+                    "sellers:0",
+                )
+            ],
+            [
+                _button(
+                    "📂 دسته‌بندی‌ها",
+                    "cat:0:0",
+                )
+            ],
+            [
+                _button(
+                    "🔥 داغ‌ترین‌ها",
+                    "hot",
+                )
+            ],
+            [
+                _button(
+                    "🆕 جدیدهای امروز",
+                    "newtoday",
+                )
+            ],
+            [
+                _button(
+                    "⭐ انتخاب ارزانکده",
+                    "picks",
+                )
+            ],
+            [
+                _button(
+                    "📍 نزدیک من",
+                    "nearme",
+                )
+            ],
+            [
+                _button(
+                    "🏆 فروشندگان برتر",
+                    "topsellers",
+                )
+            ],
+            [
+                _button(
+                    "❤️ علاقه‌مندی‌ها",
+                    "favorites:0",
+                )
+            ],
+            [
+                _button(
+                    "⚖️ مقایسه",
+                    "comparelist",
+                )
+            ],
+            [
+                _button(
+                    "🏪 ثبت فروشگاه من",
+                    "registerseller",
+                )
+            ],
+            [
+                _button(
+                    "📢 تبلیغ در ارزانکده",
+                    "publicads",
+                )
+            ],
+            [
+                _button(
+                    "👤 حساب کاربری",
+                    "account",
+                )
+            ],
+            [
+                _button(
+                    "🔄 شروع دوباره",
+                    "restart_button",
+                )
+            ],
+        ]
+    }
+
+
+async def _answer_callback(
+    telegram: TelegramClient,
+    callback_query: dict[str, Any],
+) -> None:
+    callback_id = callback_query.get("id")
+
+    if not callback_id:
+        return
+
+    await telegram.answer_callback_query(
+        str(callback_id)
+    )
+
+
+async def _handle_main_menu(
+    callback_query: dict[str, Any],
+    telegram: TelegramClient,
+) -> None:
+    message = callback_query.get("message") or {}
+    chat = message.get("chat") or {}
+
+    chat_id = chat.get("id")
+    message_id = message.get("message_id")
+
+    if (
+        chat_id is not None
+        and message_id is not None
+    ):
+        await telegram.edit_message_text(
+            int(chat_id),
+            int(message_id),
+            (
+                "سلام 👋\n\n"
+                "به <b>ارزان‌کده</b> خوش اومدی 🌱\n\n"
+                "چی دنبالشی؟"
+            ),
+            reply_markup=_main_menu_keyboard(),
+            parse_mode="HTML",
+        )
+    else:
+        user = callback_query.get("from") or {}
+        fallback_chat_id = user.get("id")
+
+        if fallback_chat_id is not None:
+            await telegram.send_message(
+                int(fallback_chat_id),
+                (
+                    "سلام 👋\n\n"
+                    "به <b>ارزان‌کده</b> خوش اومدی 🌱\n\n"
+                    "چی دنبالشی؟"
+                ),
+                reply_markup=_main_menu_keyboard(),
+                parse_mode="HTML",
+            )
+
+    await _answer_callback(
+        telegram,
+        callback_query,
+    )
 
 
 class Default(WorkerEntrypoint):
@@ -187,6 +487,7 @@ class Default(WorkerEntrypoint):
                 return await handle_message(
                     message,
                     telegram,
+                    self.env,
                 )
 
             router.set_message_handler(
@@ -201,6 +502,7 @@ class Default(WorkerEntrypoint):
                 return await _handle_callback_query(
                     callback_query,
                     telegram,
+                    self.env,
                 )
 
             router.set_callback_handler(
@@ -224,10 +526,11 @@ class Default(WorkerEntrypoint):
 async def _handle_callback_query(
     callback_query,
     telegram,
+    env,
 ):
     """
-    Route Worker callback queries to the
-    appropriate business handler.
+    Route all Worker callback queries to
+    their corresponding business handlers.
     """
 
     if not isinstance(
@@ -246,153 +549,669 @@ async def _handle_callback_query(
     ):
         return None
 
-    if callback_data.startswith(
-        "cat:"
+    data = callback_data
+
+    # Main navigation
+    if data in (
+        "main",
+        "restart_button",
     ):
+        return await _handle_main_menu(
+            callback_query,
+            telegram,
+        )
+
+    # Categories
+    if data.startswith("cat:"):
         return await handle_category(
             backend,
             telegram,
             callback_query,
         )
 
-    if callback_data.startswith(
-        "product:"
-    ):
+    # Public product detail
+    if data.startswith("product:"):
         return await handle_product_detail(
             backend,
             telegram,
             callback_query,
         )
 
-    if callback_data.startswith(
-        "favorite:"
-    ):
+    # Product favorites
+    if data.startswith("favorite:"):
         return await handle_favorite_add(
             backend,
             telegram,
             callback_query,
         )
 
-    if callback_data.startswith(
-        "unfavorite:"
-    ):
+    if data.startswith("unfavorite:"):
         return await handle_favorite_remove(
             backend,
             telegram,
             callback_query,
         )
 
-    if callback_data.startswith(
-        "sfav:"
-    ):
-        return await handle_seller_favorite_add(
+    if data.startswith("favorites:"):
+        return await handle_favorites_list(
             backend,
             telegram,
             callback_query,
         )
 
-    if callback_data.startswith(
-        "sunfav:"
-    ):
-        return await handle_seller_favorite_remove(
-            backend,
-            telegram,
-            callback_query,
-        )
-
-    if callback_data.startswith(
-        "sellers:"
-    ):
+    # Seller list / detail
+    if data.startswith("sellers:"):
         return await handle_sellers_list(
             backend,
             telegram,
             callback_query,
         )
 
-    if callback_data.startswith(
-        "seller:"
-    ):
+    if data.startswith("seller:"):
         return await handle_seller_detail(
             backend,
             telegram,
             callback_query,
         )
 
-    if callback_data.startswith(
-        "reviewstart:"
-    ):
+    if data.startswith("sfav:"):
+        return await handle_seller_favorite_add(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("sunfav:"):
+        return await handle_seller_favorite_remove(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    # Reviews
+    if data.startswith("reviewstart:"):
         return await handle_review_start(
             callback_query,
             telegram,
         )
 
-    if callback_data.startswith(
-        "reviewrate:"
-    ):
+    if data.startswith("reviewrate:"):
         return await handle_review_rating(
             callback_query,
             telegram,
         )
 
-    if callback_data.startswith(
-        "report:"
-    ):
-        return await handle_report_start(
-            callback_query,
-            telegram,
-        )
-
-    if callback_data.startswith(
-        "reportreason:"
-    ):
+    # Reports
+    if data.startswith("reportreason:"):
         return await handle_report_reason(
             callback_query,
             telegram,
         )
 
-    if callback_data == "reportskip":
+    if data == "reportskip":
         return await handle_report_skip(
             callback_query,
             telegram,
         )
 
-    if callback_data == "compare":
+    if data.startswith("report:"):
+        return await handle_report_start(
+            callback_query,
+            telegram,
+        )
+
+    # Compare
+    if data == "compare":
         return await handle_compare(
             backend,
             telegram,
             callback_query,
         )
 
-    if callback_data == "comparelist":
+    if data == "comparelist":
         return await handle_compare_list(
             backend,
             telegram,
             callback_query,
         )
 
-    if callback_data.startswith(
-        "comparestart:"
-    ):
+    if data.startswith("comparestart:"):
         return await handle_compare_start(
             backend,
             telegram,
             callback_query,
         )
 
-    if callback_data.startswith(
-        "comparedrop:"
-    ):
+    if data.startswith("comparedrop:"):
         return await handle_compare_drop(
             backend,
             telegram,
             callback_query,
         )
 
-    if callback_data == "comparereset":
+    if data == "comparereset":
         return await handle_compare_reset(
             backend,
             telegram,
             callback_query,
+        )
+
+    # Discovery
+    if data == "hot":
+        return await handle_hot(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data == "newtoday":
+        return await handle_new_today(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data == "picks":
+        return await handle_picks(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data == "nearme":
+        return await handle_near_me(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data == "topsellers":
+        return await handle_top_sellers(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    # Seller registration
+    if data == "registerseller":
+        return await handle_register_seller_start(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("registercity:"):
+        return await handle_register_city(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("registerskip:"):
+        return await handle_register_skip(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    # Search
+    if data == "search":
+        return await handle_search_start(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("searchpage:"):
+        return await handle_search_page(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    # Public advertising
+    if data == "publicads":
+        return await handle_public_ads(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data == "pubadmodels":
+        return await handle_public_ad_models(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data == "pubadstart":
+        return await handle_public_ad_start(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("pubadkind:"):
+        return await handle_public_ad_kind(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("pubadskip:"):
+        return await handle_public_ad_skip(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    # Account / modes
+    if data == "account":
+        return await handle_account(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("setmode:"):
+        return await handle_set_mode(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    # Support
+    if data.startswith("supportstart:"):
+        return await handle_support_start(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("supporttopic:"):
+        return await handle_support_topic(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    # Notifications
+    if data == "notifications":
+        return await handle_notifications(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("notifread:"):
+        return await handle_notification_read(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    # Profile
+    if data == "myprofile":
+        return await handle_my_profile(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data == "setcity":
+        return await handle_set_city(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("pickcity:"):
+        return await handle_pick_city(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    # Requests
+    if data == "myrequests":
+        return await handle_my_requests(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    # Store status
+    if data == "storestatus":
+        return await handle_store_status(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("storestat:"):
+        return await handle_store_status_picked(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    # Shop toggle callback is generated by shop.py.
+    if data.startswith("storetoggle:"):
+        return await handle_shop_toggle_active(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    # Product statistics
+    if data == "mystats":
+        return await handle_my_stats(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("statshome:"):
+        return await handle_stats_home_picked(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("statsprod:"):
+        return await handle_stats_product(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    # Referrals
+    if data == "reflist":
+        return await handle_referral_list(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("refstats:"):
+        return await handle_referral_stats(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    # Product management
+    if data == "myproducts":
+        return await handle_my_products(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("prodlist:"):
+        return await handle_product_list(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("prodadd:"):
+        return await handle_product_add_start(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("prodaddskip:"):
+        return await handle_product_add_skip(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("prodedit:"):
+        return await handle_product_edit_menu(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("prodfield:"):
+        return await handle_product_field_start(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("prodstock:"):
+        return await handle_product_stock_menu(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("prodstockset:"):
+        return await handle_product_stock_set(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("proddel:"):
+        return await handle_product_delete(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("proddelyes:"):
+        return await handle_product_delete_confirmed(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    # Shop management
+    if data == "myshop":
+        return await handle_my_shop(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("shopview:"):
+        return await handle_shop_view(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("shopeditmenu:"):
+        return await handle_shop_edit_menu(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("shopedit:"):
+        return await handle_shop_edit_start(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("shopcity:"):
+        return await handle_shop_city_start(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("shopcitypick:"):
+        return await handle_shop_city_pick(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    # Seller advertising
+    if data == "ads":
+        return await handle_ads(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("adtype:"):
+        return await handle_ad_type_detail(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("adconfirm:"):
+        return await handle_ad_confirm(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    # Seller claims
+    if data == "sellerclaimsadmin":
+        return await handle_seller_claims_admin(
+            backend,
+            telegram,
+            callback_query,
+            env,
+        )
+
+    if data.startswith("sellerclaimdetail:"):
+        return await handle_seller_claim_detail(
+            backend,
+            telegram,
+            callback_query,
+            env,
+        )
+
+    if data.startswith("sellerclaim:"):
+        return await handle_seller_claim_decision(
+            backend,
+            telegram,
+            callback_query,
+            env,
+        )
+
+    if data.startswith("claim:"):
+        return await handle_claim(
+            backend,
+            telegram,
+            callback_query,
+            env,
+        )
+
+    # Core admin
+    if data == "adminhome":
+        return await handle_admin_home(
+            callback_query,
+            telegram,
+            env,
+        )
+
+    if data == "adminusers":
+        return await handle_admin_users_menu(
+            callback_query,
+            telegram,
+            env,
+        )
+
+    if data == "adminusersearch":
+        return await handle_admin_user_search_start(
+            callback_query,
+            telegram,
+            env,
+        )
+
+    if data.startswith("adminuserlist:"):
+        return await handle_admin_user_list(
+            callback_query,
+            telegram,
+            env,
+        )
+
+    if data.startswith("adminuserview:"):
+        return await handle_admin_user_view(
+            callback_query,
+            telegram,
+            env,
+        )
+
+    # Admin advertising
+    if data == "adsadmin":
+        return await handle_ads_admin(
+            backend,
+            telegram,
+            callback_query,
+            env,
+        )
+
+    if data.startswith("adminadview:") or data.startswith(
+        "adsadmindetail:"
+    ):
+        return await handle_admin_ad_view(
+            backend,
+            telegram,
+            callback_query,
+            env,
+        )
+
+    if data.startswith("adminadprice:"):
+        return await handle_admin_ad_price_start(
+            backend,
+            telegram,
+            callback_query,
+            env,
+        )
+
+    if data.startswith("adminadduration:"):
+        return await handle_admin_ad_duration_start(
+            backend,
+            telegram,
+            callback_query,
+            env,
+        )
+
+    if data.startswith("adminadplacement:"):
+        return await handle_admin_ad_placement_start(
+            backend,
+            telegram,
+            callback_query,
+            env,
+        )
+
+    if data.startswith("adsetprice:") or data.startswith(
+        "adsetduration:"
+    ) or data.startswith("adsetplacement:"):
+        return await handle_admin_ad_decision(
+            backend,
+            telegram,
+            callback_query,
+            env,
+        )
+
+    if data.startswith("adminaddecision:"):
+        return await handle_admin_ad_decision(
+            backend,
+            telegram,
+            callback_query,
+            env,
+        )
+
+    if data.startswith("adminreq:"):
+        return await handle_admin_ad_decision(
+            backend,
+            telegram,
+            callback_query,
+            env,
         )
 
     return None
