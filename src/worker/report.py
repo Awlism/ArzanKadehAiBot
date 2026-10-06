@@ -87,7 +87,9 @@ def _get_callback_message(
 def _get_callback_chat_id(
     callback_query: dict[str, Any],
 ) -> Optional[int]:
-    message = _get_callback_message(callback_query)
+    message = _get_callback_message(
+        callback_query
+    )
 
     if message is None:
         return None
@@ -129,7 +131,9 @@ def _get_callback_query_id(
     if callback_query_id is None:
         return None
 
-    value = str(callback_query_id).strip()
+    value = str(
+        callback_query_id
+    ).strip()
 
     return value or None
 
@@ -144,14 +148,18 @@ async def _get_internal_user_id(
         WHERE telegram_id = ?
         LIMIT 1;
         """,
-        (telegram_id,),
+        (
+            telegram_id,
+        ),
     )
 
     if row is None:
         return None
 
     try:
-        user_id = int(row["id"])
+        user_id = int(
+            row["id"]
+        )
     except (TypeError, ValueError):
         return None
 
@@ -181,7 +189,9 @@ def _parse_report_target(
         return None
 
     try:
-        target_id = int(parts[2])
+        target_id = int(
+            parts[2]
+        )
     except (TypeError, ValueError):
         return None
 
@@ -211,7 +221,9 @@ def _parse_report_reason(
         return None
 
     try:
-        target_id = int(parts[2])
+        target_id = int(
+            parts[2]
+        )
     except (TypeError, ValueError):
         return None
 
@@ -223,7 +235,11 @@ def _parse_report_reason(
     if reason_code not in REPORT_REASONS:
         return None
 
-    return target_type, target_id, reason_code
+    return (
+        target_type,
+        target_id,
+        reason_code,
+    )
 
 
 async def _target_exists(
@@ -238,7 +254,9 @@ async def _target_exists(
             WHERE id = ?
             LIMIT 1;
             """,
-            (target_id,),
+            (
+                target_id,
+            ),
         )
         return row is not None
 
@@ -250,7 +268,9 @@ async def _target_exists(
             WHERE id = ?
             LIMIT 1;
             """,
-            (target_id,),
+            (
+                target_id,
+            ),
         )
         return row is not None
 
@@ -373,7 +393,7 @@ async def _save_report(
     async with backend.transaction(
         immediate=True
     ) as transaction:
-        result = await transaction.execute(
+        await transaction.execute(
             """
             INSERT INTO reports (
                 user_id,
@@ -438,18 +458,40 @@ async def _save_report(
             ),
         )
 
-        try:
-            report_id = int(
-                result.last_row_id
-            )
-        except (
-            AttributeError,
-            TypeError,
-            ValueError,
-        ):
-            report_id = 0
+    row = await backend.fetchone(
+        """
+        SELECT id
+        FROM reports
+        WHERE user_id = ?
+          AND seller_id IS ?
+          AND product_id IS ?
+          AND reason = ?
+          AND created_at = ?
+        ORDER BY id DESC
+        LIMIT 1;
+        """,
+        (
+            user_id,
+            seller_id,
+            product_id,
+            reason_code,
+            now,
+        ),
+    )
 
-    return report_id
+    if row is None:
+        return 0
+
+    try:
+        return int(
+            row["id"]
+        )
+    except (
+        KeyError,
+        TypeError,
+        ValueError,
+    ):
+        return 0
 
 
 async def handle_report_start(
@@ -458,7 +500,10 @@ async def handle_report_start(
 ) -> bool:
     callback_data = callback_query.get("data")
 
-    if not isinstance(callback_data, str):
+    if not isinstance(
+        callback_data,
+        str,
+    ):
         return False
 
     parsed = _parse_report_target(
@@ -548,7 +593,10 @@ async def handle_report_reason(
 ) -> bool:
     callback_data = callback_query.get("data")
 
-    if not isinstance(callback_data, str):
+    if not isinstance(
+        callback_data,
+        str,
+    ):
         return False
 
     parsed = _parse_report_reason(
@@ -669,7 +717,9 @@ async def _complete_report(
         )
 
     try:
-        target_id = int(target_id)
+        target_id = int(
+            target_id
+        )
     except (
         TypeError,
         ValueError,
@@ -774,7 +824,10 @@ async def handle_report_skip(
 
     data = state.get("data")
 
-    if not isinstance(data, dict):
+    if not isinstance(
+        data,
+        dict,
+    ):
         await clear_state(
             backend,
             user_id,
@@ -843,7 +896,10 @@ async def handle_report_text(
 
     text = message.get("text")
 
-    if not isinstance(text, str):
+    if not isinstance(
+        text,
+        str,
+    ):
         await telegram.send_message(
             chat_id,
             "لطفاً توضیح گزارش رو به صورت پیام متنی بفرست.",
@@ -887,7 +943,10 @@ async def handle_report_text(
 
     data = state.get("data")
 
-    if not isinstance(data, dict):
+    if not isinstance(
+        data,
+        dict,
+    ):
         await clear_state(
             backend,
             user_id,
