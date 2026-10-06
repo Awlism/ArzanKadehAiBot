@@ -32,6 +32,7 @@ from worker.router import WorkerRouter
 from worker.start import handle_start
 from worker.messages import handle_message
 from worker.telegram import TelegramClient
+from worker.state import ensure_state_table
 
 from worker.categories import handle_category
 
@@ -371,6 +372,10 @@ class Default(WorkerEntrypoint):
         backend.set_backend(d1_backend)
 
         await backend.connect()
+
+        await ensure_state_table(
+            backend
+        )
 
         update_type = detect_update_type(update)
 
