@@ -35,21 +35,24 @@ class TelegramClient:
     """
     Lightweight asynchronous Telegram Bot API client.
 
-    The bot token is read from the Worker environment and is
-    never stored in source code.
+    The bot token is read lazily from the Worker environment only
+    when an actual Telegram API request is made.
     """
 
     def __init__(
         self,
         env: Any,
     ) -> None:
-        self._token = self._read_token(
-            env
+        self._env = env
+
+    def _get_base_url(self) -> str:
+        token = self._read_token(
+            self._env
         )
 
-        self._base_url = (
+        return (
             "https://api.telegram.org/bot"
-            f"{self._token}"
+            f"{token}"
         )
 
     @staticmethod
@@ -88,7 +91,7 @@ class TelegramClient:
             )
 
         url = (
-            f"{self._base_url}/{method}"
+            f"{self._get_base_url()}/{method}"
         )
 
         body = payload or {}
