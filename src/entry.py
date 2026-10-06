@@ -381,9 +381,10 @@ class Default(WorkerEntrypoint):
 
         router = WorkerRouter()
 
-        telegram = TelegramClient(self.env)
-
         if update_type == "message":
+            telegram = TelegramClient(
+                self.env
+            )
 
             async def message_handler(message):
                 if _is_start_command(message):
@@ -403,6 +404,9 @@ class Default(WorkerEntrypoint):
             )
 
         elif update_type == "callback_query":
+            telegram = TelegramClient(
+                self.env
+            )
 
             async def callback_handler(callback_query):
                 return await _handle_callback_query(
