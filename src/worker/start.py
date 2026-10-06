@@ -12,7 +12,7 @@ from typing import Any, Optional
 
 from worker_backend.backend import backend
 from worker.referrals import record_referral_if_new
-from worker.telegram import TelegramAPIError, TelegramClient
+from worker.telegram import TelegramClient
 
 
 START_TEXT = (
@@ -164,7 +164,7 @@ async def _ensure_user(
 
     now = _now_iso()
 
-    result = await backend.execute(
+    await backend.execute(
         """
         INSERT INTO users (
             telegram_id,
@@ -199,7 +199,7 @@ async def _ensure_user(
         ),
     )
 
-    db_user = await backend.fetchone(
+    return await backend.fetchone(
         """
         SELECT *
         FROM users
@@ -210,17 +210,6 @@ async def _ensure_user(
             telegram_id,
         ),
     )
-
-    if db_user is None:
-        raise RuntimeError(
-            "D1 user write diagnostic: "
-            f"telegram_id={telegram_id}, "
-            f"rowcount={result.rowcount}, "
-            f"lastrowid={result.lastrowid}, "
-            "post_write_read=none"
-        )
-
-    return db_user
 
 
 async def handle_start(
@@ -258,27 +247,10 @@ async def handle_start(
             start_parameter,
         )
 
-    try:
-        await telegram.send_message(
-            chat_id,
-            START_TEXT,
-        )
-    except TelegramAPIError as exc:
-        diagnostic = {
-            "telegram_id": db_user.get("telegram_id"),
-            "id": db_user.get("id"),
-            "username": db_user.get("username"),
-            "first_name": db_user.get("first_name"),
-            "last_name": db_user.get("last_name"),
-            "created_at": db_user.get("created_at"),
-            "updated_at": db_user.get("updated_at"),
-        }
-
-        raise RuntimeError(
-            "Telegram send failed after D1 user read: "
-            f"{diagnostic}; "
-            f"telegram_error={exc}"
-        ) from exc
+    await telegram.send_message(
+        chat_id,
+        START_TEXT,
+    )
 
     return True
 
