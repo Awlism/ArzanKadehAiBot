@@ -8,13 +8,21 @@ This module intentionally does not import aiogram.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
-from zoneinfo import ZoneInfo
 
 
 TOP_LIST_LIMIT = 10
-TEHRAN_TIMEZONE = ZoneInfo("Asia/Tehran")
+
+# Iran uses UTC+03:30.
+# Use a fixed timezone instead of zoneinfo so the Cloudflare
+# Pyodide runtime does not require the external tzdata package.
+TEHRAN_TIMEZONE = timezone(
+    timedelta(
+        hours=3,
+        minutes=30,
+    )
+)
 
 
 def _html(value: Any) -> str:
@@ -31,7 +39,7 @@ def _html(value: Any) -> str:
 
 def _now_iso() -> str:
     return datetime.now(
-        ZoneInfo("UTC"),
+        timezone.utc,
     ).isoformat(
         timespec="seconds"
     )
