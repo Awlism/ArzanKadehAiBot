@@ -276,13 +276,22 @@ class D1Backend:
         query: str,
         params: Params = None,
     ) -> DatabaseResult:
+        """
+        Execute a single D1 write through batch().
+
+        Worker-side D1 writes are intentionally routed through the same
+        committed execution mechanism used by executemany() and explicit
+        transactions. This keeps write persistence behavior consistent.
+        """
         statement = self._prepare(
             query,
             params,
         )
 
         try:
-            result = await statement.run()
+            results = await self._database.batch(
+                [statement]
+            )
         except Exception as exc:
             if _is_integrity_error(exc):
                 raise DatabaseIntegrityError(
@@ -291,7 +300,9 @@ class D1Backend:
 
             raise
 
-        return _result_to_database_result(result)
+        return _batch_to_database_result(
+            results
+        )
 
     async def fetchone(
         self,
@@ -380,7 +391,9 @@ class D1Backend:
 
             raise
 
-        return _batch_to_database_result(results)
+        return _batch_to_database_result(
+            results
+        )
 
     def transaction(
         self,
