@@ -8,13 +8,12 @@ This module intentionally does not import aiogram.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
-from zoneinfo import ZoneInfo
 
 
 PAGE_SIZE = 8
-UTC = ZoneInfo("UTC")
+UTC = timezone.utc
 
 
 def _now_iso() -> str:
