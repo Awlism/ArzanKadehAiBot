@@ -19,7 +19,7 @@ from worker.review import handle_review_text
 from worker.search import handle_search_message
 from worker.seller_registration import handle_register_seller_message
 from worker.shop import handle_shop_edit_message
-from worker.state import get_state
+from worker.state import ensure_state_table, get_state
 from worker.support import handle_support_text
 from worker.telegram import TelegramClient
 from worker_backend.backend import backend
@@ -89,6 +89,10 @@ async def handle_message(
         ValueError,
     ):
         return None
+
+    await ensure_state_table(
+        backend
+    )
 
     state = await get_state(
         backend,
