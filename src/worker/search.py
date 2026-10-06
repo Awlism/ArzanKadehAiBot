@@ -77,6 +77,34 @@ _DIGIT_LETTER_MAP = {
 }
 
 
+def normalize_persian_text(
+    text: str,
+) -> str:
+    if not text:
+        return ""
+
+    output: list[str] = []
+
+    for char in text:
+        if char in _DIGIT_LETTER_MAP:
+            output.append(
+                _DIGIT_LETTER_MAP[char]
+            )
+        elif (
+            char == "\u200c"
+            or char in _PUNCTUATION_CHARS
+        ):
+            output.append(" ")
+        else:
+            output.append(char)
+
+    return re.sub(
+        r"\s+",
+        " ",
+        "".join(output),
+    ).strip()
+
+
 ALT_CITY_SPELLINGS = {
     "تهرون": "تهران",
     "اصفون": "اصفهان",
@@ -259,34 +287,6 @@ def _html(
         str(value),
         quote=False,
     )
-
-
-def normalize_persian_text(
-    text: str,
-) -> str:
-    if not text:
-        return ""
-
-    output: list[str] = []
-
-    for char in text:
-        if char in _DIGIT_LETTER_MAP:
-            output.append(
-                _DIGIT_LETTER_MAP[char]
-            )
-        elif (
-            char == "\u200c"
-            or char in _PUNCTUATION_CHARS
-        ):
-            output.append(" ")
-        else:
-            output.append(char)
-
-    return re.sub(
-        r"\s+",
-        " ",
-        "".join(output),
-    ).strip()
 
 
 def _tokenize(
