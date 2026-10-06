@@ -1,0 +1,25 @@
+name: Deploy ArzanKadeh AI Worker
+
+on:
+  push:
+    branches:
+      - cloudflare-webhook-migration
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.20"
+
+      - name: Deploy Worker
+        run: uv run pywrangler deploy
