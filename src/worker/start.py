@@ -12,7 +12,7 @@ from typing import Any, Optional
 
 from worker_backend.backend import backend
 from worker.referrals import record_referral_if_new
-from worker.telegram import TelegramClient
+from worker.telegram import TelegramAPIError, TelegramClient
 
 
 START_TEXT = (
@@ -258,10 +258,27 @@ async def handle_start(
             start_parameter,
         )
 
-    await telegram.send_message(
-        chat_id,
-        START_TEXT,
-    )
+    try:
+        await telegram.send_message(
+            chat_id,
+            START_TEXT,
+        )
+    except TelegramAPIError as exc:
+        diagnostic = {
+            "telegram_id": db_user.get("telegram_id"),
+            "id": db_user.get("id"),
+            "username": db_user.get("username"),
+            "first_name": db_user.get("first_name"),
+            "last_name": db_user.get("last_name"),
+            "created_at": db_user.get("created_at"),
+            "updated_at": db_user.get("updated_at"),
+        }
+
+        raise RuntimeError(
+            "Telegram send failed after D1 user read: "
+            f"{diagnostic}; "
+            f"telegram_error={exc}"
+        ) from exc
 
     return True
 
