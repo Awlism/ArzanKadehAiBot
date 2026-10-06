@@ -164,7 +164,7 @@ async def _ensure_user(
 
     now = _now_iso()
 
-    await backend.execute(
+    result = await backend.execute(
         """
         INSERT INTO users (
             telegram_id,
@@ -199,7 +199,7 @@ async def _ensure_user(
         ),
     )
 
-    return await backend.fetchone(
+    db_user = await backend.fetchone(
         """
         SELECT *
         FROM users
@@ -210,6 +210,17 @@ async def _ensure_user(
             telegram_id,
         ),
     )
+
+    if db_user is None:
+        raise RuntimeError(
+            "D1 user write diagnostic: "
+            f"telegram_id={telegram_id}, "
+            f"rowcount={result.rowcount}, "
+            f"lastrowid={result.lastrowid}, "
+            "post_write_read=none"
+        )
+
+    return db_user
 
 
 async def handle_start(
