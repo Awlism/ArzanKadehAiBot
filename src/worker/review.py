@@ -410,11 +410,6 @@ async def handle_review_start(
     ):
         return False
 
-    if callback_query_id is not None:
-        await telegram.answer_callback_query(
-            callback_query_id
-        )
-
     user_id = await _get_internal_user_id(
         telegram_id
     )
@@ -461,6 +456,11 @@ async def handle_review_start(
             ),
         },
     )
+
+    if callback_query_id is not None:
+        await telegram.answer_callback_query(
+            callback_query_id
+        )
 
     target_name = str(
         target.get("name") or "این مورد"
@@ -516,11 +516,6 @@ async def handle_review_rating(
         or chat_id is None
     ):
         return False
-
-    if callback_query_id is not None:
-        await telegram.answer_callback_query(
-            callback_query_id
-        )
 
     user_id = await _get_internal_user_id(
         telegram_id
@@ -647,6 +642,11 @@ async def handle_review_rating(
             "rating": rating,
         },
     )
+
+    if callback_query_id is not None:
+        await telegram.answer_callback_query(
+            callback_query_id
+        )
 
     await telegram.send_message(
         chat_id,
