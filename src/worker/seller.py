@@ -378,6 +378,15 @@ async def _seller_keyboard(
         else True
     )
 
+    is_owner = user_id in (
+        seller.get("owner_user_id"),
+        seller.get("created_by_user_id"),
+    )
+
+    show_contacts = (
+        is_active or is_owner
+    )
+
     keyboard: list[list[dict[str, Any]]] = []
 
     is_favorite = await _is_seller_favorite(
@@ -398,7 +407,7 @@ async def _seller_keyboard(
         else f"sfav:{seller_id}"
     )
 
-    if is_active:
+    if show_contacts:
         instagram = _instagram_url(
             seller.get("instagram")
         )
@@ -424,7 +433,9 @@ async def _seller_keyboard(
                 [
                     {
                         "text": "📸 اینستاگرام",
-                        "url": instagram,
+                        "callback_data": (
+                            f"igclick:{seller_id}"
+                        ),
                     }
                 ]
             )
@@ -434,7 +445,9 @@ async def _seller_keyboard(
                 [
                     {
                         "text": "✈️ تلگرام",
-                        "url": telegram,
+                        "callback_data": (
+                            f"tgclick:{seller_id}"
+                        ),
                     }
                 ]
             )
@@ -444,7 +457,9 @@ async def _seller_keyboard(
                 [
                     {
                         "text": "🟢 واتساپ",
-                        "url": whatsapp,
+                        "callback_data": (
+                            f"waclick:{seller_id}"
+                        ),
                     }
                 ]
             )
@@ -1306,6 +1321,26 @@ async def handle_seller_detail(
 
     await db.execute(
         """
+        INSERT INTO events (
+            user_id,
+            event_type,
+            entity_type,
+            entity_id,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?);
+        """,
+        (
+            int(user["id"]),
+            "view_seller",
+            "seller",
+            seller_id,
+            now,
+        ),
+    )
+
+    await db.execute(
+        """
         INSERT INTO audit_log (
             actor_user_id,
             action,
@@ -1389,11 +1424,201 @@ async def handle_seller_detail(
     )
 
 
+async def _handle_seller_url_click(
+    db: Any,
+    telegram: Any,
+    callback_query: dict[str, Any],
+    field: str,
+    builder: Any,
+    event_type: str,
+) -> None:
+    callback_user = callback_query.get(
+        "from"
+    )
+
+    if not isinstance(
+        callback_user,
+        dict,
+    ):
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ اطلاعات کاربر نامعتبر است.",
+            True,
+        )
+        return
+
+    try:
+        user = await _ensure_user(
+            db,
+            callback_user,
+        )
+    except (
+        ValueError,
+        RuntimeError,
+    ):
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ اطلاعات کاربر نامعتبر است.",
+            True,
+        )
+        return
+
+    callback_data = str(
+        callback_query.get(
+            "data",
+            "",
+        )
+    )
+
+    seller_id = _parse_seller_id(
+        callback_data
+    )
+
+    if seller_id is None:
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ شناسه فروشگاه نامعتبر است.",
+            True,
+        )
+        return
+
+    seller = await db.fetchone(
+        f"""
+        SELECT
+            {field},
+            is_active,
+            owner_user_id,
+            created_by_user_id
+        FROM sellers
+        WHERE id = ?;
+        """,
+        (seller_id,),
+    )
+
+    if seller is None:
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ فروشگاه پیدا نشد.",
+            True,
+        )
+        return
+
+    is_active = (
+        bool(seller["is_active"])
+        if seller["is_active"] is not None
+        else True
+    )
+
+    is_owner = int(user["id"]) in (
+        seller["owner_user_id"],
+        seller["created_by_user_id"],
+    )
+
+    if not is_active and not is_owner:
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "🔴 این فروشگاه فعلاً غیرفعال است و "
+            "ارتباطات جدید در دسترس نیست.",
+            True,
+        )
+        return
+
+    value = seller.get(field)
+
+    link = builder(value)
+
+    if not link:
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ این لینک در دسترس نیست.",
+            True,
+        )
+        return
+
+    await db.execute(
+        """
+        INSERT INTO events (
+            user_id,
+            event_type,
+            entity_type,
+            entity_id,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?);
+        """,
+        (
+            int(user["id"]),
+            event_type,
+            "seller",
+            seller_id,
+            _now_iso(),
+        ),
+    )
+
+    await _answer_callback(
+        telegram,
+        callback_query,
+        url=link,
+    )
+
+
+async def handle_instagram_click(
+    db: Any,
+    telegram: Any,
+    callback_query: dict[str, Any],
+) -> None:
+    await _handle_seller_url_click(
+        db,
+        telegram,
+        callback_query,
+        "instagram",
+        _instagram_url,
+        "instagram_click",
+    )
+
+
+async def handle_telegram_click(
+    db: Any,
+    telegram: Any,
+    callback_query: dict[str, Any],
+) -> None:
+    await _handle_seller_url_click(
+        db,
+        telegram,
+        callback_query,
+        "telegram",
+        _telegram_url,
+        "telegram_click",
+    )
+
+
+async def handle_whatsapp_click(
+    db: Any,
+    telegram: Any,
+    callback_query: dict[str, Any],
+) -> None:
+    await _handle_seller_url_click(
+        db,
+        telegram,
+        callback_query,
+        "whatsapp",
+        _whatsapp_url,
+        "whatsapp_click",
+    )
+
+
 async def _answer_callback(
     telegram: Any,
     callback_query: dict[str, Any],
     text: str | None = None,
     show_alert: bool = False,
+    url: str | None = None,
 ) -> None:
     callback_query_id = callback_query.get(
         "id"
@@ -1406,6 +1631,7 @@ async def _answer_callback(
         str(callback_query_id),
         text=text,
         show_alert=show_alert,
+        url=url,
     )
 
 
@@ -1424,4 +1650,7 @@ __all__ = [
     "handle_seller_detail",
     "handle_seller_favorite_add",
     "handle_seller_favorite_remove",
+    "handle_instagram_click",
+    "handle_telegram_click",
+    "handle_whatsapp_click",
 ]
