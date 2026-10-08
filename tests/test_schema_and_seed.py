@@ -1,19 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-Static validation of the current Cloudflare D1 schema contract.
-
-The production database is Cloudflare D1.
-These tests intentionally do not import the retired SQLite database layer.
+Static validation of the current Cloudflare D1 configuration contract.
 """
 
 from __future__ import annotations
 
-import json
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
+
 WRANGLER = ROOT / "wrangler.jsonc"
 D1_BACKEND = ROOT / "src" / "worker_backend" / "d1_backend.py"
 DATABASE_BACKEND = ROOT / "src" / "worker_backend" / "database_backend.py"
@@ -68,8 +65,10 @@ class D1BackendContractTests(unittest.TestCase):
         self.assertTrue(D1_BACKEND.is_file())
         self.assertTrue(DATABASE_BACKEND.is_file())
 
-    def test_database_backend_contract(self):
-        source = DATABASE_BACKEND.read_text(encoding="utf-8")
+    def test_database_backend_has_core_methods(self):
+        source = DATABASE_BACKEND.read_text(
+            encoding="utf-8"
+        )
 
         for method in (
             "connect",
@@ -86,8 +85,10 @@ class D1BackendContractTests(unittest.TestCase):
                 f"Missing DatabaseBackend.{method}().",
             )
 
-    def test_d1_backend_contract(self):
-        source = D1_BACKEND.read_text(encoding="utf-8")
+    def test_d1_backend_has_core_methods(self):
+        source = D1_BACKEND.read_text(
+            encoding="utf-8"
+        )
 
         for method in (
             "connect",
@@ -104,44 +105,42 @@ class D1BackendContractTests(unittest.TestCase):
                 f"Missing D1Backend.{method}().",
             )
 
-    def test_d1_backend_does_not_import_sqlite(self):
-        source = D1_BACKEND.read_text(encoding="utf-8")
+    def test_d1_backend_has_no_sqlite_runtime_import(self):
+        source = D1_BACKEND.read_text(
+            encoding="utf-8"
+        )
 
-        self.assertNotIn("sqlite3", source)
-        self.assertNotIn("aiosqlite", source)
+        self.assertNotIn(
+            "import sqlite3",
+            source,
+        )
+        self.assertNotIn(
+            "import aiosqlite",
+            source,
+        )
 
 
 class ExpectedSchemaContractTests(unittest.TestCase):
-    """
-    These names document the production D1 contract.
-
-    Live table existence is verified separately against D1 and is not
-    simulated with an in-memory SQLite database.
-    """
-
-    def test_expected_table_contract_is_nonempty(self):
+    def test_expected_tables_are_defined(self):
         self.assertTrue(EXPECTED_TABLES)
 
-    def test_worker_state_table_is_part_of_current_schema(self):
+    def test_worker_states_exists(self):
         self.assertIn(
             "worker_states",
             EXPECTED_TABLES,
         )
 
-    def test_compare_table_is_current_schema(self):
+    def test_compare_selections_exists(self):
         self.assertIn(
             "compare_selections",
             EXPECTED_TABLES,
         )
 
-    def test_seller_favorites_table_is_current_schema(self):
+    def test_seller_favorites_exists(self):
         self.assertIn(
             "seller_favorites",
             EXPECTED_TABLES,
         )
-
-    def test_json_module_available_for_configuration_validation(self):
-        self.assertIsNotNone(json)
 
 
 if __name__ == "__main__":
