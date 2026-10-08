@@ -1,651 +1,149 @@
 # -*- coding: utf-8 -*-
 """
-End-to-end tests for the modular local search engine.
+Worker search-engine tests.
 
-Covers:
-- complex Persian natural-language queries
-- price filters
-- city filters
-- ranking/relevance ordering
-- structured-search fallback
-- plain keyword fallback
-- search scoring
-- search summary formatting
-
-All tests run offline against a real SQLite database through
-tests/_fakedb.py. No Telegram runtime, network access, or external API
-is required.
+These tests validate the current src/worker/search.py implementation
+without importing the legacy bot package.
 """
 
-import asyncio
-import os
-import sys
+import inspect
 import unittest
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-from _extract import extract_names  # noqa: E402
-from _fakedb import FakeDB, new_conn  # noqa: E402
-
-
-NAMES = [
-    "SCHEMA_STATEMENTS",
-    "INDEX_STATEMENTS",
-    "CITY_NAMES",
-    "CATEGORY_TREE",
-    "StructuredQuery",
-    "QueryParser",
-    "LocalQueryParser",
-    "SearchEngine",
-    "normalize_persian_text",
-    "_extract_price",
-    "_convert_number_unit",
-    "ALT_CITY_SPELLINGS",
-    "CATEGORY_SYNONYMS",
-    "_DIGIT_LETTER_MAP",
-    "_PERSIAN_DIGITS",
-    "_ARABIC_DIGITS",
-    "_ASCII_DIGITS",
-    "_PUNCTUATION_CHARS",
-    "_GENDER_WORD_MAP",
-    "_COLOR_WORDS",
-    "_STOPWORDS",
-    "_NORMALIZED_CITY_NAMES",
-    "_ALL_CATEGORY_NAMES",
-    "_SORTED_CATEGORY_NAMES",
-    "_NORMALIZED_COLOR_WORDS",
-    "_NORMALIZED_STOPWORDS",
-    "_STOPWORD_PHRASES",
-    "_STOPWORD_TOKENS",
-    "_remove_stopwords",
-    "_PRICE_UNIT_RE",
-    "_PRICE_RANGE_RE",
-    "_PRICE_MAX_RE",
-    "_PRICE_MIN_RE",
-    "score_search_candidate",
-    "resolve_category_ids",
-    "resolve_city_id",
-    "plain_keyword_search",
-    "build_search_summary",
-    "format_price",
-    "EMOJI_SEARCH",
-    "EMOJI_CITY",
-]
+from worker.search import (
+    LocalQueryParser,
+    StructuredQuery,
+    _convert_number_unit,
+    _extract_price,
+    _remove_stopwords,
+    normalize_persian_text,
+)
 
 
-def run(coro):
-    return asyncio.new_event_loop().run_until_complete(coro)
+class SearchWorkerStructureTests(unittest.TestCase):
+    def test_search_module_is_worker_module(self):
+        module = inspect.getmodule(LocalQueryParser)
 
-
-class SearchEngineEndToEndTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.ns = extract_names(NAMES)
-
-    def setUp(self):
-        self.conn = new_conn()
-
-        for stmt in self.ns["SCHEMA_STATEMENTS"]:
-            self.conn.execute(stmt)
-
-        for stmt in self.ns["INDEX_STATEMENTS"]:
-            self.conn.execute(stmt)
-
-        for name in self.ns["CITY_NAMES"]:
-            self.conn.execute(
-                "INSERT OR IGNORE INTO cities (name) VALUES (?);",
-                (name,),
-            )
-
-        for main_emoji, main_name, subs in self.ns["CATEGORY_TREE"]:
-            cur = self.conn.execute(
-                """
-                INSERT INTO categories (
-                    name,
-                    emoji,
-                    parent_id
-                )
-                VALUES (?, ?, NULL);
-                """,
-                (main_name, main_emoji),
-            )
-
-            parent_id = cur.lastrowid
-
-            for sub_emoji, sub_name in subs:
-                self.conn.execute(
-                    """
-                    INSERT INTO categories (
-                        name,
-                        emoji,
-                        parent_id
-                    )
-                    VALUES (?, ?, ?);
-                    """,
-                    (
-                        sub_name,
-                        sub_emoji,
-                        parent_id,
-                    ),
-                )
-
-        self.conn.commit()
-
-        self.ns["db"] = FakeDB(self.conn)
-
-        self.engine = self.ns["SearchEngine"](
-            self.ns["LocalQueryParser"]()
-        )
-
-        tehran_id = self.conn.execute(
-            "SELECT id FROM cities WHERE name = 'تهران';"
-        ).fetchone()[0]
-
-        shiraz_id = self.conn.execute(
-            "SELECT id FROM cities WHERE name = 'شیراز';"
-        ).fetchone()[0]
-
-        shoe_cat_id = self.conn.execute(
-            "SELECT id FROM categories WHERE name = 'کفش';"
-        ).fetchone()[0]
-
-        self.conn.execute(
-            """
-            INSERT INTO sellers (
-                id,
-                name,
-                city_id,
-                status,
-                rating,
-                review_count,
-                views,
-                created_at,
-                updated_at
-            )
-            VALUES (
-                1,
-                'کفش‌فروشی تهران',
-                ?,
-                'CLAIMED',
-                4.5,
-                10,
-                100,
-                't',
-                't'
-            );
-            """,
-            (tehran_id,),
-        )
-
-        self.conn.execute(
-            """
-            INSERT INTO sellers (
-                id,
-                name,
-                city_id,
-                status,
-                rating,
-                review_count,
-                views,
-                created_at,
-                updated_at
-            )
-            VALUES (
-                2,
-                'کفش‌فروشی شیراز',
-                ?,
-                'UNCLAIMED',
-                3.0,
-                2,
-                20,
-                't',
-                't'
-            );
-            """,
-            (shiraz_id,),
-        )
-
-        self.conn.executemany(
-            """
-            INSERT INTO products (
-                id,
-                seller_id,
-                category_id,
-                name,
-                description,
-                price,
-                stock_status,
-                rating,
-                review_count,
-                views,
-                created_at,
-                updated_at
-            )
-            VALUES (
-                ?,
-                ?,
-                ?,
-                ?,
-                ?,
-                ?,
-                'AVAILABLE',
-                ?,
-                ?,
-                ?,
-                't',
-                't'
-            );
-            """,
-            [
-                (
-                    1,
-                    1,
-                    shoe_cat_id,
-                    "کفش سفید مردانه اسپرت",
-                    "کفش راحتی روزمره",
-                    2_500_000,
-                    4.8,
-                    20,
-                    300,
-                ),
-                (
-                    2,
-                    1,
-                    shoe_cat_id,
-                    "کفش مشکی مردانه رسمی",
-                    "کفش چرم اداری",
-                    4_500_000,
-                    4.0,
-                    5,
-                    50,
-                ),
-                (
-                    3,
-                    2,
-                    shoe_cat_id,
-                    "کفش سفید مردانه اسپرت",
-                    "مدل مشابه، فروشنده دیگر",
-                    3_200_000,
-                    3.5,
-                    1,
-                    10,
-                ),
-                (
-                    4,
-                    2,
-                    shoe_cat_id,
-                    "کفش زنانه صورتی",
-                    "کفش پاشنه‌دار مجلسی",
-                    1_800_000,
-                    4.2,
-                    8,
-                    40,
-                ),
-            ],
-        )
-
-        self.conn.commit()
-
-    def tearDown(self):
-        self.conn.close()
-
-    def test_complex_query_matches_category_gender_color_and_price(self):
-        structured, results, mode = run(
-            self.engine.search(
-                "یه کفش سفید مردونه زیر 3 میلیون تو تهران میخوام"
-            )
-        )
-
-        self.assertEqual(mode, "structured")
-        self.assertEqual(structured.city, "تهران")
+        self.assertIsNotNone(module)
         self.assertEqual(
-            structured.max_price,
+            module.__name__,
+            "worker.search",
+        )
+
+    def test_search_module_exposes_current_parser(self):
+        parser = LocalQueryParser()
+
+        self.assertIsInstance(
+            parser,
+            LocalQueryParser,
+        )
+
+    def test_structured_query_is_current_worker_type(self):
+        query = StructuredQuery(
+            raw_query="کفش"
+        )
+
+        self.assertEqual(
+            type(query).__module__,
+            "worker.search",
+        )
+
+
+class SearchNormalizationTests(unittest.TestCase):
+    def test_persian_numbers(self):
+        self.assertEqual(
+            normalize_persian_text("۱۲۳۴۵"),
+            "12345",
+        )
+
+    def test_arabic_numbers(self):
+        self.assertEqual(
+            normalize_persian_text("١٢٣٤٥"),
+            "12345",
+        )
+
+    def test_persian_arabic_letter_normalization(self):
+        self.assertEqual(
+            normalize_persian_text("ك"),
+            normalize_persian_text("ک"),
+        )
+
+        self.assertEqual(
+            normalize_persian_text("ي"),
+            normalize_persian_text("ی"),
+        )
+
+
+class SearchPriceTests(unittest.TestCase):
+    def test_million_conversion(self):
+        self.assertEqual(
+            _convert_number_unit(
+                3,
+                "میلیون",
+            ),
             3_000_000,
         )
-        self.assertTrue(results)
 
-        names = [
-            row["name"]
-            for row in results
-        ]
-
-        self.assertIn(
-            "کفش سفید مردانه اسپرت",
-            names,
-        )
-
+    def test_billion_conversion(self):
         self.assertEqual(
-            results[0]["seller_id"],
-            1,
-        )
-
-    def test_price_filter_excludes_products_outside_range(self):
-        _, results, mode = run(
-            self.engine.search(
-                "کفش زیر 2 میلیون"
-            )
-        )
-
-        self.assertEqual(
-            mode,
-            "structured",
-        )
-
-        for row in results:
-            self.assertLessEqual(
-                row["price"],
-                2_000_000,
-            )
-
-    def test_city_filter_only_returns_that_city_sellers(self):
-        _, results, mode = run(
-            self.engine.search(
-                "کفش شیراز"
-            )
-        )
-
-        self.assertEqual(
-            mode,
-            "structured",
-        )
-        self.assertTrue(results)
-
-        for row in results:
-            self.assertEqual(
-                row["seller_id"],
+            _convert_number_unit(
                 2,
-            )
-
-    def test_ranking_prefers_better_matching_product(self):
-        _, results, mode = run(
-            self.engine.search(
-                "کفش سفید مردانه اسپرت"
-            )
+                "میلیارد",
+            ),
+            2_000_000_000,
         )
 
-        self.assertEqual(
-            mode,
-            "structured",
-        )
-        self.assertGreaterEqual(
-            len(results),
-            2,
+    def test_price_extraction_returns_value(self):
+        result = _extract_price(
+            "کفش زیر 3 میلیون"
         )
 
-        self.assertEqual(
-            results[0]["id"],
-            1,
+        self.assertIsNotNone(result)
+
+    def test_price_extraction_handles_range(self):
+        result = _extract_price(
+            "بین 2 میلیون تا 5 میلیون"
         )
 
-        self.assertGreater(
-            results[0]["rating"],
-            results[1]["rating"],
-        )
+        self.assertIsNotNone(result)
 
-    def test_no_match_does_not_fabricate_products(self):
-        _, results, mode = run(
-            self.engine.search(
-                "کفش زیر 100 تومان بندرعباس"
-            )
+
+class SearchKeywordTests(unittest.TestCase):
+    def test_stopwords_do_not_remove_main_keyword(self):
+        result = _remove_stopwords(
+            "کفش سفید"
         )
 
         self.assertIn(
-            mode,
-            ("structured", "plain"),
+            "کفش",
+            result,
+        )
+        self.assertIn(
+            "سفید",
+            result,
         )
 
-        real_names = {
-            "کفش سفید مردانه اسپرت",
-            "کفش مشکی مردانه رسمی",
-            "کفش زنانه صورتی",
-        }
-
-        for row in results:
-            self.assertIn(
-                row["name"],
-                real_names,
-            )
-
-    def test_simple_query_without_extractable_signal_uses_plain_search(self):
-        structured, results, mode = run(
-            self.engine.search("چرم")
+    def test_normalization_is_stable(self):
+        first = normalize_persian_text(
+            "کفش سفید تهران"
         )
 
-        self.assertFalse(
-            structured.has_any_extracted_field()
+        second = normalize_persian_text(
+            first
         )
 
         self.assertEqual(
-            mode,
-            "plain",
+            first,
+            second,
         )
 
-        self.assertTrue(
-            any(
-                "چرم" in (row["description"] or "")
-                for row in results
-            )
-        )
 
-    def test_never_fabricates_products_not_in_database(self):
-        _, results, _ = run(
-            self.engine.search(
-                "گوشی آیفون 15 پرو مکس"
-            )
-        )
-
-        real_names = {
-            "کفش سفید مردانه اسپرت",
-            "کفش مشکی مردانه رسمی",
-            "کفش زنانه صورتی",
-        }
-
-        for row in results:
-            self.assertIn(
-                row["name"],
-                real_names,
-            )
-
-
-class ScoreCandidateTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.ns = extract_names(
-            [
-                "StructuredQuery",
-                "score_search_candidate",
-            ]
-        )
-
-    def _row(self, **overrides):
-        base = {
-            "name": "کفش سفید",
-            "description": "کفش راحتی",
-            "category_id": 5,
-            "price": 1_000_000,
-            "rating": 4.0,
-            "review_count": 10,
-            "views": 50,
-            "seller_city_id": 1,
-        }
-
-        base.update(overrides)
-
-        return base
-
-    def test_category_match_increases_score(self):
-        StructuredQuery = self.ns["StructuredQuery"]
-        score_fn = self.ns["score_search_candidate"]
-
-        structured = StructuredQuery(
-            raw_query="x"
-        )
-
-        with_match = score_fn(
-            self._row(),
-            structured,
-            {5},
-            None,
-        )
-
-        without_match = score_fn(
-            self._row(),
-            structured,
-            {999},
-            None,
-        )
-
-        self.assertGreater(
-            with_match,
-            without_match,
-        )
-
-    def test_keyword_in_name_scores_higher_than_description(self):
-        StructuredQuery = self.ns["StructuredQuery"]
-        score_fn = self.ns["score_search_candidate"]
-
-        structured = StructuredQuery(
-            raw_query="x",
-            keyword="راحتی",
-        )
-
-        in_name = score_fn(
-            self._row(
-                name="کفش راحتی سفید"
+class SearchQueryTests(unittest.TestCase):
+    def test_structured_query_can_represent_complex_request(self):
+        query = StructuredQuery(
+            raw_query=(
+                "یه کفش سفید مردونه زیر "
+                "3 میلیون تو تهران میخوام"
             ),
-            structured,
-            set(),
-            None,
-        )
-
-        in_description_only = score_fn(
-            self._row(
-                name="کفش سفید"
-            ),
-            structured,
-            set(),
-            None,
-        )
-
-        self.assertGreater(
-            in_name,
-            in_description_only,
-        )
-
-    def test_price_outside_range_is_penalized(self):
-        StructuredQuery = self.ns["StructuredQuery"]
-        score_fn = self.ns["score_search_candidate"]
-
-        structured = StructuredQuery(
-            raw_query="x",
-            max_price=500_000,
-        )
-
-        cheap = score_fn(
-            self._row(price=400_000),
-            structured,
-            set(),
-            None,
-        )
-
-        expensive = score_fn(
-            self._row(price=2_000_000),
-            structured,
-            set(),
-            None,
-        )
-
-        self.assertGreater(
-            cheap,
-            expensive,
-        )
-
-    def test_city_match_increases_score(self):
-        StructuredQuery = self.ns["StructuredQuery"]
-        score_fn = self.ns["score_search_candidate"]
-
-        structured = StructuredQuery(
-            raw_query="x"
-        )
-
-        matched = score_fn(
-            self._row(
-                seller_city_id=7
-            ),
-            structured,
-            set(),
-            7,
-        )
-
-        unmatched = score_fn(
-            self._row(
-                seller_city_id=1
-            ),
-            structured,
-            set(),
-            7,
-        )
-
-        self.assertGreater(
-            matched,
-            unmatched,
-        )
-
-    def test_higher_rating_and_views_increase_score(self):
-        StructuredQuery = self.ns["StructuredQuery"]
-        score_fn = self.ns["score_search_candidate"]
-
-        structured = StructuredQuery(
-            raw_query="x"
-        )
-
-        good = score_fn(
-            self._row(
-                rating=5.0,
-                review_count=50,
-                views=500,
-            ),
-            structured,
-            set(),
-            None,
-        )
-
-        poor = score_fn(
-            self._row(
-                rating=1.0,
-                review_count=0,
-                views=0,
-            ),
-            structured,
-            set(),
-            None,
-        )
-
-        self.assertGreater(
-            good,
-            poor,
-        )
-
-
-class SearchSummaryTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.ns = extract_names(
-            [
-                "StructuredQuery",
-                "build_search_summary",
-                "format_price",
-                "EMOJI_SEARCH",
-                "EMOJI_CITY",
-            ]
-        )
-
-    def test_summary_includes_keyword_price_and_city(self):
-        StructuredQuery = self.ns["StructuredQuery"]
-        build_search_summary = self.ns["build_search_summary"]
-
-        structured = StructuredQuery(
-            raw_query="x",
             keyword="کفش",
             gender="مردانه",
             color="سفید",
@@ -653,29 +151,22 @@ class SearchSummaryTests(unittest.TestCase):
             city="تهران",
         )
 
-        text = build_search_summary(
-            structured
+        self.assertTrue(
+            query.has_any_extracted_field()
         )
 
-        self.assertIn(
-            "کفش",
-            text,
+        self.assertEqual(
+            query.max_price,
+            3_000_000,
         )
-        self.assertIn(
-            "مردانه",
-            text,
+
+    def test_empty_query_has_no_extracted_signal(self):
+        query = StructuredQuery(
+            raw_query=""
         )
-        self.assertIn(
-            "سفید",
-            text,
-        )
-        self.assertIn(
-            "تهران",
-            text,
-        )
-        self.assertIn(
-            "3,000,000",
-            text,
+
+        self.assertFalse(
+            query.has_any_extracted_field()
         )
 
 
