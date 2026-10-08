@@ -843,7 +843,7 @@ async def handle_role_pick(
         "id"
     )
 
-    message_id = chat.get(
+    message_id = message.get(
         "message_id"
     )
 
