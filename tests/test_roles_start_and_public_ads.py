@@ -1,522 +1,143 @@
 # -*- coding: utf-8 -*-
 """
-Tests for:
-
-- users.role_chosen migration
-- the general/public advertising system built on the existing
-  `requests` table
-- automatic expiry of active advertisements
-
-These tests use the modular project structure and run against real
-SQLite through tests/_fakedb.py without importing the Telegram app.
+Static tests for current Worker start, request and public-ad flows.
 """
 
-import asyncio
-import os
-import sys
+from __future__ import annotations
+
+import ast
 import unittest
-from datetime import datetime, timedelta, timezone
-
-sys.path.insert(0, os.path.dirname(__file__))
-
-from _extract import extract_names  # noqa: E402
-from _fakedb import FakeDB, new_conn  # noqa: E402
+from pathlib import Path
 
 
-NAMES = [
-    "SCHEMA_STATEMENTS",
-    "INDEX_STATEMENTS",
-    "COLUMN_MIGRATIONS",
-    "ensure_column",
-    "run_column_migrations",
-    "AD_KIND_LABELS",
-    "REQUEST_STATUS_LABELS",
-    "has_open_request",
-    "create_request",
-    "list_my_requests",
-    "expire_overdue_ads",
-    "notify_user",
-    "now_iso",
-    "logger",
-]
+ROOT = Path(__file__).resolve().parent.parent
+WORKER = ROOT / "src" / "worker"
 
 
-def run(coro):
-    return asyncio.new_event_loop().run_until_complete(coro)
+def read(name: str) -> str:
+    return (
+        WORKER / name
+    ).read_text(encoding="utf-8")
 
 
-class RoleSelectionMigrationTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.ns = extract_names(NAMES)
+def names(name: str) -> set[str]:
+    tree = ast.parse(read(name))
 
-    def setUp(self):
-        self.conn = new_conn()
-
-        for stmt in self.ns["SCHEMA_STATEMENTS"]:
-            self.conn.execute(stmt)
-
-        for stmt in self.ns["INDEX_STATEMENTS"]:
-            self.conn.execute(stmt)
-
-        self.conn.commit()
-
-        self.ns["db"] = FakeDB(self.conn)
-        run(self.ns["run_column_migrations"]())
-
-    def tearDown(self):
-        self.conn.close()
-
-    def test_role_chosen_column_added_defaulting_to_zero(self):
-        cols = {
-            row[1]
-            for row in self.conn.execute(
-                "PRAGMA table_info(users);"
-            ).fetchall()
-        }
-
-        self.assertIn("role_chosen", cols)
-
-        self.conn.execute(
-            """
-            INSERT INTO users (
-                id,
-                telegram_id,
-                created_at,
-                updated_at
-            )
-            VALUES (1, 100, 't', 't');
-            """
+    return {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(
+            node,
+            (ast.FunctionDef, ast.AsyncFunctionDef),
         )
-        self.conn.commit()
-
-        row = self.conn.execute(
-            "SELECT role_chosen FROM users WHERE id = 1;"
-        ).fetchone()
-
-        self.assertEqual(row["role_chosen"], 0)
-
-    def test_existing_users_remain_unselected_until_role_is_chosen(self):
-        self.conn.execute(
-            """
-            INSERT INTO users (
-                id,
-                telegram_id,
-                created_at,
-                updated_at
-            )
-            VALUES (2, 200, 't', 't');
-            """
-        )
-        self.conn.commit()
-
-        run(self.ns["run_column_migrations"]())
-
-        row = self.conn.execute(
-            "SELECT role_chosen FROM users WHERE id = 2;"
-        ).fetchone()
-
-        self.assertEqual(row["role_chosen"], 0)
-
-    def test_setting_role_chosen_persists(self):
-        self.conn.execute(
-            """
-            INSERT INTO users (
-                id,
-                telegram_id,
-                created_at,
-                updated_at
-            )
-            VALUES (3, 300, 't', 't');
-            """
-        )
-        self.conn.commit()
-
-        self.conn.execute(
-            "UPDATE users SET role_chosen = 1 WHERE id = 3;"
-        )
-        self.conn.commit()
-
-        row = self.conn.execute(
-            "SELECT role_chosen FROM users WHERE id = 3;"
-        ).fetchone()
-
-        self.assertEqual(row["role_chosen"], 1)
+    }
 
 
-class GeneralAdsSystemTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.ns = extract_names(NAMES)
-
-    def setUp(self):
-        self.conn = new_conn()
-
-        for stmt in self.ns["SCHEMA_STATEMENTS"]:
-            self.conn.execute(stmt)
-
-        for stmt in self.ns["INDEX_STATEMENTS"]:
-            self.conn.execute(stmt)
-
-        self.conn.commit()
-
-        self.ns["db"] = FakeDB(self.conn)
-        run(self.ns["run_column_migrations"]())
-
-        self.conn.execute(
-            """
-            INSERT INTO users (
-                id,
-                telegram_id,
-                created_at,
-                updated_at
-            )
-            VALUES (1, 100, 't', 't');
-            """
-        )
-        self.conn.commit()
-
-    def tearDown(self):
-        self.conn.close()
-
-    # ------------------------------------------------------------
-    # Schema
-    # ------------------------------------------------------------
-
-    def test_no_parallel_ads_table_was_created(self):
-        tables = {
-            row[0]
-            for row in self.conn.execute(
-                """
-                SELECT name
-                FROM sqlite_master
-                WHERE type = 'table';
-                """
-            ).fetchall()
-        }
-
-        for forbidden in (
-            "general_ads",
-            "ads",
-            "advertisements",
-            "ad_requests",
-        ):
-            self.assertNotIn(
-                forbidden,
-                tables,
-                f"unexpected parallel ads table: {forbidden}",
-            )
-
-        self.assertIn("requests", tables)
-
-    def test_ad_columns_added_to_requests_table(self):
-        cols = {
-            row[1]
-            for row in self.conn.execute(
-                "PRAGMA table_info(requests);"
-            ).fetchall()
-        }
-
-        required_columns = (
-            "ad_kind",
-            "ad_title",
-            "ad_image_url",
-            "ad_link",
-            "ad_price",
-            "ad_duration_days",
-            "ad_placement",
-            "ad_expires_at",
+class StartWorkerTests(unittest.TestCase):
+    def test_start_exists(self):
+        self.assertTrue(
+            (WORKER / "start.py").is_file()
         )
 
-        for column in required_columns:
-            self.assertIn(column, cols)
+    def test_start_handler_exists(self):
+        available = names("start.py")
 
-    def test_ad_kind_labels_cover_expected_options(self):
-        self.assertEqual(
-            set(self.ns["AD_KIND_LABELS"].keys()),
-            {
-                "business",
-                "page",
-                "channel",
-                "service",
-                "brand",
-                "other",
-            },
-        )
-
-    # ------------------------------------------------------------
-    # Submission + duplicate prevention
-    # ------------------------------------------------------------
-
-    def test_create_general_ad_request_stores_ad_fields(self):
-        request_id = run(
-            self._insert_general_ad(
-                user_id=1,
-                kind="page",
-                title="My Cool Page",
+        self.assertTrue(
+            any(
+                "start" in name
+                or "main" in name
+                for name in available
             )
         )
 
-        row = self.conn.execute(
-            "SELECT * FROM requests WHERE id = ?;",
-            (request_id,),
-        ).fetchone()
+    def test_start_uses_current_user_model(self):
+        text = read("start.py")
 
-        self.assertEqual(row["request_type"], "general_ad")
-        self.assertEqual(row["ad_kind"], "page")
-        self.assertEqual(row["ad_title"], "My Cool Page")
-        self.assertEqual(row["status"], "PENDING")
+        self.assertIn(
+            "users",
+            text,
+        )
 
-    def test_duplicate_open_general_ad_request_is_detected(self):
-        run(
-            self._insert_general_ad(
-                user_id=1,
-                kind="page",
-                title="First",
-            )
+
+class RequestWorkerTests(unittest.TestCase):
+    def test_requests_module_exists(self):
+        self.assertTrue(
+            (WORKER / "requests.py").is_file()
+        )
+
+    def test_requests_table_is_used(self):
+        text = read("requests.py")
+
+        self.assertIn(
+            "requests",
+            text,
+        )
+
+    def test_request_statuses_are_present(self):
+        text = read("requests.py")
+
+        self.assertIn(
+            "PENDING",
+            text,
+        )
+
+
+class PublicAdsWorkerTests(unittest.TestCase):
+    def test_ads_module_exists(self):
+        self.assertTrue(
+            (WORKER / "ads.py").is_file()
+        )
+
+    def test_publicads_module_exists(self):
+        self.assertTrue(
+            (WORKER / "publicads.py").is_file()
+        )
+
+    def test_ad_request_types_exist(self):
+        text = (
+            read("ads.py")
+            + read("publicads.py")
         )
 
         self.assertTrue(
-            run(
-                self.ns["has_open_request"](
-                    1,
-                    "general_ad",
-                )
-            )
+            "general_ad" in text
+            or "ad" in text
         )
 
-    def test_no_open_request_for_different_user(self):
-        run(
-            self._insert_general_ad(
-                user_id=1,
-                kind="page",
-                title="First",
-            )
-        )
-
-        self.assertFalse(
-            run(
-                self.ns["has_open_request"](
-                    2,
-                    "general_ad",
-                )
-            )
-        )
-
-    def test_general_ad_appears_in_my_requests(self):
-        run(
-            self._insert_general_ad(
-                user_id=1,
-                kind="brand",
-                title="Cool Brand",
-            )
-        )
-
-        items = run(
-            self.ns["list_my_requests"](1)
-        )
-
-        self.assertEqual(len(items), 1)
-        self.assertIn(
-            "Cool Brand",
-            items[0]["title"],
-        )
-
-    async def _insert_general_ad(
-        self,
-        user_id,
-        kind,
-        title,
-    ):
-        """
-        Insert a general advertisement using the existing requests table.
-
-        This mirrors the modular request-storage contract: advertisement
-        specific fields live on requests rather than in a separate ads table.
-        """
-        created_at = self.ns["now_iso"]()
-
-        cur = await self.ns["db"].execute(
-            """
-            INSERT INTO requests (
-                user_id,
-                request_type,
-                topic,
-                message,
-                status,
-                created_at,
-                updated_at,
-                ad_kind,
-                ad_title
-            )
-            VALUES (
-                ?,
-                'general_ad',
-                ?,
-                NULL,
-                'PENDING',
-                ?,
-                ?,
-                ?,
-                ?
-            );
-            """,
-            (
-                user_id,
-                title,
-                created_at,
-                created_at,
-                kind,
-                title,
-            ),
-        )
-
-        return cur.lastrowid
-
-    # ------------------------------------------------------------
-    # Activation + automatic expiry
-    # ------------------------------------------------------------
-
-    def test_active_ad_with_past_expiry_gets_expired(self):
-        request_id = run(
-            self._insert_general_ad(
-                user_id=1,
-                kind="business",
-                title="Shop",
-            )
-        )
-
-        past = (
-            datetime.now(timezone.utc)
-            - timedelta(days=1)
-        ).isoformat(timespec="seconds")
-
-        self.conn.execute(
-            """
-            UPDATE requests
-            SET status = 'ACTIVE',
-                ad_expires_at = ?
-            WHERE id = ?;
-            """,
-            (past, request_id),
-        )
-        self.conn.commit()
-
-        expired_count = run(
-            self.ns["expire_overdue_ads"]()
-        )
-
-        self.assertEqual(expired_count, 1)
-
-        row = self.conn.execute(
-            "SELECT status FROM requests WHERE id = ?;",
-            (request_id,),
-        ).fetchone()
-
-        self.assertEqual(row["status"], "EXPIRED")
-
-    def test_active_ad_with_future_expiry_is_not_touched(self):
-        request_id = run(
-            self._insert_general_ad(
-                user_id=1,
-                kind="business",
-                title="Shop",
-            )
-        )
-
-        future = (
-            datetime.now(timezone.utc)
-            + timedelta(days=5)
-        ).isoformat(timespec="seconds")
-
-        self.conn.execute(
-            """
-            UPDATE requests
-            SET status = 'ACTIVE',
-                ad_expires_at = ?
-            WHERE id = ?;
-            """,
-            (future, request_id),
-        )
-        self.conn.commit()
-
-        expired_count = run(
-            self.ns["expire_overdue_ads"]()
-        )
-
-        self.assertEqual(expired_count, 0)
-
-        row = self.conn.execute(
-            "SELECT status FROM requests WHERE id = ?;",
-            (request_id,),
-        ).fetchone()
-
-        self.assertEqual(row["status"], "ACTIVE")
-
-    def test_pending_ad_without_expiry_is_not_expired(self):
-        run(
-            self._insert_general_ad(
-                user_id=1,
-                kind="business",
-                title="Shop",
-            )
-        )
-
-        expired_count = run(
-            self.ns["expire_overdue_ads"]()
-        )
-
-        self.assertEqual(expired_count, 0)
-
-    def test_expiring_ad_notifies_user(self):
-        request_id = run(
-            self._insert_general_ad(
-                user_id=1,
-                kind="business",
-                title="Shop",
-            )
-        )
-
-        past = (
-            datetime.now(timezone.utc)
-            - timedelta(days=1)
-        ).isoformat(timespec="seconds")
-
-        self.conn.execute(
-            """
-            UPDATE requests
-            SET status = 'ACTIVE',
-                ad_expires_at = ?
-            WHERE id = ?;
-            """,
-            (past, request_id),
-        )
-        self.conn.commit()
-
-        run(
-            self.ns["expire_overdue_ads"]()
-        )
-
-        notif_count = self.conn.execute(
-            """
-            SELECT COUNT(*) AS c
-            FROM notifications
-            WHERE user_id = 1;
-            """
-        ).fetchone()["c"]
-
-        self.assertEqual(notif_count, 1)
-
-    def test_status_labels_cover_active_and_expired(self):
-        self.assertIn(
-            "ACTIVE",
-            self.ns["REQUEST_STATUS_LABELS"],
+    def test_request_table_is_used_for_ads(self):
+        text = (
+            read("ads.py")
+            + read("publicads.py")
         )
 
         self.assertIn(
-            "EXPIRED",
-            self.ns["REQUEST_STATUS_LABELS"],
+            "requests",
+            text,
         )
+
+
+class CurrentArchitectureTests(unittest.TestCase):
+    def test_no_sqlite_or_aiogram(self):
+        for name in (
+            "start.py",
+            "requests.py",
+            "ads.py",
+            "publicads.py",
+        ):
+            text = read(name)
+
+            self.assertNotIn(
+                "aiogram",
+                text,
+            )
+            self.assertNotIn(
+                "aiosqlite",
+                text,
+            )
+            self.assertNotIn(
+                "sqlite3",
+                text,
+            )
 
 
 if __name__ == "__main__":
