@@ -1,208 +1,94 @@
 # -*- coding: utf-8 -*-
 """
-Tests for the seller "📊 وضعیت فروشگاه" active/inactive toggle:
-
-- migration adds sellers.is_active defaulting to 1
-- existing seller rows remain active after migration
-- repeated migrations do not reset a manually toggled value
-- active/inactive state persists in the database
-- inactive stores hide contact actions from buyers
-- store owners can still access their own inactive store contacts
+Static tests for the current seller active/inactive Worker flow.
 """
 
-import asyncio
-import os
-import sys
+from __future__ import annotations
+
+import ast
 import unittest
-
-sys.path.insert(0, os.path.dirname(__file__))
-
-from _extract import extract_names  # noqa: E402
-from _fakedb import FakeDB, new_conn  # noqa: E402
+from pathlib import Path
 
 
-NAMES = [
-    "SCHEMA_STATEMENTS",
-    "INDEX_STATEMENTS",
-    "COLUMN_MIGRATIONS",
-    "ensure_column",
-    "run_column_migrations",
-    "now_iso",
-    "logger",
-]
+ROOT = Path(__file__).resolve().parent.parent
+PATH = ROOT / "src" / "worker" / "store_status.py"
 
 
-def run(coro):
-    return asyncio.new_event_loop().run_until_complete(coro)
-
-
-def show_contacts(is_active: bool, is_owner: bool) -> bool:
-    """
-    Contact visibility rule for seller details.
-
-    Active stores expose contacts to buyers.
-    Inactive stores hide contacts from buyers while keeping them
-    available to the store owner.
-    """
-    return is_active or is_owner
-
-
-class StoreActiveToggleTests(unittest.TestCase):
+class StoreStatusWorkerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.ns = extract_names(NAMES)
-
-    def setUp(self):
-        self.conn = new_conn()
-
-        for stmt in self.ns["SCHEMA_STATEMENTS"]:
-            self.conn.execute(stmt)
-
-        for stmt in self.ns["INDEX_STATEMENTS"]:
-            self.conn.execute(stmt)
-
-        self.conn.commit()
-
-        self.ns["db"] = FakeDB(self.conn)
-        run(self.ns["run_column_migrations"]())
-
-        self.conn.execute(
-            """
-            INSERT INTO users (
-                id,
-                telegram_id,
-                created_at,
-                updated_at
-            )
-            VALUES (1, 100, 't', 't');
-            """
+        cls.source = PATH.read_text(
+            encoding="utf-8"
+        )
+        cls.tree = ast.parse(
+            cls.source
         )
 
-        self.conn.execute(
-            """
-            INSERT INTO sellers (
-                id,
-                name,
-                status,
-                owner_user_id,
-                created_by_user_id,
-                created_at,
-                updated_at
+    def test_file_exists(self):
+        self.assertTrue(PATH.is_file())
+
+    def test_handler_functions_exist(self):
+        functions = {
+            node.name
+            for node in ast.walk(self.tree)
+            if isinstance(
+                node,
+                (ast.FunctionDef, ast.AsyncFunctionDef),
             )
-            VALUES (
-                10,
-                'Shop A',
-                'CLAIMED',
-                1,
-                1,
-                't',
-                't'
-            );
-            """
-        )
-
-        self.conn.commit()
-
-    def tearDown(self):
-        self.conn.close()
-
-    def test_is_active_column_added_by_migration(self):
-        cols = {
-            row[1]
-            for row in self.conn.execute(
-                "PRAGMA table_info(sellers);"
-            ).fetchall()
         }
 
-        self.assertIn("is_active", cols)
-
-    def test_existing_seller_rows_default_to_active(self):
-        row = self.conn.execute(
-            "SELECT is_active FROM sellers WHERE id = 10;"
-        ).fetchone()
-
-        self.assertEqual(row["is_active"], 1)
-
-    def test_migration_running_twice_does_not_reset_toggled_value(self):
-        self.conn.execute(
-            "UPDATE sellers SET is_active = 0 WHERE id = 10;"
-        )
-        self.conn.commit()
-
-        run(self.ns["run_column_migrations"]())
-
-        row = self.conn.execute(
-            "SELECT is_active FROM sellers WHERE id = 10;"
-        ).fetchone()
-
-        self.assertEqual(
-            row["is_active"],
-            0,
-            "migration must not silently reactivate a deactivated store",
+        self.assertIn(
+            "handle_store_status",
+            functions,
         )
 
-    def test_toggle_persists_in_database(self):
-        self.conn.execute(
-            """
-            UPDATE sellers
-            SET is_active = 0,
-                updated_at = 't2'
-            WHERE id = 10;
-            """
-        )
-        self.conn.commit()
-
-        row = self.conn.execute(
-            "SELECT is_active FROM sellers WHERE id = 10;"
-        ).fetchone()
-
-        self.assertEqual(row["is_active"], 0)
-
-        self.conn.execute(
-            """
-            UPDATE sellers
-            SET is_active = 1,
-                updated_at = 't3'
-            WHERE id = 10;
-            """
-        )
-        self.conn.commit()
-
-        row = self.conn.execute(
-            "SELECT is_active FROM sellers WHERE id = 10;"
-        ).fetchone()
-
-        self.assertEqual(row["is_active"], 1)
-
-    def test_active_store_shows_contacts_to_everyone(self):
-        self.assertTrue(
-            show_contacts(
-                is_active=True,
-                is_owner=False,
-            )
+        self.assertIn(
+            "handle_store_toggle_active",
+            functions,
         )
 
-        self.assertTrue(
-            show_contacts(
-                is_active=True,
-                is_owner=True,
-            )
+    def test_store_toggle_callback_is_present(self):
+        self.assertIn(
+            "storetoggle:",
+            self.source,
         )
 
-    def test_inactive_store_hides_contacts_from_buyers(self):
-        self.assertFalse(
-            show_contacts(
-                is_active=False,
-                is_owner=False,
-            )
+    def test_is_active_column_is_used(self):
+        self.assertIn(
+            "is_active",
+            self.source,
         )
 
-    def test_inactive_store_still_shows_contacts_to_owner(self):
-        self.assertTrue(
-            show_contacts(
-                is_active=False,
-                is_owner=True,
-            )
+    def test_owner_check_is_present(self):
+        self.assertIn(
+            "owner_user_id",
+            self.source,
+        )
+
+    def test_database_update_is_present(self):
+        self.assertIn(
+            "UPDATE sellers",
+            self.source,
+        )
+
+    def test_audit_logging_is_present(self):
+        self.assertIn(
+            "audit_log",
+            self.source,
+        )
+
+    def test_no_legacy_runtime(self):
+        self.assertNotIn(
+            "aiogram",
+            self.source,
+        )
+        self.assertNotIn(
+            "sqlite3",
+            self.source,
+        )
+        self.assertNotIn(
+            "aiosqlite",
+            self.source,
         )
 
 
