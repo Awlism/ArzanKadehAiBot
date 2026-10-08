@@ -448,6 +448,26 @@ async def handle_product_detail(
 
     await db.execute(
         """
+        INSERT INTO events (
+            user_id,
+            event_type,
+            entity_type,
+            entity_id,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?);
+        """,
+        (
+            int(user["id"]),
+            "view_product",
+            "product",
+            product_id,
+            now,
+        ),
+    )
+
+    await db.execute(
+        """
         INSERT INTO audit_log (
             actor_user_id,
             action,
@@ -654,6 +674,8 @@ async def handle_favorite_add(
         )
         return
 
+    now = _now_iso()
+
     try:
         await db.execute(
             """
@@ -667,7 +689,7 @@ async def handle_favorite_add(
             (
                 int(user["id"]),
                 product_id,
-                _now_iso(),
+                now,
             ),
         )
     except Exception as exc:
@@ -694,6 +716,26 @@ async def handle_favorite_add(
             return
 
         raise
+
+    await db.execute(
+        """
+        INSERT INTO events (
+            user_id,
+            event_type,
+            entity_type,
+            entity_id,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?);
+        """,
+        (
+            int(user["id"]),
+            "favorite_add",
+            "product",
+            product_id,
+            now,
+        ),
+    )
 
     await _answer_callback(
         telegram,
@@ -773,6 +815,8 @@ async def handle_favorite_remove(
         )
         return
 
+    now = _now_iso()
+
     result = await db.execute(
         """
         DELETE FROM favorites
@@ -805,6 +849,26 @@ async def handle_favorite_remove(
             product_id,
         )
         return
+
+    await db.execute(
+        """
+        INSERT INTO events (
+            user_id,
+            event_type,
+            entity_type,
+            entity_id,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?);
+        """,
+        (
+            int(user["id"]),
+            "favorite_remove",
+            "product",
+            product_id,
+            now,
+        ),
+    )
 
     await _answer_callback(
         telegram,
