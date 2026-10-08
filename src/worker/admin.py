@@ -1009,6 +1009,314 @@ async def _get_state_for_user(
     }
 
 
+async def handle_admin_request_decision(
+    callback_query: dict[str, Any],
+    telegram: TelegramClient,
+    env: Any,
+) -> Any:
+    """
+    Generic admin request decision handler.
+
+    Support requests are handled here because they are not
+    advertisement requests.
+
+    Advertisement requests are delegated to the existing
+    advertisement decision handler so their current behavior
+    remains unchanged.
+    """
+
+    _, telegram_user_id = _message_context(
+        callback_query
+    )
+
+    if telegram_user_id is None:
+        return None
+
+    if not await _is_admin(
+        env,
+        telegram_user_id,
+    ):
+        await _answer_callback(
+            telegram,
+            callback_query,
+            text="⛔️ این عملیات فقط برای ادمین در دسترس است.",
+            show_alert=True,
+        )
+        return None
+
+    data = str(
+        callback_query.get("data")
+        or ""
+    )
+
+    parts = data.split(":")
+
+    if len(parts) != 3:
+        await _answer_callback(
+            telegram,
+            callback_query,
+            text="⚠️ درخواست نامعتبر است.",
+            show_alert=True,
+        )
+        return None
+
+    _, action, request_id_raw = parts
+
+    if action not in (
+        "approve",
+        "reject",
+    ):
+        await _answer_callback(
+            telegram,
+            callback_query,
+            text="⚠️ عملیات نامعتبر است.",
+            show_alert=True,
+        )
+        return None
+
+    try:
+        request_id = int(request_id_raw)
+    except (
+        TypeError,
+        ValueError,
+    ):
+        request_id = 0
+
+    if request_id < 1:
+        await _answer_callback(
+            telegram,
+            callback_query,
+            text="⚠️ شناسه درخواست نامعتبر است.",
+            show_alert=True,
+        )
+        return None
+
+    request = await backend.fetchone(
+        """
+        SELECT *
+        FROM requests
+        WHERE id = ?
+        LIMIT 1;
+        """,
+        (request_id,),
+    )
+
+    if request is None:
+        await _answer_callback(
+            telegram,
+            callback_query,
+            text="⚠️ این درخواست یافت نشد.",
+            show_alert=True,
+        )
+        return None
+
+    if request.get("status") != "PENDING":
+        status = request.get("status") or "UNKNOWN"
+
+        await _answer_callback(
+            telegram,
+            callback_query,
+            (
+                "⚠️ این درخواست قبلاً تعیین‌تکلیف شده: "
+                f"{_html(status)}"
+            ),
+            show_alert=True,
+        )
+        return None
+
+    request_type = str(
+        request.get("request_type")
+        or ""
+    ).strip().lower()
+
+    if request_type in (
+        "ad",
+        "general_ad",
+    ):
+        from worker.admin_ads import (
+            handle_admin_ad_decision,
+        )
+
+        return await handle_admin_ad_decision(
+            db=backend,
+            telegram=telegram,
+            callback_query=callback_query,
+            env=env,
+        )
+
+    admin_user_id = await _ensure_user(
+        telegram_user_id,
+        username=(
+            callback_query.get("from") or {}
+        ).get("username"),
+        first_name=(
+            callback_query.get("from") or {}
+        ).get("first_name"),
+        last_name=(
+            callback_query.get("from") or {}
+        ).get("last_name"),
+    )
+
+    new_status = (
+        "APPROVED"
+        if action == "approve"
+        else "REJECTED"
+    )
+
+    result = await backend.execute(
+        """
+        UPDATE requests
+        SET
+            status = ?,
+            updated_at = ?
+        WHERE id = ?
+          AND status = 'PENDING';
+        """,
+        (
+            new_status,
+            _now_iso(),
+            request_id,
+        ),
+    )
+
+    if getattr(
+        result,
+        "rowcount",
+        0,
+    ) != 1:
+        current = await backend.fetchone(
+            """
+            SELECT status
+            FROM requests
+            WHERE id = ?
+            LIMIT 1;
+            """,
+            (request_id,),
+        )
+
+        if current is None:
+            await _answer_callback(
+                telegram,
+                callback_query,
+                "⚠️ این درخواست دیگر یافت نشد.",
+                show_alert=True,
+            )
+        else:
+            await _answer_callback(
+                telegram,
+                callback_query,
+                (
+                    "⚠️ این درخواست قبلاً "
+                    "تعیین‌تکلیف شده است."
+                ),
+                show_alert=True,
+            )
+
+        return None
+
+    await backend.execute(
+        """
+        INSERT INTO audit_log (
+            actor_user_id,
+            action,
+            entity_type,
+            entity_id,
+            details,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?);
+        """,
+        (
+            admin_user_id,
+            (
+                "request_approved"
+                if action == "approve"
+                else "request_rejected"
+            ),
+            "request",
+            request_id,
+            None,
+            _now_iso(),
+        ),
+    )
+
+    if request_type == "support":
+        if action == "approve":
+            notification_title = "درخواست پشتیبانی"
+            notification_message = (
+                "✅ درخواست پشتیبانی‌ات تأیید شد. "
+                "تیم ارزانکده به‌زودی باهات در ارتباط خواهد بود."
+            )
+        else:
+            notification_title = "درخواست پشتیبانی"
+            notification_message = (
+                "درخواست پشتیبانی‌ات بررسی شد. "
+                "اگر همچنان مشکل داری، دوباره از منو درخواست بده."
+            )
+
+        await backend.execute(
+            """
+            INSERT INTO notifications (
+                user_id,
+                title,
+                message,
+                notification_type,
+                is_read,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, 0, ?);
+            """,
+            (
+                request["user_id"],
+                notification_title,
+                notification_message,
+                "support",
+                _now_iso(),
+            ),
+        )
+
+    await _answer_callback(
+        telegram,
+        callback_query,
+        f"وضعیت درخواست #{request_id} به‌روزرسانی شد.",
+    )
+
+    message = callback_query.get("message") or {}
+    current_text = str(
+        message.get("text")
+        or ""
+    ).strip()
+
+    status_label = (
+        "تأیید شد"
+        if new_status == "APPROVED"
+        else "رد شد"
+    )
+
+    updated_text = (
+        f"{current_text}\n\n"
+        f"— تصمیم ثبت شد: {status_label}"
+        if current_text
+        else
+        (
+            f"درخواست #{request_id}\n\n"
+            f"— تصمیم ثبت شد: {status_label}"
+        )
+    )
+
+    try:
+        await _edit_callback(
+            telegram,
+            callback_query,
+            updated_text,
+            None,
+        )
+    except Exception:
+        pass
+
+    return None
+
+
 __all__ = [
     "handle_admin_home",
     "handle_admin_users_menu",
@@ -1016,4 +1324,5 @@ __all__ = [
     "handle_admin_user_search_message",
     "handle_admin_user_list",
     "handle_admin_user_view",
+    "handle_admin_request_decision",
 ]
