@@ -14,15 +14,28 @@ ROOT = Path(__file__).resolve().parent.parent
 PATH = ROOT / "src" / "worker" / "admin.py"
 
 
+def imported_modules(tree: ast.AST) -> set[str]:
+    modules: set[str] = set()
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                modules.add(alias.name)
+
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                modules.add(node.module)
+
+    return modules
+
+
 class AdminUsersWorkerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.source = PATH.read_text(
             encoding="utf-8"
         )
-        cls.tree = ast.parse(
-            cls.source
-        )
+        cls.tree = ast.parse(cls.source)
 
     def test_file_exists(self):
         self.assertTrue(PATH.is_file())
@@ -45,7 +58,7 @@ class AdminUsersWorkerTests(unittest.TestCase):
             self.source,
         )
 
-    def test_admin_home_exists(self):
+    def test_admin_user_handlers_exist(self):
         names = {
             node.name
             for node in ast.walk(self.tree)
@@ -55,14 +68,20 @@ class AdminUsersWorkerTests(unittest.TestCase):
             )
         }
 
-        self.assertTrue(
-            any(
-                name.startswith("handle_admin")
-                for name in names
+        for expected in (
+            "handle_admin_home",
+            "handle_admin_users_menu",
+            "handle_admin_user_search_start",
+            "handle_admin_user_search_message",
+            "handle_admin_user_list",
+            "handle_admin_user_view",
+        ):
+            self.assertIn(
+                expected,
+                names,
             )
-        )
 
-    def test_admin_request_flow_is_in_same_worker_module(self):
+    def test_admin_request_flow_exists(self):
         self.assertIn(
             "handle_admin_request_decision",
             self.source,
@@ -74,21 +93,14 @@ class AdminUsersWorkerTests(unittest.TestCase):
             self.source,
         )
 
-    def test_no_legacy_runtime(self):
-        self.assertNotIn(
-            "aiogram",
-            self.source,
-        )
-        self.assertNotIn(
-            "sqlite3",
-            self.source,
-        )
-        self.assertNotIn(
-            "aiosqlite",
-            self.source,
-        )
+    def test_no_legacy_imports(self):
+        modules = imported_modules(self.tree)
 
-    def test_no_import_from_legacy_bot_handlers(self):
+        self.assertNotIn("aiogram", modules)
+        self.assertNotIn("aiosqlite", modules)
+        self.assertNotIn("sqlite3", modules)
+
+    def test_no_legacy_bot_imports(self):
         self.assertNotIn(
             "bot.handlers",
             self.source,
