@@ -11,6 +11,8 @@ Covers:
 - worker_states initialization
 - message routing
 - callback routing
+- admin callback routing
+- seller contact callback routing
 - unknown update handling
 - HTTP method handling
 """
@@ -79,6 +81,7 @@ def _install_backend_stubs() -> None:
 
         async def connect(self):
             self.connected = True
+
             if self.backend is not None:
                 await self.backend.connect()
 
@@ -116,7 +119,10 @@ def _install_backend_stubs() -> None:
             self.database = database
             self.connected = False
             self.fetchall_calls = []
-            self.__class__.instances.append(self)
+
+            self.__class__.instances.append(
+                self
+            )
 
         async def connect(self):
             self.connected = True
@@ -150,7 +156,7 @@ def _install_backend_stubs() -> None:
     )
 
 
-def _install_worker_module_stubs() -> None:
+def _install_worker_module_stubs() -> list:
     """
     Install minimal handler modules so entry.py can be loaded directly.
 
@@ -182,6 +188,7 @@ def _install_worker_module_stubs() -> None:
     module_specs = {
         "worker.start": [
             "handle_start",
+            "handle_role_pick",
         ],
         "worker.messages": [
             "handle_message",
@@ -206,6 +213,9 @@ def _install_worker_module_stubs() -> None:
             "handle_seller_detail",
             "handle_seller_favorite_add",
             "handle_seller_favorite_remove",
+            "handle_instagram_click",
+            "handle_telegram_click",
+            "handle_whatsapp_click",
         ],
         "worker.review": [
             "handle_review_start",
@@ -215,6 +225,7 @@ def _install_worker_module_stubs() -> None:
             "handle_report_reason",
             "handle_report_skip",
             "handle_report_start",
+            "handle_admin_report_decision",
         ],
         "worker.hot": [
             "handle_hot",
@@ -267,6 +278,7 @@ def _install_worker_module_stubs() -> None:
         "worker.store_status": [
             "handle_store_status",
             "handle_store_status_picked",
+            "handle_store_toggle_active",
         ],
         "worker.product_stats": [
             "handle_my_stats",
@@ -316,6 +328,7 @@ def _install_worker_module_stubs() -> None:
             "handle_admin_user_list",
             "handle_admin_user_view",
             "handle_admin_user_search_message",
+            "handle_admin_request_decision",
         ],
         "worker.admin_ads": [
             "handle_ads_admin",
@@ -387,6 +400,7 @@ def _install_worker_module_stubs() -> None:
         async def answer_callback_query(
             self,
             callback_id,
+            **kwargs,
         ):
             handler_calls.append(
                 {
@@ -394,7 +408,7 @@ def _install_worker_module_stubs() -> None:
                     "args": (
                         callback_id,
                     ),
-                    "kwargs": {},
+                    "kwargs": kwargs,
                 }
             )
 
@@ -839,6 +853,197 @@ class WorkerEntryIntegrationTests(
             names,
         )
 
+    def test_callback_routes_seller_contact_handlers(self):
+        routes = (
+            (
+                "igclick:42",
+                "handle_instagram_click",
+            ),
+            (
+                "tgclick:42",
+                "handle_telegram_click",
+            ),
+            (
+                "waclick:42",
+                "handle_whatsapp_click",
+            ),
+        )
+
+        for (
+            callback_data,
+            expected_handler,
+        ) in routes:
+            HANDLER_CALLS.clear()
+
+            response = run(
+                self.worker.fetch(
+                    FakeRequest(
+                        "POST",
+                        {
+                            "update_id": 50,
+                            "callback_query": {
+                                "id": "callback-contact",
+                                "from": {
+                                    "id": 123,
+                                },
+                                "data": callback_data,
+                            },
+                        },
+                    )
+                )
+            )
+
+            self.assertEqual(
+                response.status,
+                200,
+            )
+
+            names = [
+                item["name"]
+                for item in HANDLER_CALLS
+            ]
+
+            self.assertIn(
+                expected_handler,
+                names,
+            )
+
+    def test_callback_routes_store_toggle_handler(self):
+        response = run(
+            self.worker.fetch(
+                FakeRequest(
+                    "POST",
+                    {
+                        "update_id": 51,
+                        "callback_query": {
+                            "id": "callback-store",
+                            "from": {
+                                "id": 123,
+                            },
+                            "data": "storetoggle:42",
+                        },
+                    },
+                )
+            )
+        )
+
+        self.assertEqual(
+            response.status,
+            200,
+        )
+
+        names = [
+            item["name"]
+            for item in HANDLER_CALLS
+        ]
+
+        self.assertIn(
+            "handle_store_toggle_active",
+            names,
+        )
+
+    def test_callback_routes_admin_report_handler(self):
+        response = run(
+            self.worker.fetch(
+                FakeRequest(
+                    "POST",
+                    {
+                        "update_id": 52,
+                        "callback_query": {
+                            "id": "callback-report",
+                            "from": {
+                                "id": 123,
+                            },
+                            "data": "adminreport:approve:42",
+                        },
+                    },
+                )
+            )
+        )
+
+        self.assertEqual(
+            response.status,
+            200,
+        )
+
+        names = [
+            item["name"]
+            for item in HANDLER_CALLS
+        ]
+
+        self.assertIn(
+            "handle_admin_report_decision",
+            names,
+        )
+
+    def test_callback_routes_admin_request_handler(self):
+        response = run(
+            self.worker.fetch(
+                FakeRequest(
+                    "POST",
+                    {
+                        "update_id": 53,
+                        "callback_query": {
+                            "id": "callback-request",
+                            "from": {
+                                "id": 123,
+                            },
+                            "data": "adminreq:approve:42",
+                        },
+                    },
+                )
+            )
+        )
+
+        self.assertEqual(
+            response.status,
+            200,
+        )
+
+        names = [
+            item["name"]
+            for item in HANDLER_CALLS
+        ]
+
+        self.assertIn(
+            "handle_admin_request_decision",
+            names,
+        )
+
+    def test_callback_routes_role_pick_handler(self):
+        response = run(
+            self.worker.fetch(
+                FakeRequest(
+                    "POST",
+                    {
+                        "update_id": 54,
+                        "callback_query": {
+                            "id": "callback-role",
+                            "from": {
+                                "id": 123,
+                            },
+                            "data": "rolepick:seller",
+                        },
+                    },
+                )
+            )
+        )
+
+        self.assertEqual(
+            response.status,
+            200,
+        )
+
+        names = [
+            item["name"]
+            for item in HANDLER_CALLS
+        ]
+
+        self.assertIn(
+            "handle_role_pick",
+            names,
+        )
+
     def test_wrong_webhook_secret_returns_401(self):
         self.worker.env = FakeEnv(
             secret="correct-secret"
@@ -1011,6 +1216,57 @@ class WorkerEntryIntegrationTests(
         self.assertNotIn(
             "handle_hot",
             names,
+        )
+
+    def test_unknown_callback_returns_200_and_alert(self):
+        response = run(
+            self.worker.fetch(
+                FakeRequest(
+                    "POST",
+                    {
+                        "update_id": 9,
+                        "callback_query": {
+                            "id": "callback-unknown",
+                            "from": {
+                                "id": 123,
+                            },
+                            "data": "unknown_callback",
+                        },
+                    },
+                )
+            )
+        )
+
+        self.assertEqual(
+            response.status,
+            200,
+        )
+
+        answer_calls = [
+            item
+            for item in HANDLER_CALLS
+            if item["name"]
+            == "answer_callback_query"
+        ]
+
+        self.assertEqual(
+            len(answer_calls),
+            1,
+        )
+
+        self.assertEqual(
+            answer_calls[0]["args"],
+            (
+                "callback-unknown",
+            ),
+        )
+
+        self.assertEqual(
+            answer_calls[0]["kwargs"],
+            {
+                "text": "⚠️ این گزینه هنوز فعال نیست.",
+                "show_alert": True,
+            },
         )
 
     def test_unsupported_method_returns_405(self):
