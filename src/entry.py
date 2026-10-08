@@ -182,6 +182,7 @@ from worker.admin import (
     handle_admin_user_search_start,
     handle_admin_user_list,
     handle_admin_user_view,
+    handle_admin_request_decision,
 )
 
 from worker.admin_ads import (
@@ -1115,10 +1116,9 @@ async def _handle_callback_query(
         )
 
     if data.startswith("adminreq:"):
-        return await handle_admin_ad_decision(
-            backend,
-            telegram,
+        return await handle_admin_request_decision(
             callback_query,
+            telegram,
             env,
         )
 
