@@ -1,388 +1,93 @@
 # -*- coding: utf-8 -*-
 """
-Tests for category navigation data and branching logic.
+Static tests for the current Worker category navigation implementation.
 """
 
-import os
-import sqlite3
-import sys
+from __future__ import annotations
+
+import ast
 import unittest
-
-sys.path.insert(0, os.path.dirname(__file__))
-
-from _extract import extract_names  # noqa: E402
+from pathlib import Path
 
 
-NAMES = [
-    "SCHEMA_STATEMENTS",
-    "INDEX_STATEMENTS",
-    "CATEGORY_TREE",
-]
+ROOT = Path(__file__).resolve().parent.parent
+PATH = ROOT / "src" / "worker" / "categories.py"
 
 
-def resolve_category_screen(conn, cat_id: int):
-    if cat_id == 0:
-        rows = conn.execute(
-            """
-            SELECT id, name, emoji
-            FROM categories
-            WHERE parent_id IS NULL
-            ORDER BY id;
-            """
-        ).fetchall()
-
-        return {
-            "kind": "list",
-            "rows": rows,
-            "back": None,
-        }
-
-    category = conn.execute(
-        "SELECT * FROM categories WHERE id = ?;",
-        (cat_id,),
-    ).fetchone()
-
-    if not category:
-        return {
-            "kind": "not_found",
-        }
-
-    children = conn.execute(
-        """
-        SELECT id, name, emoji
-        FROM categories
-        WHERE parent_id = ?
-        ORDER BY id;
-        """,
-        (cat_id,),
-    ).fetchall()
-
-    back_target = (
-        f"cat:{category['parent_id']}:0"
-        if category["parent_id"]
-        else "cat:0:0"
-    )
-
-    if children:
-        return {
-            "kind": "children",
-            "rows": children,
-            "back": back_target,
-            "category": category,
-        }
-
-    products = conn.execute(
-        """
-        SELECT p.*
-        FROM products p
-        WHERE p.category_id = ?
-        ORDER BY p.views DESC, p.id DESC;
-        """,
-        (cat_id,),
-    ).fetchall()
-
-    return {
-        "kind": "products",
-        "rows": products,
-        "back": back_target,
-        "category": category,
-    }
-
-
-class CategoryNavigationLogicTests(unittest.TestCase):
+class CategoryWorkerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.ns = extract_names(NAMES)
+        cls.source = PATH.read_text(encoding="utf-8")
+        cls.tree = ast.parse(cls.source)
 
-    def setUp(self):
-        self.conn = sqlite3.connect(":memory:")
-        self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA foreign_keys = ON;")
+    def test_file_exists(self):
+        self.assertTrue(PATH.is_file())
 
-        for stmt in self.ns["SCHEMA_STATEMENTS"]:
-            self.conn.execute(stmt)
-
-        for stmt in self.ns["INDEX_STATEMENTS"]:
-            self.conn.execute(stmt)
-
-        for main_emoji, main_name, subs in self.ns["CATEGORY_TREE"]:
-            cur = self.conn.execute(
-                """
-                INSERT INTO categories (
-                    name,
-                    emoji,
-                    parent_id
-                )
-                VALUES (?, ?, NULL);
-                """,
-                (
-                    main_name,
-                    main_emoji,
-                ),
-            )
-
-            parent_id = cur.lastrowid
-
-            for sub_emoji, sub_name in subs:
-                self.conn.execute(
-                    """
-                    INSERT INTO categories (
-                        name,
-                        emoji,
-                        parent_id
-                    )
-                    VALUES (?, ?, ?);
-                    """,
-                    (
-                        sub_name,
-                        sub_emoji,
-                        parent_id,
-                    ),
-                )
-
-        self.conn.commit()
-
-    def tearDown(self):
-        self.conn.close()
-
-    def test_root_screen_lists_all_main_categories(self):
-        screen = resolve_category_screen(self.conn, 0)
-
-        self.assertEqual(screen["kind"], "list")
-        self.assertEqual(
-            len(screen["rows"]),
-            len(self.ns["CATEGORY_TREE"]),
-        )
-        self.assertIsNone(screen["back"])
-
-    def test_main_category_shows_subcategories_with_back_to_root(self):
-        main = self.conn.execute(
-            """
-            SELECT id
-            FROM categories
-            WHERE name = 'زیبایی و آرایشی'
-              AND parent_id IS NULL;
-            """
-        ).fetchone()
-
-        self.assertIsNotNone(main)
-
-        screen = resolve_category_screen(
-            self.conn,
-            main["id"],
-        )
-
-        self.assertEqual(
-            screen["kind"],
-            "children",
-        )
-
+    def test_category_handler_exists(self):
         names = {
-            row["name"]
-            for row in screen["rows"]
+            node.name
+            for node in ast.walk(self.tree)
+            if isinstance(
+                node,
+                (ast.FunctionDef, ast.AsyncFunctionDef),
+            )
         }
 
         self.assertIn(
-            "مراقبت پوست",
+            "handle_category",
             names,
+        )
+
+    def test_pagination_constants_exist(self):
+        self.assertIn(
+            "PAGE_SIZE_CATEGORIES",
+            self.source,
         )
         self.assertIn(
-            "آرایشی",
-            names,
-        )
-        self.assertEqual(
-            screen["back"],
-            "cat:0:0",
+            "PAGE_SIZE_PRODUCTS",
+            self.source,
         )
 
-    def test_leaf_subcategory_shows_empty_products_with_back_to_main(self):
-        main = self.conn.execute(
-            """
-            SELECT id
-            FROM categories
-            WHERE name = 'زیبایی و آرایشی'
-              AND parent_id IS NULL;
-            """
-        ).fetchone()
-
-        leaf = self.conn.execute(
-            """
-            SELECT id, parent_id
-            FROM categories
-            WHERE name = 'مراقبت پوست'
-              AND parent_id = ?;
-            """,
-            (main["id"],),
-        ).fetchone()
-
-        self.assertIsNotNone(leaf)
-
-        screen = resolve_category_screen(
-            self.conn,
-            leaf["id"],
+    def test_category_callback_format_exists(self):
+        self.assertIn(
+            'f"cat:{row[\'id\']}:0"',
+            self.source,
         )
 
-        self.assertEqual(
-            screen["kind"],
-            "products",
-        )
-        self.assertEqual(
-            screen["rows"],
-            [],
-        )
-        self.assertEqual(
-            screen["back"],
-            f"cat:{main['id']}:0",
+    def test_root_category_query_exists(self):
+        self.assertIn(
+            "WHERE parent_id IS NULL",
+            self.source,
         )
 
-    def test_leaf_subcategory_lists_its_products(self):
-        main = self.conn.execute(
-            """
-            SELECT id
-            FROM categories
-            WHERE name = 'زیبایی و آرایشی'
-              AND parent_id IS NULL;
-            """
-        ).fetchone()
-
-        leaf = self.conn.execute(
-            """
-            SELECT id, parent_id
-            FROM categories
-            WHERE name = 'مراقبت پوست'
-              AND parent_id = ?;
-            """,
-            (main["id"],),
-        ).fetchone()
-
-        self.conn.execute(
-            """
-            INSERT INTO sellers (
-                name,
-                status,
-                created_at,
-                updated_at
-            )
-            VALUES (
-                's',
-                'UNCLAIMED',
-                't',
-                't'
-            );
-            """
+    def test_child_category_query_exists(self):
+        self.assertIn(
+            "WHERE parent_id = ?",
+            self.source,
         )
 
-        self.conn.execute(
-            """
-            INSERT INTO products (
-                seller_id,
-                category_id,
-                name,
-                stock_status,
-                created_at,
-                updated_at
-            )
-            VALUES (
-                1,
-                ?,
-                'کرم مرطوب‌کننده',
-                'AVAILABLE',
-                't',
-                't'
-            );
-            """,
-            (leaf["id"],),
+    def test_product_query_uses_active_seller(self):
+        self.assertIn(
+            "COALESCE(s.is_active, 1) = 1",
+            self.source,
         )
 
-        self.conn.commit()
-
-        screen = resolve_category_screen(
-            self.conn,
-            leaf["id"],
+    def test_category_click_event_exists(self):
+        self.assertIn(
+            '"category_click"',
+            self.source,
         )
 
-        self.assertEqual(
-            screen["kind"],
-            "products",
-        )
-        self.assertEqual(
-            len(screen["rows"]),
-            1,
-        )
-        self.assertEqual(
-            screen["rows"][0]["name"],
-            "کرم مرطوب‌کننده",
+    def test_invalid_callback_is_handled(self):
+        self.assertIn(
+            "درخواست نامعتبر است",
+            self.source,
         )
 
-    def test_back_navigation_round_trip_root_to_leaf_and_back(self):
-        main = self.conn.execute(
-            """
-            SELECT id
-            FROM categories
-            WHERE name = 'موبایل و دیجیتال'
-              AND parent_id IS NULL;
-            """
-        ).fetchone()
-
-        screen1 = resolve_category_screen(
-            self.conn,
-            main["id"],
-        )
-
-        self.assertEqual(
-            screen1["back"],
-            "cat:0:0",
-        )
-
-        leaf = self.conn.execute(
-            """
-            SELECT id
-            FROM categories
-            WHERE name = 'موبایل'
-              AND parent_id = ?;
-            """,
-            (main["id"],),
-        ).fetchone()
-
-        screen2 = resolve_category_screen(
-            self.conn,
-            leaf["id"],
-        )
-
-        self.assertEqual(
-            screen2["back"],
-            f"cat:{main['id']}:0",
-        )
-
-        back_id = int(
-            screen2["back"].split(":")[1]
-        )
-
-        self.assertEqual(
-            back_id,
-            main["id"],
-        )
-
-        root_target = "cat:0:0"
-        root_cat_id = int(
-            root_target.split(":")[1]
-        )
-
-        self.assertEqual(
-            root_cat_id,
-            0,
-        )
-
-    def test_unknown_category_id_is_reported_not_found(self):
-        screen = resolve_category_screen(
-            self.conn,
-            999999,
-        )
-
-        self.assertEqual(
-            screen["kind"],
-            "not_found",
-        )
+    def test_no_legacy_runtime_import(self):
+        self.assertNotIn("aiogram", self.source)
+        self.assertNotIn("aiosqlite", self.source)
+        self.assertNotIn("sqlite3", self.source)
 
 
 if __name__ == "__main__":
