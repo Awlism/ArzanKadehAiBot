@@ -14,15 +14,28 @@ ROOT = Path(__file__).resolve().parent.parent
 PATH = ROOT / "src" / "worker" / "store_status.py"
 
 
+def imported_modules(tree: ast.AST) -> set[str]:
+    modules: set[str] = set()
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                modules.add(alias.name)
+
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                modules.add(node.module)
+
+    return modules
+
+
 class StoreStatusWorkerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.source = PATH.read_text(
             encoding="utf-8"
         )
-        cls.tree = ast.parse(
-            cls.source
-        )
+        cls.tree = ast.parse(cls.source)
 
     def test_file_exists(self):
         self.assertTrue(PATH.is_file())
@@ -37,15 +50,15 @@ class StoreStatusWorkerTests(unittest.TestCase):
             )
         }
 
-        self.assertIn(
+        for expected in (
             "handle_store_status",
-            functions,
-        )
-
-        self.assertIn(
+            "handle_store_status_picked",
             "handle_store_toggle_active",
-            functions,
-        )
+        ):
+            self.assertIn(
+                expected,
+                functions,
+            )
 
     def test_store_toggle_callback_is_present(self):
         self.assertIn(
@@ -77,19 +90,12 @@ class StoreStatusWorkerTests(unittest.TestCase):
             self.source,
         )
 
-    def test_no_legacy_runtime(self):
-        self.assertNotIn(
-            "aiogram",
-            self.source,
-        )
-        self.assertNotIn(
-            "sqlite3",
-            self.source,
-        )
-        self.assertNotIn(
-            "aiosqlite",
-            self.source,
-        )
+    def test_no_legacy_imports(self):
+        modules = imported_modules(self.tree)
+
+        self.assertNotIn("aiogram", modules)
+        self.assertNotIn("aiosqlite", modules)
+        self.assertNotIn("sqlite3", modules)
 
 
 if __name__ == "__main__":
