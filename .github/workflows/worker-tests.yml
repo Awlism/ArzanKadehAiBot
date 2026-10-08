@@ -1,0 +1,57 @@
+name: ArzanKadeh Tests
+
+on:
+  push:
+    branches:
+      - cloudflare-webhook-migration
+  pull_request:
+    branches:
+      - cloudflare-webhook-migration
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install \
+            "workers-py>=1.1.7" \
+            "workers-runtime-sdk"
+
+      - name: Run migrated Worker tests
+        env:
+          PYTHONPATH: src
+        run: |
+          python -m unittest \
+            tests.test_worker_entry \
+            tests.test_worker_callback_routes \
+            tests.test_worker_d1_backend \
+            tests.test_project_files \
+            tests.test_static_analysis \
+            tests.test_utils \
+            tests.test_search_engine_e2e \
+            tests.test_referral_system \
+            tests.test_local_search_parser \
+            tests.test_phase3_reliability_pagination \
+            tests.test_seller_claims \
+            tests.test_schema_and_seed \
+            tests.test_category_navigation_logic \
+            tests.test_roles_favorites_compare \
+            tests.test_roles_start_and_public_ads \
+            tests.test_store_active_toggle \
+            tests.test_phase4_admin_ads \
+            tests.test_phase4_admin_requests \
+            tests.test_phase4_admin_users
