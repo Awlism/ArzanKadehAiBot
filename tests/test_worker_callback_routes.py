@@ -34,6 +34,9 @@ EXPECTED_ROUTES = {
     "seller:": "handle_seller_detail",
     "sfav:": "handle_seller_favorite_add",
     "sunfav:": "handle_seller_favorite_remove",
+    "igclick:": "handle_instagram_click",
+    "tgclick:": "handle_telegram_click",
+    "waclick:": "handle_whatsapp_click",
     "reviewstart:": "handle_review_start",
     "reviewrate:": "handle_review_rating",
     "reportreason:": "handle_report_reason",
@@ -71,7 +74,7 @@ EXPECTED_ROUTES = {
     "myrequests": "handle_my_requests",
     "storestatus": "handle_store_status",
     "storestat:": "handle_store_status_picked",
-    "storetoggle:": "handle_shop_toggle_active",
+    "storetoggle:": "handle_store_toggle_active",
     "mystats": "handle_my_stats",
     "statshome:": "handle_stats_home_picked",
     "statsprod:": "handle_stats_product",
@@ -115,7 +118,8 @@ EXPECTED_ROUTES = {
     "adsetduration:": "handle_admin_ad_duration_start",
     "adsetplacement:": "handle_admin_ad_placement_start",
     "adminaddecision:": "handle_admin_ad_decision",
-    "adminreq:": "handle_admin_ad_decision",
+    "adminreport:": "handle_admin_report_decision",
+    "adminreq:": "handle_admin_request_decision",
 }
 
 
@@ -437,7 +441,7 @@ class CallbackRouteContractTests(
                 ],
             )
 
-    def test_admin_decision_aliases_share_handler(self):
+    def test_admin_ad_decision_route_uses_ad_handler(self):
         contracts = (
             self._route_contracts()
         )
@@ -463,10 +467,121 @@ class CallbackRouteContractTests(
             ],
         )
 
+    def test_admin_report_decision_route_uses_report_handler(self):
+        contracts = (
+            self._route_contracts()
+        )
+
+        route_handlers = {}
+
+        for (
+            route,
+            _kind,
+            handlers,
+            _line,
+        ) in contracts:
+            route_handlers[
+                route
+            ] = set(
+                handlers
+            )
+
         self.assertIn(
-            "handle_admin_ad_decision",
+            "handle_admin_report_decision",
+            route_handlers[
+                "adminreport:"
+            ],
+        )
+
+    def test_admin_request_route_uses_generic_request_handler(self):
+        contracts = (
+            self._route_contracts()
+        )
+
+        route_handlers = {}
+
+        for (
+            route,
+            _kind,
+            handlers,
+            _line,
+        ) in contracts:
+            route_handlers[
+                route
+            ] = set(
+                handlers
+            )
+
+        self.assertIn(
+            "handle_admin_request_decision",
             route_handlers[
                 "adminreq:"
+            ],
+        )
+
+    def test_store_toggle_route_uses_store_status_handler(self):
+        contracts = (
+            self._route_contracts()
+        )
+
+        route_handlers = {}
+
+        for (
+            route,
+            _kind,
+            handlers,
+            _line,
+        ) in contracts:
+            route_handlers[
+                route
+            ] = set(
+                handlers
+            )
+
+        self.assertIn(
+            "handle_store_toggle_active",
+            route_handlers[
+                "storetoggle:"
+            ],
+        )
+
+    def test_seller_contact_routes_use_dedicated_handlers(self):
+        contracts = (
+            self._route_contracts()
+        )
+
+        route_handlers = {}
+
+        for (
+            route,
+            _kind,
+            handlers,
+            _line,
+        ) in contracts:
+            route_handlers[
+                route
+            ] = set(
+                handlers
+            )
+
+        self.assertIn(
+            "handle_instagram_click",
+            route_handlers[
+                "igclick:"
+            ],
+        )
+
+        self.assertIn(
+            "handle_telegram_click",
+            route_handlers[
+                "tgclick:"
+            ],
+        )
+
+        self.assertIn(
+            "handle_whatsapp_click",
+            route_handlers[
+                "waclick:"
             ],
         )
 
