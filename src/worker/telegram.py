@@ -202,6 +202,7 @@ class TelegramClient:
         *,
         text: Optional[str] = None,
         show_alert: bool = False,
+        url: Optional[str] = None,
     ) -> Any:
         payload: dict[str, Any] = {
             "callback_query_id": (
@@ -212,6 +213,9 @@ class TelegramClient:
 
         if text is not None:
             payload["text"] = text
+
+        if url is not None:
+            payload["url"] = url
 
         return await self.call(
             "answerCallbackQuery",
