@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Static tests for current role, favorites and compare Worker modules.
+Static tests for current compare and favorites Worker modules.
 """
 
 from __future__ import annotations
@@ -17,20 +17,41 @@ WORKER = ROOT / "src" / "worker"
 def source(name: str) -> str:
     return (
         WORKER / name
-    ).read_text(encoding="utf-8")
+    ).read_text(
+        encoding="utf-8"
+    )
+
+
+def tree(name: str) -> ast.AST:
+    return ast.parse(
+        source(name)
+    )
 
 
 def functions(name: str) -> set[str]:
-    tree = ast.parse(source(name))
-
     return {
         node.name
-        for node in ast.walk(tree)
+        for node in ast.walk(tree(name))
         if isinstance(
             node,
             (ast.FunctionDef, ast.AsyncFunctionDef),
         )
     }
+
+
+def imported_modules(name: str) -> set[str]:
+    modules: set[str] = set()
+
+    for node in ast.walk(tree(name)):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                modules.add(alias.name)
+
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                modules.add(node.module)
+
+    return modules
 
 
 class CompareWorkerTests(unittest.TestCase):
@@ -40,43 +61,36 @@ class CompareWorkerTests(unittest.TestCase):
         )
 
     def test_compare_max_items_is_four(self):
-        text = source("compare.py")
-
         self.assertIn(
             "COMPARE_MAX_ITEMS = 4",
-            text,
+            source("compare.py"),
         )
 
     def test_compare_storage_is_dedicated(self):
-        text = source("compare.py")
-
         self.assertIn(
             "compare_selections",
-            text,
+            source("compare.py"),
         )
 
-    def test_compare_add_is_present(self):
+    def test_compare_handlers_exist(self):
         names = functions("compare.py")
 
-        self.assertIn(
-            "handle_compare_add",
-            names,
-        )
-
-    def test_compare_reset_is_present(self):
-        names = functions("compare.py")
-
-        self.assertIn(
+        for expected in (
+            "handle_compare",
+            "handle_compare_list",
+            "handle_compare_start",
+            "handle_compare_drop",
             "handle_compare_reset",
-            names,
-        )
+        ):
+            self.assertIn(
+                expected,
+                names,
+            )
 
-    def test_compare_event_is_present(self):
-        text = source("compare.py")
-
+    def test_compare_event_exists(self):
         self.assertIn(
             '"compare_add"',
-            text,
+            source("compare.py"),
         )
 
 
@@ -87,50 +101,39 @@ class FavoritesWorkerTests(unittest.TestCase):
         )
 
     def test_product_favorites_table_is_used(self):
-        text = source("favorites.py")
-
         self.assertIn(
             "favorites",
-            text,
+            source("favorites.py"),
         )
 
-    def test_favorites_module_has_handlers(self):
+    def test_favorite_handlers_exist(self):
         names = functions("favorites.py")
 
-        self.assertTrue(
-            any(
-                "favorite" in name
-                for name in names
+        for expected in (
+            "handle_favorite_add",
+            "handle_favorite_remove",
+            "handle_favorites_list",
+        ):
+            self.assertIn(
+                expected,
+                names,
             )
-        )
-
-    def test_favorites_has_no_sqlite(self):
-        text = source("favorites.py")
-
-        self.assertNotIn("sqlite3", text)
-        self.assertNotIn("aiosqlite", text)
 
 
 class CurrentArchitectureTests(unittest.TestCase):
-    def test_no_legacy_imports(self):
-        for name in (
-            "compare.py",
-            "favorites.py",
-        ):
-            text = source(name)
+    def test_compare_has_no_legacy_imports(self):
+        modules = imported_modules("compare.py")
 
-            self.assertNotIn(
-                "aiogram",
-                text,
-            )
-            self.assertNotIn(
-                "aiosqlite",
-                text,
-            )
-            self.assertNotIn(
-                "sqlite3",
-                text,
-            )
+        self.assertNotIn("aiogram", modules)
+        self.assertNotIn("aiosqlite", modules)
+        self.assertNotIn("sqlite3", modules)
+
+    def test_favorites_has_no_legacy_imports(self):
+        modules = imported_modules("favorites.py")
+
+        self.assertNotIn("aiogram", modules)
+        self.assertNotIn("aiosqlite", modules)
+        self.assertNotIn("sqlite3", modules)
 
 
 if __name__ == "__main__":
