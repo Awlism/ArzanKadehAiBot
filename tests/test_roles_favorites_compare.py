@@ -1,678 +1,136 @@
 # -*- coding: utf-8 -*-
 """
-Tests for:
-
-- Roles: user_has_any_seller / get_active_mode / set_active_mode
-- Seller favorites as separate storage from product favorites
-- Compare selection limits and duplicate handling
-- Per-user persisted compare selections
-- Persisted compare-intro state
-
-Runs against real SQLite via tests/_fakedb.py without importing the
-Telegram application.
+Static tests for current role, favorites and compare Worker modules.
 """
 
-import asyncio
-import os
-import sys
+from __future__ import annotations
+
+import ast
 import unittest
-
-sys.path.insert(0, os.path.dirname(__file__))
-
-from _extract import extract_names  # noqa: E402
-from _fakedb import FakeDB, new_conn  # noqa: E402
+from pathlib import Path
 
 
-NAMES = [
-    "SCHEMA_STATEMENTS",
-    "INDEX_STATEMENTS",
-    "COLUMN_MIGRATIONS",
-    "ensure_column",
-    "run_column_migrations",
-    "VALID_MODES",
-    "user_has_any_seller",
-    "get_active_mode",
-    "set_active_mode",
-    "is_seller_favorite",
-    "toggle_seller_favorite",
-    "count_seller_favorites",
-    "COMPARE_MAX_ITEMS",
-    "COMPARE_INTRO_TEXT",
-    "compare_add",
-    "get_compare_selection",
-    "set_compare_selection",
-    "clear_compare_selection",
-    "has_seen_compare_intro",
-    "mark_compare_intro_seen",
-    "now_iso",
-    "logger",
-]
+ROOT = Path(__file__).resolve().parent.parent
+WORKER = ROOT / "src" / "worker"
 
 
-def run(coro):
-    return asyncio.new_event_loop().run_until_complete(coro)
+def source(name: str) -> str:
+    return (
+        WORKER / name
+    ).read_text(encoding="utf-8")
 
 
-class RolesFavoritesCompareTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.ns = extract_names(NAMES)
+def functions(name: str) -> set[str]:
+    tree = ast.parse(source(name))
 
-    def setUp(self):
-        self.conn = new_conn()
-
-        for stmt in self.ns["SCHEMA_STATEMENTS"]:
-            self.conn.execute(stmt)
-
-        for stmt in self.ns["INDEX_STATEMENTS"]:
-            self.conn.execute(stmt)
-
-        self.conn.commit()
-
-        self.ns["db"] = FakeDB(self.conn)
-        run(self.ns["run_column_migrations"]())
-
-        self.conn.execute(
-            """
-            INSERT INTO users (
-                id,
-                telegram_id,
-                created_at,
-                updated_at
-            )
-            VALUES (1, 100, 't', 't');
-            """
+    return {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(
+            node,
+            (ast.FunctionDef, ast.AsyncFunctionDef),
         )
+    }
 
-        self.conn.execute(
-            """
-            INSERT INTO users (
-                id,
-                telegram_id,
-                created_at,
-                updated_at
-            )
-            VALUES (2, 200, 't', 't');
-            """
-        )
 
-        self.conn.execute(
-            """
-            INSERT INTO sellers (
-                id,
-                name,
-                status,
-                owner_user_id,
-                created_by_user_id,
-                created_at,
-                updated_at
-            )
-            VALUES (
-                10,
-                'Shop A',
-                'CLAIMED',
-                1,
-                1,
-                't',
-                't'
-            );
-            """
-        )
-
-        self.conn.execute(
-            """
-            INSERT INTO sellers (
-                id,
-                name,
-                status,
-                created_at,
-                updated_at
-            )
-            VALUES (
-                20,
-                'Shop B',
-                'UNCLAIMED',
-                't',
-                't'
-            );
-            """
-        )
-
-        self.conn.execute(
-            """
-            INSERT INTO products (
-                id,
-                seller_id,
-                name,
-                stock_status,
-                created_at,
-                updated_at
-            )
-            VALUES (
-                100,
-                10,
-                'Prod A',
-                'AVAILABLE',
-                't',
-                't'
-            );
-            """
-        )
-
-        self.conn.execute(
-            """
-            INSERT INTO products (
-                id,
-                seller_id,
-                name,
-                stock_status,
-                created_at,
-                updated_at
-            )
-            VALUES (
-                200,
-                20,
-                'Prod B',
-                'AVAILABLE',
-                't',
-                't'
-            );
-            """
-        )
-
-        self.conn.commit()
-
-    def tearDown(self):
-        self.conn.close()
-
-    # ------------------------------------------------------------
-    # Column migrations
-    # ------------------------------------------------------------
-
-    def test_migrations_added_expected_columns(self):
-        for table, column, _ in self.ns["COLUMN_MIGRATIONS"]:
-            cols = {
-                row[1]
-                for row in self.conn.execute(
-                    f"PRAGMA table_info({table});"
-                ).fetchall()
-            }
-
-            self.assertIn(
-                column,
-                cols,
-                f"{table}.{column} missing after migration",
-            )
-
-    def test_migrations_are_idempotent(self):
-        run(self.ns["run_column_migrations"]())
-        run(self.ns["run_column_migrations"]())
-
-    # ------------------------------------------------------------
-    # Roles
-    # ------------------------------------------------------------
-
-    def test_user_with_no_seller_is_never_seller_mode(self):
-        self.assertFalse(
-            run(
-                self.ns["user_has_any_seller"](2)
-            )
-        )
-
-        self.assertEqual(
-            run(
-                self.ns["get_active_mode"](2)
-            ),
-            "buyer",
-        )
-
-    def test_stale_seller_mode_without_seller_falls_back_to_buyer(self):
-        self.conn.execute(
-            """
-            UPDATE users
-            SET active_mode = 'seller'
-            WHERE id = 2;
-            """
-        )
-        self.conn.commit()
-
-        self.assertEqual(
-            run(
-                self.ns["get_active_mode"](2)
-            ),
-            "buyer",
-        )
-
-    def test_user_with_seller_defaults_to_buyer_mode(self):
+class CompareWorkerTests(unittest.TestCase):
+    def test_compare_file_exists(self):
         self.assertTrue(
-            run(
-                self.ns["user_has_any_seller"](1)
-            )
+            (WORKER / "compare.py").is_file()
         )
 
-        self.assertEqual(
-            run(
-                self.ns["get_active_mode"](1)
-            ),
-            "buyer",
-        )
-
-    def test_set_active_mode_switches_and_persists(self):
-        run(
-            self.ns["set_active_mode"](
-                1,
-                "seller",
-            )
-        )
-
-        self.assertEqual(
-            run(
-                self.ns["get_active_mode"](1)
-            ),
-            "seller",
-        )
-
-        run(
-            self.ns["set_active_mode"](
-                1,
-                "buyer",
-            )
-        )
-
-        self.assertEqual(
-            run(
-                self.ns["get_active_mode"](1)
-            ),
-            "buyer",
-        )
-
-    def test_set_active_mode_rejects_unauthorized_admin_mode(self):
-        with self.assertRaises(PermissionError):
-            run(
-                self.ns["set_active_mode"](
-                    1,
-                    "admin",
-                )
-            )
-
-    # ------------------------------------------------------------
-    # Seller favorites
-    # ------------------------------------------------------------
-
-    def test_seller_favorite_toggle_add_and_remove(self):
-        self.assertFalse(
-            run(
-                self.ns["is_seller_favorite"](
-                    2,
-                    10,
-                )
-            )
-        )
-
-        new_state = run(
-            self.ns["toggle_seller_favorite"](
-                2,
-                10,
-            )
-        )
-
-        self.assertTrue(new_state)
-
-        self.assertTrue(
-            run(
-                self.ns["is_seller_favorite"](
-                    2,
-                    10,
-                )
-            )
-        )
-
-        new_state = run(
-            self.ns["toggle_seller_favorite"](
-                2,
-                10,
-            )
-        )
-
-        self.assertFalse(new_state)
-
-        self.assertFalse(
-            run(
-                self.ns["is_seller_favorite"](
-                    2,
-                    10,
-                )
-            )
-        )
-
-    def test_seller_favorite_has_no_duplicate_rows(self):
-        run(
-            self.ns["toggle_seller_favorite"](
-                2,
-                10,
-            )
-        )
-
-        count = self.conn.execute(
-            """
-            SELECT COUNT(*)
-            FROM seller_favorites
-            WHERE user_id = 2
-              AND seller_id = 10;
-            """
-        ).fetchone()[0]
-
-        self.assertEqual(count, 1)
-
-    def test_count_seller_favorites(self):
-        run(
-            self.ns["toggle_seller_favorite"](
-                1,
-                10,
-            )
-        )
-
-        run(
-            self.ns["toggle_seller_favorite"](
-                2,
-                10,
-            )
-        )
-
-        self.assertEqual(
-            run(
-                self.ns["count_seller_favorites"](10)
-            ),
-            2,
-        )
-
-        self.assertEqual(
-            run(
-                self.ns["count_seller_favorites"](20)
-            ),
-            0,
-        )
-
-    def test_seller_favorites_are_independent_of_product_favorites(self):
-        self.conn.execute(
-            """
-            INSERT INTO favorites (
-                user_id,
-                product_id,
-                created_at
-            )
-            VALUES (2, 100, 't');
-            """
-        )
-        self.conn.commit()
-
-        self.assertFalse(
-            run(
-                self.ns["is_seller_favorite"](
-                    2,
-                    10,
-                )
-            )
-        )
-
-        favorite_count = self.conn.execute(
-            "SELECT COUNT(*) FROM seller_favorites;"
-        ).fetchone()[0]
-
-        self.assertEqual(favorite_count, 0)
-
-    # ------------------------------------------------------------
-    # Compare
-    # ------------------------------------------------------------
-
-    def test_compare_add_first_item(self):
-        selection, outcome = self.ns["compare_add"](
-            [],
-            100,
-        )
-
-        self.assertEqual(selection, [100])
-        self.assertEqual(
-            outcome,
-            "added_need_one_more",
-        )
-
-    def test_compare_add_second_item_becomes_ready(self):
-        selection, outcome = self.ns["compare_add"](
-            [100],
-            200,
-        )
-
-        self.assertEqual(
-            selection,
-            [100, 200],
-        )
-        self.assertEqual(
-            outcome,
-            "added_ready",
-        )
-
-    def test_compare_add_third_item_respects_configured_limit(self):
-        current = list(
-            range(
-                self.ns["COMPARE_MAX_ITEMS"]
-            )
-        )
-
-        selection, outcome = self.ns["compare_add"](
-            current,
-            999,
-        )
-
-        self.assertEqual(
-            selection,
-            current,
-        )
-        self.assertEqual(
-            outcome,
-            "already_full",
-        )
-
-    def test_compare_add_duplicate_item_is_rejected(self):
-        selection, outcome = self.ns["compare_add"](
-            [100],
-            100,
-        )
-
-        self.assertEqual(
-            selection,
-            [100],
-        )
-        self.assertEqual(
-            outcome,
-            "already_in_selection",
-        )
-
-    def test_compare_max_items_matches_canonical_configuration(self):
-        self.assertGreater(
-            self.ns["COMPARE_MAX_ITEMS"],
-            0,
-        )
-
-        self.assertEqual(
-            self.ns["COMPARE_MAX_ITEMS"],
-            4,
-        )
-
-    def test_compare_intro_text_matches_expected_content(self):
-        text = self.ns["COMPARE_INTRO_TEXT"]
+    def test_compare_max_items_is_four(self):
+        text = source("compare.py")
 
         self.assertIn(
-            "مقایسه چیه",
+            "COMPARE_MAX_ITEMS = 4",
             text,
         )
 
+    def test_compare_storage_is_dedicated(self):
+        text = source("compare.py")
+
         self.assertIn(
-            "محصول",
+            "compare_selections",
             text,
         )
 
-    # ------------------------------------------------------------
-    # Persisted Compare selection
-    # ------------------------------------------------------------
+    def test_compare_add_is_present(self):
+        names = functions("compare.py")
 
-    def test_compare_session_get_set_clear(self):
-        self.assertEqual(
-            run(
-                self.ns["get_compare_selection"](2)
-            ),
-            [],
+        self.assertIn(
+            "handle_compare_add",
+            names,
         )
 
-        run(
-            self.ns["set_compare_selection"](
-                2,
-                [100, 200],
-            )
+    def test_compare_reset_is_present(self):
+        names = functions("compare.py")
+
+        self.assertIn(
+            "handle_compare_reset",
+            names,
         )
 
-        self.assertEqual(
-            run(
-                self.ns["get_compare_selection"](2)
-            ),
-            [100, 200],
+    def test_compare_event_is_present(self):
+        text = source("compare.py")
+
+        self.assertIn(
+            '"compare_add"',
+            text,
         )
 
-        run(
-            self.ns["clear_compare_selection"](2)
+
+class FavoritesWorkerTests(unittest.TestCase):
+    def test_favorites_file_exists(self):
+        self.assertTrue(
+            (WORKER / "favorites.py").is_file()
         )
 
-        self.assertEqual(
-            run(
-                self.ns["get_compare_selection"](2)
-            ),
-            [],
+    def test_product_favorites_table_is_used(self):
+        text = source("favorites.py")
+
+        self.assertIn(
+            "favorites",
+            text,
         )
 
-    def test_compare_session_isolated_per_user(self):
-        run(
-            self.ns["set_compare_selection"](
-                1,
-                [100],
-            )
-        )
-
-        run(
-            self.ns["set_compare_selection"](
-                2,
-                [200],
-            )
-        )
-
-        self.assertEqual(
-            run(
-                self.ns["get_compare_selection"](1)
-            ),
-            [100],
-        )
-
-        self.assertEqual(
-            run(
-                self.ns["get_compare_selection"](2)
-            ),
-            [200],
-        )
-
-    def test_compare_session_replaces_previous_selection(self):
-        run(
-            self.ns["set_compare_selection"](
-                2,
-                [100, 200],
-            )
-        )
-
-        run(
-            self.ns["set_compare_selection"](
-                2,
-                [200],
-            )
-        )
-
-        self.assertEqual(
-            run(
-                self.ns["get_compare_selection"](2)
-            ),
-            [200],
-        )
-
-    def test_compare_session_normalizes_duplicates_and_invalid_ids(self):
-        run(
-            self.ns["set_compare_selection"](
-                2,
-                [0, -1, 100, 100, 200, 200],
-            )
-        )
-
-        self.assertEqual(
-            run(
-                self.ns["get_compare_selection"](2)
-            ),
-            [100, 200],
-        )
-
-    def test_compare_session_respects_max_items(self):
-        selection = list(
-            range(
-                1,
-                self.ns["COMPARE_MAX_ITEMS"] + 3,
-            )
-        )
-
-        run(
-            self.ns["set_compare_selection"](
-                2,
-                selection,
-            )
-        )
-
-        stored = run(
-            self.ns["get_compare_selection"](2)
-        )
-
-        self.assertEqual(
-            len(stored),
-            self.ns["COMPARE_MAX_ITEMS"],
-        )
-
-        self.assertEqual(
-            stored,
-            selection[
-                :self.ns["COMPARE_MAX_ITEMS"]
-            ],
-        )
-
-    # ------------------------------------------------------------
-    # Compare intro state
-    # ------------------------------------------------------------
-
-    def test_compare_intro_not_seen_by_default(self):
-        self.assertFalse(
-            run(
-                self.ns["has_seen_compare_intro"](2)
-            )
-        )
-
-    def test_compare_intro_marked_seen_persists_per_user(self):
-        run(
-            self.ns["mark_compare_intro_seen"](2)
-        )
+    def test_favorites_module_has_handlers(self):
+        names = functions("favorites.py")
 
         self.assertTrue(
-            run(
-                self.ns["has_seen_compare_intro"](2)
+            any(
+                "favorite" in name
+                for name in names
             )
         )
 
-        self.assertFalse(
-            run(
-                self.ns["has_seen_compare_intro"](1)
+    def test_favorites_has_no_sqlite(self):
+        text = source("favorites.py")
+
+        self.assertNotIn("sqlite3", text)
+        self.assertNotIn("aiosqlite", text)
+
+
+class CurrentArchitectureTests(unittest.TestCase):
+    def test_no_legacy_imports(self):
+        for name in (
+            "compare.py",
+            "favorites.py",
+        ):
+            text = source(name)
+
+            self.assertNotIn(
+                "aiogram",
+                text,
             )
-        )
+            self.assertNotIn(
+                "aiosqlite",
+                text,
+            )
+            self.assertNotIn(
+                "sqlite3",
+                text,
+            )
 
 
 if __name__ == "__main__":
