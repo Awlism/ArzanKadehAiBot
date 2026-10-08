@@ -1,727 +1,128 @@
 # -*- coding: utf-8 -*-
 """
 ArzanKadeh AI
-Test extraction helper for the modular architecture.
+Worker test import helper.
 
-This helper lets offline tests extract selected constants, classes and
-pure/helper functions directly from the real modular source files without
-importing the whole Telegram application.
+This helper loads names directly from the current Cloudflare Worker
+modules under src/worker.
+
+It intentionally does not import the legacy bot package.
 """
 
 from __future__ import annotations
 
-import ast
-import datetime
-import logging
-import re
-from dataclasses import dataclass, field
-from datetime import timezone
+import importlib
+import sys
 from pathlib import Path
-from typing import Optional
-from urllib.parse import urlparse
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+SRC_ROOT = PROJECT_ROOT / "src"
 
-
-MODULE_PATHS = {
-    "constants": PROJECT_ROOT / "bot" / "constants.py",
-    "database": PROJECT_ROOT / "bot" / "database.py",
-    "database_backend": PROJECT_ROOT / "bot" / "database_backend.py",
-    "sqlite_backend": PROJECT_ROOT / "bot" / "sqlite_backend.py",
-    "repositories": PROJECT_ROOT / "bot" / "repositories.py",
-    "utils": PROJECT_ROOT / "bot" / "utils.py",
-    "search": PROJECT_ROOT / "bot" / "handlers" / "search.py",
-    "navigation": PROJECT_ROOT / "bot" / "handlers" / "navigation.py",
-    "products": PROJECT_ROOT / "bot" / "handlers" / "products.py",
-    "compare": PROJECT_ROOT / "bot" / "handlers" / "compare.py",
-    "notifications": PROJECT_ROOT / "bot" / "services" / "notifications.py",
-    "referrals": PROJECT_ROOT / "bot" / "services" / "referrals.py",
-    "tasks": PROJECT_ROOT / "bot" / "services" / "tasks.py",
-    "admin": PROJECT_ROOT / "bot" / "handlers" / "admin.py",
-    "account": PROJECT_ROOT / "bot" / "handlers" / "account.py",
-    "ads": PROJECT_ROOT / "bot" / "handlers" / "ads.py",
-}
-
-
-SAFE_GLOBALS = {
-    "datetime": datetime.datetime,
-    "timezone": timezone,
-    "Optional": Optional,
-    "re": re,
-    "urlparse": urlparse,
-    "dataclass": dataclass,
-    "field": field,
-    "logging": logging,
-    "__name__": "tests._extract",
-}
-
-
-class _ExtractedTransaction:
-    """
-    Async context-manager adapter for the extracted test database.
-
-    The wrapped database object is resolved dynamically from the extraction
-    namespace so tests can replace ``ns["db"]`` with FakeDB after extraction.
-    """
-
-    def __init__(self, namespace: dict):
-        self._namespace = namespace
-
-    @property
-    def _db(self):
-        return self._namespace["db"]
-
-    async def __aenter__(self):
-        await self._db.conn.execute(
-            "BEGIN;"
-        )
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type,
-        exc,
-        tb,
-    ):
-        if exc_type is None:
-            await self._db.conn.commit()
-        else:
-            await self._db.conn.rollback()
-
-        return False
-
-    async def execute(
-        self,
-        query,
-        params=(),
-    ):
-        return await self._db.conn.execute(
-            query,
-            params,
-        )
-
-    async def fetchone(
-        self,
-        query,
-        params=(),
-    ):
-        return await self._db.fetchone(
-            query,
-            params,
-        )
-
-    async def fetchall(
-        self,
-        query,
-        params=(),
-    ):
-        return await self._db.fetchall(
-            query,
-            params,
-        )
-
-    async def executemany(
-        self,
-        query,
-        parameters,
-    ):
-        return await self._db.conn.executemany(
-            query,
-            parameters,
-        )
-
-
-class _ExtractedSQLiteBackend:
-    """
-    Test-only stand-in for ``sqlite_backend``.
-
-    It intentionally delegates to the database object stored in the
-    extraction namespace instead of importing the production SQLite backend.
-    """
-
-    def __init__(self, namespace: dict):
-        self._namespace = namespace
-
-    @property
-    def _db(self):
-        return self._namespace["db"]
-
-    async def execute(
-        self,
-        query,
-        params=(),
-    ):
-        return await self._db.execute(
-            query,
-            params,
-        )
-
-    async def fetchone(
-        self,
-        query,
-        params=(),
-    ):
-        return await self._db.fetchone(
-            query,
-            params,
-        )
-
-    async def fetchall(
-        self,
-        query,
-        params=(),
-    ):
-        return await self._db.fetchall(
-            query,
-            params,
-        )
-
-    async def executemany(
-        self,
-        query,
-        parameters,
-    ):
-        return await self._db.conn.executemany(
-            query,
-            parameters,
-        )
-
-    def transaction(
-        self,
-        *,
-        immediate: bool = False,
-    ):
-        if immediate:
-            return _ExtractedTransactionImmediate(
-                self._namespace
-            )
-
-        return _ExtractedTransaction(
-            self._namespace
-        )
-
-
-class _ExtractedTransactionImmediate(_ExtractedTransaction):
-    """Transaction adapter that preserves BEGIN IMMEDIATE semantics."""
-
-    async def __aenter__(self):
-        await self._db.conn.execute(
-            "BEGIN IMMEDIATE;"
-        )
-        return self
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
 
 NAME_MODULES = {
-    # ------------------------------------------------------------------
-    # constants
-    # ------------------------------------------------------------------
-    "ROLE_BUYER": "constants",
-    "ROLE_SELLER": "constants",
-    "ROLE_ADMIN": "constants",
-    "VALID_MODES": "constants",
-    "SELLER_PENDING": "constants",
-    "SELLER_APPROVED": "constants",
-    "SELLER_REJECTED": "constants",
-    "SELLER_SUSPENDED": "constants",
-    "VALID_SELLER_STATES": "constants",
-    "PAGE_SIZE_CATEGORIES": "constants",
-    "PAGE_SIZE_LIST": "constants",
-    "TOP_LIST_LIMIT": "constants",
-    "SUPPORT_MESSAGE_MAX_LEN": "constants",
-    "COMPARE_MAX_ITEMS": "constants",
-    "SHOP_EDITABLE_FIELDS": "constants",
-    "SHOP_UPDATE_QUERIES": "constants",
-    "PRODUCT_EDITABLE_FIELDS": "constants",
-    "PRODUCT_UPDATE_QUERIES": "constants",
-    "EVENT_START": "constants",
-    "EVENT_SEARCH": "constants",
-    "EVENT_PRODUCT_VIEW": "constants",
-    "EVENT_SELLER_VIEW": "constants",
-    "EVENT_FAVORITE_ADD": "constants",
-    "EVENT_FAVORITE_REMOVE": "constants",
-    "EVENT_COMPARE_ADD": "constants",
-    "EVENT_COMPARE_REMOVE": "constants",
-    "EVENT_ORDER_CREATE": "constants",
-    "EVENT_ORDER_STATUS": "constants",
-    "EVENT_CONTACT_SELLER": "constants",
-    "EVENT_SUPPORT": "constants",
-    "EVENT_AD_VIEW": "constants",
-    "EVENT_AD_CLICK": "constants",
-    "REFERRAL_REWARD_INVITER": "constants",
-    "REFERRAL_REWARD_INVITEE": "constants",
-    "REFERRAL_DEEP_LINK_PREFIX": "constants",
-    "AD_TYPES": "constants",
-    "STATUS_ACTIVE": "constants",
-    "STATUS_INACTIVE": "constants",
-    "STATUS_PENDING": "constants",
-    "STATUS_APPROVED": "constants",
-    "STATUS_REJECTED": "constants",
-    "STATUS_RUNNING": "constants",
-    "STATUS_COMPLETED": "constants",
-    "STATUS_CANCELLED": "constants",
-    "ADMIN_MODE_PLACEHOLDER_TEXT": "constants",
-    "DATABASE_QUICK_CHECK_OK": "constants",
-    "CALLBACK_PREFIX_CATEGORY": "constants",
-    "CALLBACK_PREFIX_PRODUCT": "constants",
-    "CALLBACK_PREFIX_SELLER": "constants",
-    "CALLBACK_PREFIX_PAGE": "constants",
-    "CALLBACK_PREFIX_COMPARE": "constants",
-    "CALLBACK_PREFIX_FAVORITE": "constants",
-    "CALLBACK_PREFIX_REQUEST": "constants",
-    "CALLBACK_PREFIX_AD": "constants",
-    "_UNSAFE_URL_CHARS": "constants",
-    "_DANGEROUS_URL_SCHEME_PREFIXES": "constants",
+    # Search
+    "StructuredQuery": "worker.search",
+    "LocalQueryParser": "worker.search",
+    "normalize_persian_text": "worker.search",
+    "_remove_stopwords": "worker.search",
+    "_convert_number_unit": "worker.search",
+    "_extract_price": "worker.search",
+    "_PERSIAN_DIGITS": "worker.search",
+    "_ARABIC_DIGITS": "worker.search",
+    "_ASCII_DIGITS": "worker.search",
+    "_PUNCTUATION_CHARS": "worker.search",
+    "_GENDER_WORD_MAP": "worker.search",
+    "_COLOR_WORDS": "worker.search",
+    "_STOPWORDS": "worker.search",
+    "_PRICE_UNIT_RE": "worker.search",
+    "_PRICE_RANGE_RE": "worker.search",
+    "_PRICE_MAX_RE": "worker.search",
+    "_PRICE_MIN_RE": "worker.search",
+    "build_search_summary": "worker.search",
+    "format_price": "worker.search",
 
-    # ------------------------------------------------------------------
-    # database
-    # ------------------------------------------------------------------
-    "Database": "database",
-    "db": "database",
-    "SCHEMA_STATEMENTS": "database",
-    "INDEX_STATEMENTS": "database",
-    "COLUMN_MIGRATIONS": "database",
-    "CITY_NAMES": "database",
-    "CATEGORY_TREE": "database",
-    "DEMO_SELLER_NAME": "database",
-    "DEMO_PRODUCT_NAME": "database",
-    "ensure_column": "database",
-    "run_column_migrations": "database",
-
-    # ------------------------------------------------------------------
-    # repositories
-    # ------------------------------------------------------------------
-    "ORDER_STATUSES": "repositories",
-    "REQUEST_STATUS_LABELS": "repositories",
-    "has_open_report": "repositories",
-    "has_open_request": "repositories",
-    "create_request": "repositories",
-    "list_my_requests": "repositories",
-    "get_referral_count": "repositories",
-    "get_sellers_owned_by_user": "repositories",
-    "now_iso": "utils",
-
-    # ------------------------------------------------------------------
-    # search
-    # ------------------------------------------------------------------
-    "StructuredQuery": "search",
-    "QueryParser": "search",
-    "LocalQueryParser": "search",
-    "SearchEngine": "search",
-    "normalize_persian_text": "search",
-    "build_search_summary": "search",
-    "_extract_price": "search",
-    "_convert_number_unit": "search",
-    "_remove_stopwords": "search",
-    "plain_keyword_search": "search",
-    "score_search_candidate": "search",
-    "resolve_category_ids": "search",
-    "resolve_city_id": "search",
-    "ALT_CITY_SPELLINGS": "search",
-    "CATEGORY_SYNONYMS": "search",
-    "_DIGIT_LETTER_MAP": "search",
-    "_PERSIAN_DIGITS": "search",
-    "_ARABIC_DIGITS": "search",
-    "_ASCII_DIGITS": "search",
-    "_PUNCTUATION_CHARS": "search",
-    "_GENDER_WORD_MAP": "search",
-    "_COLOR_WORDS": "search",
-    "_STOPWORDS": "search",
-    "_NORMALIZED_CITY_NAMES": "search",
-    "_ALL_CATEGORY_NAMES": "search",
-    "_SORTED_CATEGORY_NAMES": "search",
-    "_NORMALIZED_COLOR_WORDS": "search",
-    "_NORMALIZED_STOPWORDS": "search",
-    "_STOPWORD_PHRASES": "search",
-    "_STOPWORD_TOKENS": "search",
-    "_PRICE_UNIT_RE": "search",
-    "_PRICE_RANGE_RE": "search",
-    "_PRICE_MAX_RE": "search",
-    "_PRICE_MIN_RE": "search",
-
-    # ------------------------------------------------------------------
-    # utils
-    # ------------------------------------------------------------------
-    "now_iso": "utils",
-    "parse_int": "utils",
-    "format_price": "utils",
-    "status_badge": "utils",
-    "_normalize_url": "utils",
-    "instagram_url": "utils",
-    "telegram_url": "utils",
-    "website_url": "utils",
-    "whatsapp_url": "utils",
-    "safe_edit": "utils",
-    "ensure_user": "utils",
-    "log_event": "utils",
-    "log_audit": "utils",
-    "is_admin_telegram_id": "utils",
-    "send_admin_dm": "utils",
-    "restart_requested": "utils",
-
-    # ------------------------------------------------------------------
-    # notifications
-    # ------------------------------------------------------------------
-    "notify_user": "notifications",
-
-    # ------------------------------------------------------------------
-    # referrals
-    # ------------------------------------------------------------------
-    "REFERRAL_REWARD_RULES": "referrals",
-    "REFERRAL_DEEP_LINK_RE": "referrals",
-    "build_referral_link": "referrals",
-    "get_referral_count": "referrals",
-    "next_referral_milestone": "referrals",
-    "record_referral_if_new": "referrals",
-    "get_sellers_owned_by_user": "referrals",
-
-    # ------------------------------------------------------------------
-    # tasks
-    # ------------------------------------------------------------------
-    "expire_overdue_ads": "tasks",
-
-    # ------------------------------------------------------------------
-    # ads
-    # ------------------------------------------------------------------
-    "AD_KIND_LABELS": "ads",
+    # Referrals
+    "REFERRAL_MILESTONES": "worker.referrals",
+    "build_referral_link": "worker.referrals",
+    "get_referral_count": "worker.referrals",
+    "next_referral_milestone": "worker.referrals",
+    "record_referral_if_new": "worker.referrals",
+    "get_sellers_owned_by_user": "worker.referrals",
 }
 
 
-def _parse_module(module_name: str) -> ast.Module:
-    path = MODULE_PATHS.get(module_name)
-
-    if path is None:
+def get_module(module_name: str):
+    """Import a current Worker module."""
+    if not module_name.startswith("worker."):
         raise AssertionError(
-            f"Unknown source module: {module_name}"
+            f"Only Worker modules are supported: {module_name}"
         )
 
-    if not path.exists():
-        raise AssertionError(
-            f"Source module does not exist: {path}"
-        )
-
-    return ast.parse(
-        path.read_text(encoding="utf-8"),
-        filename=str(path),
-    )
+    return importlib.import_module(module_name)
 
 
-def _top_level_nodes(
-    module_name: str,
-) -> dict[str, ast.AST]:
-    tree = _parse_module(module_name)
-    result: dict[str, ast.AST] = {}
-
-    for node in tree.body:
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    result[target.id] = node
-
-        elif isinstance(node, ast.AnnAssign):
-            if isinstance(node.target, ast.Name):
-                result[node.target.id] = node
-
-        elif isinstance(
-            node,
-            (
-                ast.FunctionDef,
-                ast.AsyncFunctionDef,
-                ast.ClassDef,
-            ),
-        ):
-            result[node.name] = node
-
-    return result
-
-
-def _find_owner(
-    name: str,
-) -> str | None:
-    explicit = NAME_MODULES.get(name)
-
-    if explicit is not None:
-        return explicit
-
-    for module_name in MODULE_PATHS:
-        if name in _top_level_nodes(module_name):
-            return module_name
-
-    return None
-
-
-def _module_imports(
-    module_name: str,
-) -> dict[str, tuple[str, str]]:
+def extract_names(names):
     """
-    Resolve project-local imports used by extracted nodes.
+    Return requested names from the current Worker modules.
+
+    This keeps the old test helper API so tests can remain simple while
+    completely removing dependency on bot/*.
     """
-    tree = _parse_module(module_name)
-    result: dict[str, tuple[str, str]] = {}
-
-    for node in tree.body:
-        if not isinstance(node, ast.ImportFrom):
-            continue
-
-        module = node.module or ""
-
-        if module.endswith(".constants") or module == "constants":
-            source_module = "constants"
-
-        elif module.endswith(".database") or module == "database":
-            source_module = "database"
-
-        elif (
-            module.endswith(".database_backend")
-            or module == "database_backend"
-        ):
-            source_module = "database_backend"
-
-        elif (
-            module.endswith(".sqlite_backend")
-            or module == "sqlite_backend"
-        ):
-            source_module = "sqlite_backend"
-
-        elif module.endswith(".repositories") or module == "repositories":
-            source_module = "repositories"
-
-        elif module.endswith(".utils") or module == "utils":
-            source_module = "utils"
-
-        elif module.endswith(".search") or module == "search":
-            source_module = "search"
-
-        elif module.endswith(".notifications"):
-            source_module = "notifications"
-
-        elif module.endswith(".referrals"):
-            source_module = "referrals"
-
-        elif module.endswith(".tasks"):
-            source_module = "tasks"
-
-        elif module.endswith(".admin"):
-            source_module = "admin"
-
-        elif module.endswith(".account"):
-            source_module = "account"
-
-        elif module.endswith(".navigation"):
-            source_module = "navigation"
-
-        elif module.endswith(".products"):
-            source_module = "products"
-
-        elif module.endswith(".compare"):
-            source_module = "compare"
-
-        elif module.endswith(".ads"):
-            source_module = "ads"
-
-        else:
-            continue
-
-        for alias in node.names:
-            if alias.name == "*":
-                continue
-
-            local_name = alias.asname or alias.name
-
-            result[local_name] = (
-                source_module,
-                alias.name,
-            )
-
-    return result
-
-
-def _compile_node(
-    node: ast.AST,
-    filename: str,
-    namespace: dict,
-) -> None:
-    module = ast.Module(
-        body=[node],
-        type_ignores=[],
-    )
-
-    ast.fix_missing_locations(module)
-
-    code = compile(
-        module,
-        filename=filename,
-        mode="exec",
-    )
-
-    exec(code, namespace)
-
-
-def _extract_from_module(
-    module_name: str,
-    name: str,
-    namespace: dict,
-    visiting: set[tuple[str, str]],
-) -> bool:
-    key = (module_name, name)
-
-    if key in visiting:
-        return False
-
-    visiting.add(key)
-
-    if (
-        module_name == "sqlite_backend"
-        and name == "sqlite_backend"
-    ):
-        namespace["sqlite_backend"] = _ExtractedSQLiteBackend(
-            namespace
-        )
-        visiting.remove(key)
-        return True
-
-    nodes = _top_level_nodes(module_name)
-    node = nodes.get(name)
-
-    if node is None:
-        visiting.remove(key)
-        return False
-
-    imports = _module_imports(module_name)
-
-    referenced_names = {
-        child.id
-        for child in ast.walk(node)
-        if isinstance(child, ast.Name)
-    }
-
-    for referenced_name in referenced_names:
-        if referenced_name == name:
-            continue
-
-        if referenced_name in namespace:
-            continue
-
-        imported = imports.get(referenced_name)
-
-        if imported is not None:
-            source_module, source_name = imported
-
-            if (
-                source_module == "sqlite_backend"
-                and source_name == "sqlite_backend"
-            ):
-                namespace[referenced_name] = (
-                    _ExtractedSQLiteBackend(namespace)
-                )
-                continue
-
-            if _extract_from_module(
-                source_module,
-                source_name,
-                namespace,
-                visiting,
-            ):
-                namespace[referenced_name] = namespace[
-                    source_name
-                ]
-
-            continue
-
-        local_node = nodes.get(referenced_name)
-
-        if local_node is not None:
-            if _extract_from_module(
-                module_name,
-                referenced_name,
-                namespace,
-                visiting,
-            ):
-                continue
-
-    _compile_node(
-        node,
-        str(MODULE_PATHS[module_name]),
-        namespace,
-    )
-
-    visiting.remove(key)
-
-    return name in namespace
-
-
-def extract_names(
-    names,
-) -> dict:
-    """
-    Extract selected names from the modular project.
-    """
-
-    wanted = list(dict.fromkeys(names))
-
-    namespace = dict(SAFE_GLOBALS)
+    namespace = {}
 
     missing = []
 
-    for name in wanted:
-        if name in namespace:
-            continue
+    for name in names:
+        module_name = NAME_MODULES.get(name)
 
-        owner = _find_owner(name)
-
-        if owner is None:
+        if module_name is None:
             missing.append(name)
             continue
 
-        if not _extract_from_module(
-            owner,
-            name,
-            namespace,
-            set(),
-        ):
+        module = get_module(module_name)
+
+        if not hasattr(module, name):
             missing.append(name)
+            continue
+
+        namespace[name] = getattr(module, name)
 
     if missing:
         raise AssertionError(
-            "Could not find or extract the following names "
-            "from the modular source tree: "
-            f"{sorted(missing)}"
+            "Could not find requested names in the current Worker "
+            f"source tree: {sorted(missing)}"
         )
 
     return namespace
 
 
-def get_source_text(
-    module_name: str = "utils",
-) -> str:
-    """
-    Return source text for a real modular source file.
-    """
-
-    path = MODULE_PATHS.get(module_name)
-
-    if path is None:
+def get_source_text(module_name: str) -> str:
+    """Return source text for a current Worker module."""
+    if not module_name.startswith("worker."):
         raise AssertionError(
-            f"Unknown source module: {module_name}"
+            f"Only Worker modules are supported: {module_name}"
         )
+
+    module = importlib.import_module(module_name)
+
+    path = Path(module.__file__)
 
     return path.read_text(
         encoding="utf-8"
     )
 
 
-def get_module_path(
-    module_name: str,
-) -> Path:
-    """
-    Return the filesystem path of a registered project module.
-    """
-
-    path = MODULE_PATHS.get(module_name)
-
-    if path is None:
+def get_module_path(module_name: str) -> Path:
+    """Return the filesystem path of a current Worker module."""
+    if not module_name.startswith("worker."):
         raise AssertionError(
-            f"Unknown source module: {module_name}"
+            f"Only Worker modules are supported: {module_name}"
         )
 
-    return path
+    module = importlib.import_module(module_name)
+
+    return Path(module.__file__)
