@@ -526,6 +526,7 @@ async def render_active_mode(
     chat_id: int,
     user_id: int,
     mode: str,
+    telegram_user_id: Optional[int] = None,
 ) -> None:
     """
     Render an active account mode from a normal message context.
@@ -541,6 +542,26 @@ async def render_active_mode(
     if normalized_mode not in VALID_MODES:
         normalized_mode = "buyer"
 
+    if telegram_user_id is None:
+        row = await db.fetchone(
+            """
+            SELECT telegram_id
+            FROM users
+            WHERE id = ?
+            LIMIT 1;
+            """,
+            (user_id,),
+        )
+
+        if row is None:
+            raise RuntimeError(
+                "Failed to resolve Telegram user id."
+            )
+
+        telegram_user_id = int(
+            row["telegram_id"]
+        )
+
     callback_query = {
         "message": {
             "chat": {
@@ -549,16 +570,8 @@ async def render_active_mode(
         },
         "from": {
             "id": int(
-                await db.fetchone(
-                    """
-                    SELECT telegram_id
-                    FROM users
-                    WHERE id = ?
-                    LIMIT 1;
-                    """,
-                    (user_id,),
-                )
-            )["telegram_id"],
+                telegram_user_id
+            ),
         },
     }
 
