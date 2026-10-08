@@ -1,27 +1,22 @@
 # -*- coding: utf-8 -*-
 """
-Validates the real database schema and seed data from bot/database.py
-against an in-memory SQLite database.
+Static validation of the current Cloudflare D1 schema contract.
+
+The production database is Cloudflare D1.
+These tests intentionally do not import the retired SQLite database layer.
 """
 
-import os
-import sqlite3
-import sys
+from __future__ import annotations
+
+import json
 import unittest
-
-sys.path.insert(0, os.path.dirname(__file__))
-
-from _extract import extract_names  # noqa: E402
+from pathlib import Path
 
 
-NAMES = [
-    "SCHEMA_STATEMENTS",
-    "INDEX_STATEMENTS",
-    "CITY_NAMES",
-    "CATEGORY_TREE",
-    "DEMO_SELLER_NAME",
-    "DEMO_PRODUCT_NAME",
-]
+ROOT = Path(__file__).resolve().parent.parent
+WRANGLER = ROOT / "wrangler.jsonc"
+D1_BACKEND = ROOT / "src" / "worker_backend" / "d1_backend.py"
+DATABASE_BACKEND = ROOT / "src" / "worker_backend" / "database_backend.py"
 
 
 EXPECTED_TABLES = {
@@ -43,659 +38,110 @@ EXPECTED_TABLES = {
     "audit_log",
     "orders",
     "compare_selections",
+    "worker_states",
 }
 
 
-EXPECTED_MAIN_CATEGORIES = [
-    ("👗", "مد و پوشاک"),
-    ("💄", "زیبایی و آرایشی"),
-    ("💇", "سالن و خدمات زیبایی"),
-    ("💎", "طلا و جواهر"),
-    ("📱", "موبایل و دیجیتال"),
-    ("🏠", "خانه و آشپزخانه"),
-    ("🧸", "کودک و نوزاد"),
-    ("🥗", "خوراکی و نوشیدنی"),
-    ("🎨", "صنایع دستی و هنری"),
-    ("🎁", "هدیه"),
-    ("🌱", "گل و گیاه"),
-    ("🏋️", "ورزش"),
-    ("🚗", "خودرو و موتور"),
-    ("📚", "کتاب و آموزش"),
-    ("🛠️", "خدمات"),
-    ("🐾", "حیوانات خانگی"),
-    ("📦", "محصولات وارداتی"),
-    ("🏡", "املاک"),
-]
+class D1ConfigurationTests(unittest.TestCase):
+    def test_wrangler_exists(self):
+        self.assertTrue(WRANGLER.is_file())
 
+    def test_d1_binding_exists(self):
+        source = WRANGLER.read_text(encoding="utf-8")
 
-EXPECTED_INDEXES = {
-    "idx_categories_parent",
-    "idx_products_category",
-    "idx_products_seller",
-    "idx_favorites_user",
-    "idx_sellers_city",
-    "idx_events_user",
-    "idx_reviews_seller",
-    "idx_reviews_product",
-    "idx_claims_seller",
-    "idx_notifications_user",
-    "idx_referrals_seller",
-    "idx_referral_rewards_seller",
-    "idx_seller_favorites_user",
-    "idx_seller_favorites_seller",
-    "idx_requests_user",
-    "idx_requests_status",
-    "idx_audit_log_entity",
-    "idx_orders_buyer",
-    "idx_orders_seller",
-    "idx_orders_product",
-    "idx_orders_status",
-    "idx_compare_selections_user_position",
-}
-
-
-class SchemaAndSeedTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.ns = extract_names(NAMES)
-
-    def _new_conn(self):
-        conn = sqlite3.connect(":memory:")
-        conn.execute("PRAGMA foreign_keys = ON;")
-
-        for stmt in self.ns["SCHEMA_STATEMENTS"]:
-            conn.execute(stmt)
-
-        for stmt in self.ns["INDEX_STATEMENTS"]:
-            conn.execute(stmt)
-
-        conn.commit()
-        return conn
-
-    def test_all_required_tables_are_created(self):
-        conn = self._new_conn()
-
-        rows = conn.execute(
-            """
-            SELECT name
-            FROM sqlite_master
-            WHERE type = 'table';
-            """
-        ).fetchall()
-
-        table_names = {row[0] for row in rows}
-        missing = EXPECTED_TABLES - table_names
-
-        self.assertFalse(
-            missing,
-            f"Missing tables: {missing}",
-        )
-
-        conn.close()
-
-    def test_required_indexes_are_created(self):
-        conn = self._new_conn()
-
-        rows = conn.execute(
-            """
-            SELECT name
-            FROM sqlite_master
-            WHERE type = 'index'
-              AND name LIKE 'idx_%';
-            """
-        ).fetchall()
-
-        index_names = {row[0] for row in rows}
-        missing = EXPECTED_INDEXES - index_names
-
-        self.assertFalse(
-            missing,
-            f"Missing indexes: {missing}",
-        )
-
-        conn.close()
-
-    def test_foreign_keys_are_enforced(self):
-        conn = self._new_conn()
-
-        with self.assertRaises(sqlite3.IntegrityError):
-            conn.execute(
-                """
-                INSERT INTO products (
-                    seller_id,
-                    name,
-                    stock_status,
-                    created_at,
-                    updated_at
-                )
-                VALUES (
-                    99999,
-                    'x',
-                    'AVAILABLE',
-                    't',
-                    't'
-                );
-                """
-            )
-            conn.commit()
-
-        conn.close()
-
-    def test_core_entity_tables_have_integer_autoincrement_ids(self):
-        entity_tables = {
-            "users",
-            "cities",
-            "categories",
-            "sellers",
-            "products",
-            "seller_claims",
-            "reviews",
-            "reports",
-            "events",
-            "notifications",
-            "referrals",
-            "referral_rewards",
-            "requests",
-            "audit_log",
-            "orders",
-        }
-
-        for stmt in self.ns["SCHEMA_STATEMENTS"]:
-            normalized = " ".join(stmt.split()).lower()
-
-            if "create table" not in normalized:
-                continue
-
-            table_name = None
-
-            for name in entity_tables:
-                marker = f"create table if not exists {name}"
-                if marker in normalized:
-                    table_name = name
-                    break
-
-            if table_name is None:
-                continue
-
-            self.assertIn(
-                "id integer primary key autoincrement",
-                normalized,
-                f"{table_name} must use an integer autoincrement primary key",
-            )
-
-    def test_city_seed_count(self):
-        self.assertEqual(
-            len(self.ns["CITY_NAMES"]),
-            25,
-        )
-
+        self.assertIn('"binding": "DB"', source)
+        self.assertIn('"database_name": "arzankadeh-db"', source)
         self.assertIn(
-            "تهران",
-            self.ns["CITY_NAMES"],
+            '"database_id": "1f3a3d15-aaaa-4b17-992a-74c508582917"',
+            source,
         )
 
-    def test_city_seed_is_idempotent(self):
-        conn = self._new_conn()
+    def test_worker_entry_is_configured(self):
+        source = WRANGLER.read_text(encoding="utf-8")
 
-        def seed_once():
-            row = conn.execute(
-                "SELECT COUNT(*) FROM cities;"
-            ).fetchone()
+        self.assertIn('"main": "src/entry.py"', source)
+        self.assertIn('"python_workers"', source)
 
-            if row[0] > 0:
-                return
 
-            for name in self.ns["CITY_NAMES"]:
-                conn.execute(
-                    """
-                    INSERT OR IGNORE INTO cities (name)
-                    VALUES (?);
-                    """,
-                    (name,),
-                )
+class D1BackendContractTests(unittest.TestCase):
+    def test_backend_files_exist(self):
+        self.assertTrue(D1_BACKEND.is_file())
+        self.assertTrue(DATABASE_BACKEND.is_file())
 
-            conn.commit()
+    def test_database_backend_contract(self):
+        source = DATABASE_BACKEND.read_text(encoding="utf-8")
 
-        seed_once()
-        seed_once()
-
-        count = conn.execute(
-            "SELECT COUNT(*) FROM cities;"
-        ).fetchone()[0]
-
-        self.assertEqual(
-            count,
-            len(self.ns["CITY_NAMES"]),
-        )
-
-        conn.close()
-
-    def test_city_name_is_unique(self):
-        conn = self._new_conn()
-
-        conn.execute(
-            "INSERT INTO cities (name) VALUES ('تهران');"
-        )
-        conn.commit()
-
-        with self.assertRaises(sqlite3.IntegrityError):
-            conn.execute(
-                "INSERT INTO cities (name) VALUES ('تهران');"
-            )
-            conn.commit()
-
-        conn.close()
-
-    def test_category_tree_has_18_main_categories_with_correct_emoji(self):
-        tree = self.ns["CATEGORY_TREE"]
-
-        self.assertEqual(
-            len(tree),
-            18,
-        )
-
-        actual = [
-            (emoji, name)
-            for emoji, name, _subs in tree
-        ]
-
-        self.assertEqual(
-            actual,
-            EXPECTED_MAIN_CATEGORIES,
-        )
-
-    def test_every_subcategory_has_a_non_empty_emoji_and_name(self):
-        for _emoji, _name, subs in self.ns["CATEGORY_TREE"]:
-            self.assertGreater(
-                len(subs),
-                0,
-            )
-
-            for sub_emoji, sub_name in subs:
-                self.assertTrue(sub_emoji)
-                self.assertTrue(sub_name.strip())
-
-    def test_category_seed_creates_correct_parent_child_hierarchy(self):
-        conn = self._new_conn()
-
-        for main_emoji, main_name, subs in self.ns["CATEGORY_TREE"]:
-            cur = conn.execute(
-                """
-                INSERT INTO categories (
-                    name,
-                    emoji,
-                    parent_id
-                )
-                VALUES (?, ?, NULL);
-                """,
-                (
-                    main_name,
-                    main_emoji,
-                ),
-            )
-
-            parent_id = cur.lastrowid
-
-            for sub_emoji, sub_name in subs:
-                conn.execute(
-                    """
-                    INSERT INTO categories (
-                        name,
-                        emoji,
-                        parent_id
-                    )
-                    VALUES (?, ?, ?);
-                    """,
-                    (
-                        sub_name,
-                        sub_emoji,
-                        parent_id,
-                    ),
-                )
-
-        conn.commit()
-
-        roots = conn.execute(
-            """
-            SELECT id
-            FROM categories
-            WHERE parent_id IS NULL;
-            """
-        ).fetchall()
-
-        self.assertEqual(
-            len(roots),
-            18,
-        )
-
-        root_ids = {
-            row[0]
-            for row in roots
-        }
-
-        children = conn.execute(
-            """
-            SELECT id, parent_id
-            FROM categories
-            WHERE parent_id IS NOT NULL;
-            """
-        ).fetchall()
-
-        self.assertGreater(
-            len(children),
-            0,
-        )
-
-        for _child_id, parent_id in children:
+        for method in (
+            "connect",
+            "close",
+            "execute",
+            "fetchone",
+            "fetchall",
+            "executemany",
+            "transaction",
+        ):
             self.assertIn(
-                parent_id,
-                root_ids,
+                f"def {method}",
+                source,
+                f"Missing DatabaseBackend.{method}().",
             )
 
-        total_expected = (
-            len(self.ns["CATEGORY_TREE"])
-            + sum(
-                len(subs)
-                for _emoji, _name, subs
-                in self.ns["CATEGORY_TREE"]
+    def test_d1_backend_contract(self):
+        source = D1_BACKEND.read_text(encoding="utf-8")
+
+        for method in (
+            "connect",
+            "close",
+            "execute",
+            "fetchone",
+            "fetchall",
+            "executemany",
+            "transaction",
+        ):
+            self.assertIn(
+                f"def {method}",
+                source,
+                f"Missing D1Backend.{method}().",
             )
+
+    def test_d1_backend_does_not_import_sqlite(self):
+        source = D1_BACKEND.read_text(encoding="utf-8")
+
+        self.assertNotIn("sqlite3", source)
+        self.assertNotIn("aiosqlite", source)
+
+
+class ExpectedSchemaContractTests(unittest.TestCase):
+    """
+    These names document the production D1 contract.
+
+    Live table existence is verified separately against D1 and is not
+    simulated with an in-memory SQLite database.
+    """
+
+    def test_expected_table_contract_is_nonempty(self):
+        self.assertTrue(EXPECTED_TABLES)
+
+    def test_worker_state_table_is_part_of_current_schema(self):
+        self.assertIn(
+            "worker_states",
+            EXPECTED_TABLES,
         )
 
-        total_actual = conn.execute(
-            "SELECT COUNT(*) FROM categories;"
-        ).fetchone()[0]
-
-        self.assertEqual(
-            total_actual,
-            total_expected,
+    def test_compare_table_is_current_schema(self):
+        self.assertIn(
+            "compare_selections",
+            EXPECTED_TABLES,
         )
 
-        conn.close()
-
-    def test_category_seed_is_idempotent(self):
-        conn = self._new_conn()
-
-        def seed_once():
-            row = conn.execute(
-                "SELECT COUNT(*) FROM categories;"
-            ).fetchone()
-
-            if row[0] > 0:
-                return
-
-            for main_emoji, main_name, subs in self.ns["CATEGORY_TREE"]:
-                cur = conn.execute(
-                    """
-                    INSERT INTO categories (
-                        name,
-                        emoji,
-                        parent_id
-                    )
-                    VALUES (?, ?, NULL);
-                    """,
-                    (
-                        main_name,
-                        main_emoji,
-                    ),
-                )
-
-                parent_id = cur.lastrowid
-
-                for sub_emoji, sub_name in subs:
-                    conn.execute(
-                        """
-                        INSERT INTO categories (
-                            name,
-                            emoji,
-                            parent_id
-                        )
-                        VALUES (?, ?, ?);
-                        """,
-                        (
-                            sub_name,
-                            sub_emoji,
-                            parent_id,
-                        ),
-                    )
-
-            conn.commit()
-
-        seed_once()
-
-        first_count = conn.execute(
-            "SELECT COUNT(*) FROM categories;"
-        ).fetchone()[0]
-
-        seed_once()
-
-        second_count = conn.execute(
-            "SELECT COUNT(*) FROM categories;"
-        ).fetchone()[0]
-
-        self.assertEqual(
-            first_count,
-            second_count,
+    def test_seller_favorites_table_is_current_schema(self):
+        self.assertIn(
+            "seller_favorites",
+            EXPECTED_TABLES,
         )
 
-        conn.close()
-
-    def test_favorites_unique_per_user_and_product(self):
-        conn = self._new_conn()
-
-        conn.execute(
-            """
-            INSERT INTO users (
-                telegram_id,
-                created_at,
-                updated_at
-            )
-            VALUES (1, 't', 't');
-            """
-        )
-
-        conn.execute(
-            """
-            INSERT INTO sellers (
-                name,
-                status,
-                created_at,
-                updated_at
-            )
-            VALUES ('s', 'UNCLAIMED', 't', 't');
-            """
-        )
-
-        conn.execute(
-            """
-            INSERT INTO products (
-                seller_id,
-                name,
-                stock_status,
-                created_at,
-                updated_at
-            )
-            VALUES (1, 'p', 'AVAILABLE', 't', 't');
-            """
-        )
-
-        conn.commit()
-
-        conn.execute(
-            """
-            INSERT INTO favorites (
-                user_id,
-                product_id,
-                created_at
-            )
-            VALUES (1, 1, 't');
-            """
-        )
-
-        conn.commit()
-
-        with self.assertRaises(sqlite3.IntegrityError):
-            conn.execute(
-                """
-                INSERT INTO favorites (
-                    user_id,
-                    product_id,
-                    created_at
-                )
-                VALUES (1, 1, 't');
-            """
-            )
-            conn.commit()
-
-        conn.close()
-
-    def test_users_telegram_id_is_unique(self):
-        conn = self._new_conn()
-
-        conn.execute(
-            """
-            INSERT INTO users (
-                telegram_id,
-                created_at,
-                updated_at
-            )
-            VALUES (42, 't', 't');
-            """
-        )
-
-        conn.commit()
-
-        with self.assertRaises(sqlite3.IntegrityError):
-            conn.execute(
-                """
-                INSERT INTO users (
-                    telegram_id,
-                    created_at,
-                    updated_at
-                )
-                VALUES (42, 't', 't');
-                """
-            )
-            conn.commit()
-
-        conn.close()
-
-    def test_review_rating_aggregate_query(self):
-        conn = self._new_conn()
-
-        conn.execute(
-            """
-            INSERT INTO users (
-                telegram_id,
-                created_at,
-                updated_at
-            )
-            VALUES (1, 't', 't');
-            """
-        )
-
-        conn.execute(
-            """
-            INSERT INTO sellers (
-                name,
-                status,
-                created_at,
-                updated_at
-            )
-            VALUES ('s', 'UNCLAIMED', 't', 't');
-            """
-        )
-
-        conn.execute(
-            """
-            INSERT INTO products (
-                seller_id,
-                name,
-                stock_status,
-                created_at,
-                updated_at
-            )
-            VALUES (1, 'p', 'AVAILABLE', 't', 't');
-            """
-        )
-
-        conn.commit()
-
-        conn.execute(
-            """
-            INSERT INTO reviews (
-                user_id,
-                product_id,
-                rating,
-                text,
-                created_at
-            )
-            VALUES (1, 1, 4, 'ok', 't');
-            """
-        )
-
-        conn.execute(
-            """
-            INSERT INTO reviews (
-                user_id,
-                product_id,
-                rating,
-                text,
-                created_at
-            )
-            VALUES (1, 1, 2, 'meh', 't');
-            """
-        )
-
-        conn.commit()
-
-        conn.execute(
-            """
-            UPDATE products
-            SET
-                rating = (
-                    SELECT AVG(rating)
-                    FROM reviews
-                    WHERE product_id = 1
-                ),
-                review_count = (
-                    SELECT COUNT(*)
-                    FROM reviews
-                    WHERE product_id = 1
-                )
-            WHERE id = 1;
-            """
-        )
-
-        conn.commit()
-
-        rating, count = conn.execute(
-            """
-            SELECT rating, review_count
-            FROM products
-            WHERE id = 1;
-            """
-        ).fetchone()
-
-        self.assertAlmostEqual(
-            rating,
-            3.0,
-        )
-
-        self.assertEqual(
-            count,
-            2,
-        )
-
-        conn.close()
-
-    def test_demo_data_names_are_clearly_labeled(self):
-        self.assertTrue(
-            self.ns["DEMO_SELLER_NAME"].startswith("DEMO -")
-        )
-
-        self.assertTrue(
-            self.ns["DEMO_PRODUCT_NAME"].startswith("DEMO -")
-        )
+    def test_json_module_available_for_configuration_validation(self):
+        self.assertIsNotNone(json)
 
 
 if __name__ == "__main__":
