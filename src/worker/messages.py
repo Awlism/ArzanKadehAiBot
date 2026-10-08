@@ -195,10 +195,14 @@ async def _handle_active_state(
         )
 
     if state_name == "support":
+        if env is None:
+            return None
+
         return await handle_support_text(
             backend,
             telegram,
             message,
+            env,
         )
 
     if state_name == "public_ad":
