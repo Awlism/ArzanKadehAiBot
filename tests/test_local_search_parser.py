@@ -17,21 +17,48 @@ from worker.search import (
 )
 
 
+class FakeSearchDB:
+    """Minimal async DB double required by LocalQueryParser."""
+
+    def __init__(self, cities=None, categories=None):
+        self.cities = cities or []
+        self.categories = categories or []
+
+    async def fetchall(self, sql, params=None):
+        normalized = " ".join(
+            str(sql).lower().split()
+        )
+
+        if "from cities" in normalized:
+            return [
+                {"name": name}
+                for name in self.cities
+            ]
+
+        if "from categories" in normalized:
+            return [
+                {"name": name}
+                for name in self.categories
+            ]
+
+        return []
+
+
 class NormalizationTests(unittest.TestCase):
     def test_persian_digits_are_converted(self):
         text = normalize_persian_text("۳۰۰۰۰۰۰")
 
-        self.assertIn(
-            "3000000",
+        self.assertEqual(
             text,
+            "3000000",
         )
 
     def test_arabic_digits_are_converted(self):
         text = normalize_persian_text("١٢٣")
 
-        self.assertIn(
-            "123",
+        self.assertEqual(
             text,
+            "123",
         )
 
     def test_arabic_letter_variants_are_unified(self):
@@ -40,9 +67,9 @@ class NormalizationTests(unittest.TestCase):
             normalize_persian_text("کتاب"),
         )
 
-        self.assertIn(
-            "ی",
+        self.assertEqual(
             normalize_persian_text("علي"),
+            normalize_persian_text("علی"),
         )
 
     def test_zwnj_is_normalized(self):
@@ -54,33 +81,87 @@ class NormalizationTests(unittest.TestCase):
     def test_punctuation_is_removed(self):
         text = normalize_persian_text("کفش داری؟!")
 
-        self.assertNotIn("؟", text)
-        self.assertNotIn("!", text)
+        self.assertNotIn(
+            "؟",
+            text,
+        )
+
+        self.assertNotIn(
+            "!",
+            text,
+        )
 
     def test_whitespace_is_collapsed(self):
         self.assertEqual(
-            normalize_persian_text("کفش    سفید"),
+            normalize_persian_text(
+                "کفش    سفید"
+            ),
             "کفش سفید",
         )
 
 
 class PriceExtractionTests(unittest.TestCase):
     def test_million_price(self):
-        result = _extract_price("کفش زیر 3 میلیون")
+        minimum, maximum, text = _extract_price(
+            "کفش زیر 3 میلیون"
+        )
 
-        self.assertIsNotNone(result)
+        self.assertIsNone(
+            minimum
+        )
+
+        self.assertIsNotNone(
+            maximum
+        )
+
+        self.assertEqual(
+            maximum,
+            3_000_000,
+        )
+
+        self.assertIsInstance(
+            text,
+            str,
+        )
 
     def test_billion_price(self):
-        result = _extract_price("خانه تا 2 میلیارد")
+        minimum, maximum, text = _extract_price(
+            "خانه تا 2 میلیارد"
+        )
 
-        self.assertIsNotNone(result)
+        self.assertIsNone(
+            minimum
+        )
+
+        self.assertEqual(
+            maximum,
+            2_000_000_000,
+        )
+
+        self.assertIsInstance(
+            text,
+            str,
+        )
 
     def test_price_range(self):
-        result = _extract_price(
+        minimum, maximum, text = _extract_price(
             "بین 2 میلیون تا 5 میلیون"
         )
 
-        self.assertIsNotNone(result)
+        self.assertEqual(
+            minimum,
+            2_000_000,
+        )
+
+        self.assertEqual(
+            maximum,
+            5_000_000,
+        )
+
+        self.assertIsInstance(
+            text,
+            str,
+        )
 
     def test_number_unit_conversion(self):
         self.assertEqual(
@@ -111,10 +192,10 @@ class StopwordTests(unittest.TestCase):
 
         self.assertNotIn(
             "یک",
-            result,
+            result.split(),
         )
 
-    def test_meaningful_keyword_is_preserved(self):
+    def test_meaningful_keywords_are_preserved(self):
         result = _remove_stopwords(
             "کفش سفید"
         )
@@ -123,6 +204,7 @@ class StopwordTests(unittest.TestCase):
             "کفش",
             result,
         )
+
         self.assertIn(
             "سفید",
             result,
@@ -153,18 +235,22 @@ class StructuredQueryTests(unittest.TestCase):
             query.keyword,
             "کفش",
         )
+
         self.assertEqual(
             query.gender,
             "مردانه",
         )
+
         self.assertEqual(
             query.color,
             "سفید",
         )
+
         self.assertEqual(
             query.city,
             "تهران",
         )
+
         self.assertEqual(
             query.max_price,
             3_000_000,
@@ -175,13 +261,18 @@ class StructuredQueryTests(unittest.TestCase):
         )
 
 
-class LocalQueryParserTests(unittest.TestCase):
-    def setUp(self):
-        self.parser = LocalQueryParser()
+class LocalQueryParserTests(unittest.IsolatedAsyncioTestCase):
+    async def test_parser_returns_structured_query(self):
+        db = FakeSearchDB(
+            cities=["تهران"],
+            categories=[],
+        )
 
-    def test_parser_returns_structured_query(self):
-        result = self.parser.parse(
-            "کفش سفید مردانه زیر 3 میلیون تهران"
+        parser = LocalQueryParser()
+
+        result = await parser.parse(
+            db,
+            "کفش سفید مردانه زیر 3 میلیون تهران",
         )
 
         self.assertIsInstance(
@@ -189,18 +280,71 @@ class LocalQueryParserTests(unittest.TestCase):
             StructuredQuery,
         )
 
-    def test_parser_preserves_raw_query(self):
+    async def test_parser_preserves_raw_query(self):
         raw = "کفش سفید تهران"
 
-        result = self.parser.parse(raw)
+        db = FakeSearchDB(
+            cities=["تهران"],
+            categories=[],
+        )
+
+        parser = LocalQueryParser()
+
+        result = await parser.parse(
+            db,
+            raw,
+        )
 
         self.assertEqual(
             result.raw_query,
             raw,
         )
 
-    def test_parser_handles_empty_query(self):
-        result = self.parser.parse("")
+    async def test_parser_extracts_city(self):
+        db = FakeSearchDB(
+            cities=["تهران"],
+            categories=[],
+        )
+
+        parser = LocalQueryParser()
+
+        result = await parser.parse(
+            db,
+            "کفش سفید تهران",
+        )
+
+        self.assertEqual(
+            result.city,
+            "تهران",
+        )
+
+    async def test_parser_extracts_price(self):
+        db = FakeSearchDB(
+            cities=[],
+            categories=[],
+        )
+
+        parser = LocalQueryParser()
+
+        result = await parser.parse(
+            db,
+            "کفش زیر 3 میلیون",
+        )
+
+        self.assertEqual(
+            result.max_price,
+            3_000_000,
+        )
+
+    async def test_parser_handles_empty_query(self):
+        db = FakeSearchDB()
+
+        parser = LocalQueryParser()
+
+        result = await parser.parse(
+            db,
+            "",
+        )
 
         self.assertIsInstance(
             result,
