@@ -1122,6 +1122,15 @@ async def _handle_callback_query(
             env,
         )
 
+    callback_id = callback_query.get("id")
+
+    if callback_id:
+        await telegram.answer_callback_query(
+            str(callback_id),
+            text="⚠️ این گزینه هنوز فعال نیست.",
+            show_alert=True,
+        )
+
     return None
 
 
