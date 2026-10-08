@@ -100,13 +100,25 @@ def _message_context(
     chat_id = chat.get("id")
     telegram_user_id = user.get("id")
 
+    try:
+        chat_id = int(chat_id)
+    except (
+        TypeError,
+        ValueError,
+    ):
+        chat_id = None
+
+    try:
+        telegram_user_id = int(telegram_user_id)
+    except (
+        TypeError,
+        ValueError,
+    ):
+        telegram_user_id = None
+
     return (
-        int(chat_id)
-        if chat_id is not None
-        else None,
-        int(telegram_user_id)
-        if telegram_user_id is not None
-        else None,
+        chat_id,
+        telegram_user_id,
     )
 
 
@@ -212,6 +224,133 @@ async def _edit_callback(
     )
 
 
+async def _send_admin_support_request(
+    db: Any,
+    telegram: Any,
+    env: Any,
+    request_id: int,
+    user_id: int,
+    topic: str,
+    message_text: str,
+) -> None:
+    """
+    Notify the configured admin about a new support request.
+
+    ADMIN_CHAT_ID is read from the Worker environment.
+    No token or secret is handled here.
+    """
+
+    admin_chat_id = getattr(
+        env,
+        "ADMIN_CHAT_ID",
+        None,
+    )
+
+    if admin_chat_id is None:
+        return
+
+    try:
+        admin_chat_id = int(
+            admin_chat_id
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return
+
+    if admin_chat_id < 1:
+        return
+
+    user = await db.fetchone(
+        """
+        SELECT
+            telegram_id,
+            username,
+            first_name,
+            last_name
+        FROM users
+        WHERE id = ?
+        LIMIT 1;
+        """,
+        (user_id,),
+    )
+
+    if user is None:
+        user_label = f"کاربر داخلی #{user_id}"
+    else:
+        first_name = str(
+            user.get("first_name") or ""
+        ).strip()
+
+        last_name = str(
+            user.get("last_name") or ""
+        ).strip()
+
+        username = str(
+            user.get("username") or ""
+        ).strip()
+
+        full_name = " ".join(
+            part
+            for part in (
+                first_name,
+                last_name,
+            )
+            if part
+        )
+
+        if username:
+            user_label = (
+                f"{full_name} "
+                f"(@{username})"
+                if full_name
+                else f"@{username}"
+            )
+        elif full_name:
+            user_label = full_name
+        else:
+            user_label = (
+                f"کاربر داخلی #{user_id}"
+            )
+
+    keyboard = _keyboard(
+        [
+            [
+                _button(
+                    "✅ تأیید",
+                    f"adminreq:approve:{request_id}",
+                ),
+                _button(
+                    "❌ رد",
+                    f"adminreq:reject:{request_id}",
+                ),
+            ],
+        ]
+    )
+
+    text = (
+        "🛟 <b>درخواست پشتیبانی جدید</b>\n\n"
+        f"<b>موضوع:</b> {_html(topic)}\n"
+        f"<b>پیام:</b> {_html(message_text)}\n\n"
+        f"<b>کاربر:</b> {_html(user_label)}\n"
+        f"<b>شناسه داخلی:</b> #{user_id}\n"
+        f"<b>درخواست:</b> #{request_id}"
+    )
+
+    try:
+        await telegram.send_message(
+            admin_chat_id,
+            text,
+            reply_markup=keyboard,
+            parse_mode="HTML",
+        )
+    except Exception:
+        # Failure to notify the admin must not roll back
+        # an already-created support request.
+        return
+
+
 async def _get_request_topics(
     db: Any,
     user_id: int,
@@ -256,7 +395,8 @@ async def _has_open_request(
     )
 
     placeholders = ", ".join(
-        "?" for _ in open_statuses
+        "?"
+        for _ in open_statuses
     )
 
     if topic is None:
@@ -398,7 +538,7 @@ async def handle_my_requests(
                 )
             else:
                 lines.append(
-                    f"• درخواست پشتیبانی\n"
+                    "• درخواست پشتیبانی\n"
                     f"  وضعیت: {status}\n"
                     f"  تاریخ: {date_text}"
                 )
@@ -638,6 +778,7 @@ async def handle_support_text(
     db: Any,
     telegram: Any,
     message: dict[str, Any],
+    env: Any,
 ) -> None:
     chat = message.get("chat") or {}
     from_user = message.get("from") or {}
@@ -648,9 +789,19 @@ async def handle_support_text(
     if telegram_user_id is None:
         return
 
+    try:
+        telegram_user_id = int(
+            telegram_user_id
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return
+
     user_id = await _ensure_user(
         db,
-        int(telegram_user_id),
+        telegram_user_id,
         username=from_user.get("username"),
         first_name=from_user.get("first_name"),
         last_name=from_user.get("last_name"),
@@ -832,14 +983,27 @@ async def handle_support_text(
         user_id,
     )
 
+    # First notify the admin so the request immediately appears
+    # with approve/reject controls.
+    await _send_admin_support_request(
+        db,
+        telegram,
+        env,
+        request_id,
+        user_id,
+        topic,
+        text,
+    )
+
     if chat_id is not None:
         await telegram.send_message(
             int(chat_id),
             (
                 "✅ درخواستت برای تیم پشتیبانی "
                 "ارزانکده ارسال شد.\n\n"
-                "تا وقتی بررسی نشده، درخواست "
-                "جدید برای همین موضوع ثبت نمی‌شه."
+                "تا وقتی که بررسی نشده، گفت‌وگوی مستقیم "
+                "باز نمی‌شود؛ بعد از تأیید، ادامه‌ی "
+                "گفت‌وگو فعال می‌شود."
             ),
         )
 
