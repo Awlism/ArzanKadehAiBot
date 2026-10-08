@@ -19,6 +19,7 @@ from worker.review import handle_review_text
 from worker.search import handle_search_message
 from worker.seller_registration import handle_register_seller_message
 from worker.shop import handle_shop_edit_message
+from worker.start import _send_main_menu
 from worker.state import ensure_state_table, get_state
 from worker.support import handle_support_text
 from worker.telegram import TelegramClient
@@ -35,6 +36,9 @@ async def handle_message(
 
     The active persistent Worker state is loaded from D1 so
     multi-request flows can continue across webhook requests.
+
+    If no active state exists, this behaves like the legacy
+    generic message fallback and returns the user to the main menu.
     """
 
     user = message.get("from")
@@ -100,6 +104,25 @@ async def handle_message(
     )
 
     if state is None:
+        chat = message.get("chat") or {}
+        chat_id = chat.get("id")
+
+        if chat_id is None:
+            return None
+
+        try:
+            chat_id = int(chat_id)
+        except (
+            TypeError,
+            ValueError,
+        ):
+            return None
+
+        await _send_main_menu(
+            telegram,
+            chat_id,
+        )
+
         return None
 
     return await _handle_active_state(
