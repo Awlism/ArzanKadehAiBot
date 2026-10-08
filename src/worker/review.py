@@ -266,11 +266,14 @@ async def _get_target(
         return await backend.fetchone(
             """
             SELECT
-                id,
-                name,
-                seller_id
-            FROM products
-            WHERE id = ?
+                p.id,
+                p.name,
+                p.seller_id
+            FROM products p
+            JOIN sellers s
+              ON s.id = p.seller_id
+            WHERE p.id = ?
+              AND COALESCE(s.is_active, 1) = 1
             LIMIT 1;
             """,
             (
@@ -286,6 +289,7 @@ async def _get_target(
                 name
             FROM sellers
             WHERE id = ?
+              AND COALESCE(is_active, 1) = 1
             LIMIT 1;
             """,
             (
@@ -429,7 +433,7 @@ async def handle_review_start(
     if target is None:
         await telegram.send_message(
             chat_id,
-            "این مورد پیدا نشد.",
+            "این مورد پیدا نشد یا دیگر فعال نیست.",
         )
         return True
 
@@ -608,7 +612,7 @@ async def handle_review_rating(
         )
         await telegram.send_message(
             chat_id,
-            "این مورد دیگه پیدا نشد. دوباره ثبت نظر رو شروع کن.",
+            "این مورد دیگه پیدا نشد یا غیرفعال شده. دوباره ثبت نظر رو شروع کن.",
         )
         return True
 
@@ -818,7 +822,7 @@ async def handle_review_text(
         )
         await telegram.send_message(
             chat_id,
-            "این مورد دیگه پیدا نشد. دوباره ثبت نظر رو شروع کن.",
+            "این مورد دیگه پیدا نشد یا غیرفعال شده. دوباره ثبت نظر رو شروع کن.",
         )
         return True
 
