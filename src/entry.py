@@ -29,7 +29,10 @@ from worker.webhook import (
 )
 
 from worker.router import WorkerRouter
-from worker.start import handle_start
+from worker.start import (
+    handle_start,
+    handle_role_pick,
+)
 from worker.messages import handle_message
 from worker.telegram import TelegramClient
 from worker.state import ensure_state_table
@@ -391,6 +394,7 @@ class Default(WorkerEntrypoint):
                     return await handle_start(
                         message,
                         telegram,
+                        self.env,
                     )
 
                 return await handle_message(
@@ -700,6 +704,13 @@ async def _handle_callback_query(
             backend,
             telegram,
             callback_query,
+            env,
+        )
+
+    if data.startswith("rolepick:"):
+        return await handle_role_pick(
+            callback_query,
+            telegram,
             env,
         )
 
