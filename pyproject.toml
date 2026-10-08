@@ -9,10 +9,16 @@ description = "ArzanKadeh AI Cloudflare Python Worker"
 requires-python = ">=3.12"
 dependencies = []
 
+[tool.setuptools]
+package-dir = {"" = "src"}
+
 [tool.setuptools.packages.find]
+where = ["src"]
 include = [
-    "bot",
-    "bot.*",
+    "worker",
+    "worker.*",
+    "worker_backend",
+    "worker_backend.*",
 ]
 
 [dependency-groups]
