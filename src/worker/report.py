@@ -9,6 +9,7 @@ This module intentionally does not import aiogram.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from html import escape
 from typing import Any, Optional
 
 from worker.state import clear_state, get_state, set_state
@@ -32,6 +33,16 @@ def _now_iso() -> str:
         timezone.utc
     ).isoformat(
         timespec="seconds"
+    )
+
+
+def _html(value: Any) -> str:
+    if value is None:
+        return ""
+
+    return escape(
+        str(value),
+        quote=False,
     )
 
 
@@ -138,6 +149,72 @@ def _get_callback_query_id(
     return value or None
 
 
+async def _answer_callback(
+    telegram: TelegramClient,
+    callback_query: dict[str, Any],
+    *,
+    text: Optional[str] = None,
+    show_alert: bool = False,
+) -> None:
+    callback_query_id = _get_callback_query_id(
+        callback_query
+    )
+
+    if callback_query_id is None:
+        return
+
+    await telegram.answer_callback_query(
+        callback_query_id,
+        text=text,
+        show_alert=show_alert,
+    )
+
+
+async def _edit_callback_message(
+    telegram: TelegramClient,
+    callback_query: dict[str, Any],
+    text: str,
+    reply_markup: Optional[dict[str, Any]] = None,
+) -> None:
+    message = _get_callback_message(
+        callback_query
+    )
+
+    if message is None:
+        return
+
+    chat = message.get("chat")
+
+    if not isinstance(chat, dict):
+        return
+
+    chat_id = chat.get("id")
+    message_id = message.get("message_id")
+
+    if (
+        chat_id is None
+        or message_id is None
+    ):
+        return
+
+    try:
+        chat_id = int(chat_id)
+        message_id = int(message_id)
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return
+
+    await telegram.edit_message_text(
+        chat_id,
+        message_id,
+        text,
+        reply_markup=reply_markup,
+        parse_mode="HTML",
+    )
+
+
 async def _get_internal_user_id(
     telegram_id: int,
 ) -> Optional[int]:
@@ -160,13 +237,44 @@ async def _get_internal_user_id(
         user_id = int(
             row["id"]
         )
-    except (TypeError, ValueError):
+    except (
+        TypeError,
+        ValueError,
+        KeyError,
+    ):
         return None
 
     if user_id < 1:
         return None
 
     return user_id
+
+
+async def _is_admin(
+    telegram_id: int,
+    env: Any,
+) -> bool:
+    try:
+        admin_chat_id = getattr(
+            env,
+            "ADMIN_CHAT_ID",
+            None,
+        )
+    except Exception:
+        admin_chat_id = None
+
+    if admin_chat_id is None:
+        return False
+
+    try:
+        return int(admin_chat_id) == int(
+            telegram_id
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return False
 
 
 def _parse_report_target(
@@ -192,7 +300,10 @@ def _parse_report_target(
         target_id = int(
             parts[2]
         )
-    except (TypeError, ValueError):
+    except (
+        TypeError,
+        ValueError,
+    ):
         return None
 
     if target_id < 1:
@@ -224,7 +335,10 @@ def _parse_report_reason(
         target_id = int(
             parts[2]
         )
-    except (TypeError, ValueError):
+    except (
+        TypeError,
+        ValueError,
+    ):
         return None
 
     if target_id < 1:
@@ -995,9 +1109,295 @@ async def handle_report_text(
     return True
 
 
+async def handle_admin_report_decision(
+    callback_query: dict[str, Any],
+    telegram: TelegramClient,
+    env: Any,
+) -> bool:
+    """
+    Admin-only approval/rejection handler for reports.
+
+    Supported callbacks:
+    - adminreport:approve:<report_id>
+    - adminreport:reject:<report_id>
+    """
+
+    callback_data = callback_query.get("data")
+
+    if not isinstance(
+        callback_data,
+        str,
+    ):
+        return False
+
+    parts = callback_data.split(":")
+
+    if len(parts) != 3:
+        await _answer_callback(
+            telegram,
+            callback_query,
+            text="⚠️ درخواست نامعتبر است.",
+            show_alert=True,
+        )
+        return True
+
+    prefix, action, report_id_raw = parts
+
+    if prefix != "adminreport":
+        return False
+
+    if action not in {
+        "approve",
+        "reject",
+    }:
+        await _answer_callback(
+            telegram,
+            callback_query,
+            text="⚠️ عملیات نامعتبر است.",
+            show_alert=True,
+        )
+        return True
+
+    try:
+        report_id = int(
+            report_id_raw
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        report_id = 0
+
+    if report_id < 1:
+        await _answer_callback(
+            telegram,
+            callback_query,
+            text="⚠️ شناسه گزارش نامعتبر است.",
+            show_alert=True,
+        )
+        return True
+
+    telegram_id = _get_callback_telegram_id(
+        callback_query
+    )
+
+    if telegram_id is None:
+        return True
+
+    if not await _is_admin(
+        telegram_id,
+        env,
+    ):
+        await _answer_callback(
+            telegram,
+            callback_query,
+            text="⛔️ این عملیات فقط برای ادمین در دسترس است.",
+            show_alert=True,
+        )
+        return True
+
+    admin_user_id = await _get_internal_user_id(
+        telegram_id
+    )
+
+    if admin_user_id is None:
+        await _answer_callback(
+            telegram,
+            callback_query,
+            text="⚠️ حساب ادمین پیدا نشد.",
+            show_alert=True,
+        )
+        return True
+
+    report = await backend.fetchone(
+        """
+        SELECT *
+        FROM reports
+        WHERE id = ?
+        LIMIT 1;
+        """,
+        (
+            report_id,
+        ),
+    )
+
+    if report is None:
+        await _answer_callback(
+            telegram,
+            callback_query,
+            text="⚠️ این گزارش وجود ندارد.",
+            show_alert=True,
+        )
+        return True
+
+    if report.get("status") != "PENDING":
+        status = report.get("status") or "UNKNOWN"
+
+        await _answer_callback(
+            telegram,
+            callback_query,
+            (
+                "⚠️ این گزارش قبلاً تعیین‌تکلیف شده: "
+                f"{_html(status)}"
+            ),
+            show_alert=True,
+        )
+        return True
+
+    new_status = (
+        "APPROVED"
+        if action == "approve"
+        else "REJECTED"
+    )
+
+    await backend.execute(
+        """
+        UPDATE reports
+        SET status = ?
+        WHERE id = ?
+          AND status = 'PENDING';
+        """,
+        (
+            new_status,
+            report_id,
+        ),
+    )
+
+    updated_report = await backend.fetchone(
+        """
+        SELECT status
+        FROM reports
+        WHERE id = ?
+        LIMIT 1;
+        """,
+        (
+            report_id,
+        ),
+    )
+
+    if (
+        updated_report is None
+        or updated_report.get("status") != new_status
+    ):
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ وضعیت گزارش تغییر نکرد. دوباره تلاش کن.",
+            show_alert=True,
+        )
+        return True
+
+    audit_action = (
+        "report_approved"
+        if action == "approve"
+        else "report_rejected"
+    )
+
+    await backend.execute(
+        """
+        INSERT INTO audit_log (
+            actor_user_id,
+            action,
+            entity_type,
+            entity_id,
+            details,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?);
+        """,
+        (
+            admin_user_id,
+            audit_action,
+            "report",
+            report_id,
+            None,
+            _now_iso(),
+        ),
+    )
+
+    if action == "approve":
+        notification_title = "نتیجه گزارش شما"
+        notification_message = (
+            "✅ گزارشت بررسی و تأیید شد. "
+            "ممنون که به امن‌تر شدن ارزانکده کمک می‌کنی."
+        )
+    else:
+        notification_title = "نتیجه گزارش شما"
+        notification_message = (
+            "🚫 گزارشت بررسی شد.\n"
+            "بعد از بررسی، مورد گزارش‌شده نیاز به اقدام نداشت."
+        )
+
+    await backend.execute(
+        """
+        INSERT INTO notifications (
+            user_id,
+            title,
+            message,
+            notification_type,
+            is_read,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, 0, ?);
+        """,
+        (
+            report["user_id"],
+            notification_title,
+            notification_message,
+            "report",
+            _now_iso(),
+        ),
+    )
+
+    await _answer_callback(
+        telegram,
+        callback_query,
+        f"وضعیت گزارش #{report_id} به‌روزرسانی شد.",
+    )
+
+    message = _get_callback_message(
+        callback_query
+    )
+
+    if message is not None:
+        current_text = str(
+            message.get("text")
+            or ""
+        ).strip()
+
+        status_label = (
+            "تأیید شد"
+            if new_status == "APPROVED"
+            else "رد شد"
+        )
+
+        updated_text = (
+            f"{current_text}\n\n"
+            f"— تصمیم ثبت شد: {status_label}"
+            if current_text
+            else
+            (
+                f"گزارش #{report_id}\n\n"
+                f"— تصمیم ثبت شد: {status_label}"
+            )
+        )
+
+        try:
+            await _edit_callback_message(
+                telegram,
+                callback_query,
+                updated_text,
+            )
+        except Exception:
+            pass
+
+    return True
+
+
 __all__ = [
     "REPORT_REASONS",
     "REPORT_STATE",
+    "handle_admin_report_decision",
     "handle_report_reason",
     "handle_report_skip",
     "handle_report_start",
