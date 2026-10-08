@@ -8,6 +8,7 @@ This module intentionally does not import aiogram.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from worker.admin import handle_admin_user_search_message
@@ -26,6 +27,132 @@ from worker.telegram import TelegramClient
 from worker_backend.backend import backend
 
 
+def _now_iso() -> str:
+    return datetime.now(
+        timezone.utc
+    ).isoformat(
+        timespec="seconds"
+    )
+
+
+async def _ensure_message_user(
+    message: dict[str, Any],
+) -> Optional[int]:
+    user = message.get("from")
+
+    if not isinstance(
+        user,
+        dict,
+    ):
+        return None
+
+    telegram_id = user.get(
+        "id"
+    )
+
+    try:
+        telegram_id = int(
+            telegram_id
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return None
+
+    if telegram_id < 1:
+        return None
+
+    username = user.get(
+        "username"
+    )
+    first_name = user.get(
+        "first_name"
+    )
+    last_name = user.get(
+        "last_name"
+    )
+
+    username = (
+        str(username).strip()
+        if username is not None
+        else None
+    )
+
+    first_name = (
+        str(first_name).strip()
+        if first_name is not None
+        else None
+    )
+
+    last_name = (
+        str(last_name).strip()
+        if last_name is not None
+        else None
+    )
+
+    now = _now_iso()
+
+    await backend.execute(
+        """
+        INSERT INTO users (
+            telegram_id,
+            username,
+            first_name,
+            last_name,
+            created_at,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(telegram_id)
+        DO UPDATE SET
+            username = excluded.username,
+            first_name = excluded.first_name,
+            last_name = excluded.last_name,
+            updated_at = excluded.updated_at;
+        """,
+        (
+            telegram_id,
+            username,
+            first_name,
+            last_name,
+            now,
+            now,
+        ),
+    )
+
+    row = await backend.fetchone(
+        """
+        SELECT id
+        FROM users
+        WHERE telegram_id = ?
+        LIMIT 1;
+        """,
+        (
+            telegram_id,
+        ),
+    )
+
+    if row is None:
+        return None
+
+    try:
+        user_id = int(
+            row["id"]
+        )
+    except (
+        TypeError,
+        ValueError,
+        KeyError,
+    ):
+        return None
+
+    if user_id < 1:
+        return None
+
+    return user_id
+
+
 async def handle_message(
     message: dict[str, Any],
     telegram: TelegramClient,
@@ -41,57 +168,11 @@ async def handle_message(
     generic message fallback and returns the user to the main menu.
     """
 
-    user = message.get("from")
-
-    if not isinstance(
-        user,
-        dict,
-    ):
-        return None
-
-    telegram_id = user.get(
-        "id"
+    user_id = await _ensure_message_user(
+        message
     )
 
-    if telegram_id is None:
-        return None
-
-    try:
-        telegram_id = int(
-            telegram_id
-        )
-    except (
-        TypeError,
-        ValueError,
-    ):
-        return None
-
-    if telegram_id < 1:
-        return None
-
-    user_row = await backend.fetchone(
-        """
-        SELECT id
-        FROM users
-        WHERE telegram_id = ?
-        LIMIT 1;
-        """,
-        (
-            telegram_id,
-        ),
-    )
-
-    if user_row is None:
-        return None
-
-    try:
-        user_id = int(
-            user_row["id"]
-        )
-    except (
-        TypeError,
-        ValueError,
-    ):
+    if user_id is None:
         return None
 
     await ensure_state_table(
