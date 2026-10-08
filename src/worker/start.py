@@ -15,6 +15,7 @@ from typing import Any, Optional
 from worker.state import clear_state
 from worker.referrals import record_referral_if_new
 from worker.telegram import TelegramClient
+from worker.account import render_active_mode
 from worker_backend.backend import backend
 
 
@@ -484,9 +485,36 @@ async def _go_to_start(
         )
         return
 
-    await _send_main_menu(
+    mode = await _get_active_mode(
+        user_id
+    )
+
+    if mode == "admin":
+        if not await _is_admin(
+            env,
+            telegram_user_id,
+        ):
+            await backend.execute(
+                """
+                UPDATE users
+                SET active_mode = 'buyer',
+                    updated_at = ?
+                WHERE id = ?;
+                """,
+                (
+                    _now_iso(),
+                    user_id,
+                ),
+            )
+
+            mode = "buyer"
+
+    await render_active_mode(
+        backend,
         telegram,
         chat_id,
+        user_id,
+        mode,
     )
 
 
@@ -815,7 +843,7 @@ async def handle_role_pick(
         "id"
     )
 
-    message_id = message.get(
+    message_id = chat.get(
         "message_id"
     )
 
@@ -833,66 +861,14 @@ async def handle_role_pick(
             parse_mode="HTML",
         )
 
-    if role == "buyer":
-        if chat_id is not None:
-            await _send_main_menu(
-                telegram,
-                int(chat_id),
-            )
-
-    elif role == "seller":
-        if chat_id is not None:
-            await telegram.send_message(
-                int(chat_id),
-                (
-                    "🏪 خب، حالا حالت فروشندگی فعاله!\n\n"
-                    "برای اینکه فروشگاهت روی ارزانکده دیده بشه، "
-                    "باید اول ثبتش کنی -- هر وقت آماده بودی، "
-                    "از همینجا شروع کن."
-                ),
-                reply_markup=_keyboard(
-                    [
-                        [
-                            _button(
-                                "➕ ثبت فروشگاه من",
-                                "registerseller",
-                            )
-                        ],
-                        [
-                            _button(
-                                "🔙 منوی اصلی",
-                                "main",
-                            )
-                        ],
-                    ]
-                ),
-            )
-
-    else:
-        if chat_id is not None:
-            await telegram.send_message(
-                int(chat_id),
-                (
-                    "🛡 حالت ادمین فعاله.\n\n"
-                    "پنل مدیریت در حال انتقال به نسخه Cloudflare است."
-                ),
-                reply_markup=_keyboard(
-                    [
-                        [
-                            _button(
-                                "🛍️ حالت خرید",
-                                "setmode:buyer",
-                            )
-                        ],
-                        [
-                            _button(
-                                "🔙 منوی اصلی",
-                                "main",
-                            )
-                        ],
-                    ]
-                ),
-            )
+    if chat_id is not None:
+        await render_active_mode(
+            backend,
+            telegram,
+            int(chat_id),
+            user_id,
+            role,
+        )
 
     await telegram.answer_callback_query(
         str(callback_query.get("id")),
