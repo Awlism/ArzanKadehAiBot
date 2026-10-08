@@ -58,6 +58,9 @@ from worker.seller import (
     handle_seller_detail,
     handle_seller_favorite_add,
     handle_seller_favorite_remove,
+    handle_instagram_click,
+    handle_telegram_click,
+    handle_whatsapp_click,
 )
 
 from worker.review import (
@@ -69,6 +72,7 @@ from worker.report import (
     handle_report_reason,
     handle_report_skip,
     handle_report_start,
+    handle_admin_report_decision,
 )
 
 from worker.hot import handle_hot
@@ -127,6 +131,7 @@ from worker.requests import handle_my_requests
 from worker.store_status import (
     handle_store_status,
     handle_store_status_picked,
+    handle_store_toggle_active,
 )
 
 from worker.product_stats import (
@@ -529,6 +534,27 @@ async def _handle_callback_query(
             callback_query,
         )
 
+    if data.startswith("igclick:"):
+        return await handle_instagram_click(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("tgclick:"):
+        return await handle_telegram_click(
+            backend,
+            telegram,
+            callback_query,
+        )
+
+    if data.startswith("waclick:"):
+        return await handle_whatsapp_click(
+            backend,
+            telegram,
+            callback_query,
+        )
+
     if data.startswith("reviewstart:"):
         return await handle_review_start(
             callback_query,
@@ -794,7 +820,7 @@ async def _handle_callback_query(
         )
 
     if data.startswith("storetoggle:"):
-        return await handle_shop_toggle_active(
+        return await handle_store_toggle_active(
             backend,
             telegram,
             callback_query,
@@ -1112,6 +1138,13 @@ async def _handle_callback_query(
             backend,
             telegram,
             callback_query,
+            env,
+        )
+
+    if data.startswith("adminreport:"):
+        return await handle_admin_report_decision(
+            callback_query,
+            telegram,
             env,
         )
 
