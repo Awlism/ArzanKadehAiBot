@@ -284,10 +284,16 @@ async def _edit_callback(
     chat_id = chat.get("id")
     message_id = message.get("message_id")
 
-    if (
-        chat_id is None
-        or message_id is None
-    ):
+    if chat_id is None:
+        return
+
+    if message_id is None:
+        await telegram.send_message(
+            int(chat_id),
+            text,
+            reply_markup=keyboard,
+            parse_mode="HTML",
+        )
         return
 
     await telegram.edit_message_text(
@@ -511,6 +517,72 @@ async def _render_admin_panel(
                 _back_button("main"),
             ]
         ),
+    )
+
+
+async def render_active_mode(
+    db: Any,
+    telegram: Any,
+    chat_id: int,
+    user_id: int,
+    mode: str,
+) -> None:
+    """
+    Render an active account mode from a normal message context.
+
+    This is used by /start so returning users reach the same
+    Worker account panels used by the account/mode callbacks.
+    """
+
+    normalized_mode = str(
+        mode or "buyer"
+    ).strip().lower()
+
+    if normalized_mode not in VALID_MODES:
+        normalized_mode = "buyer"
+
+    callback_query = {
+        "message": {
+            "chat": {
+                "id": int(chat_id),
+            }
+        },
+        "from": {
+            "id": int(
+                await db.fetchone(
+                    """
+                    SELECT telegram_id
+                    FROM users
+                    WHERE id = ?
+                    LIMIT 1;
+                    """,
+                    (user_id,),
+                )
+            )["telegram_id"],
+        },
+    }
+
+    if normalized_mode == "admin":
+        await _render_admin_panel(
+            telegram,
+            callback_query,
+        )
+        return
+
+    if normalized_mode == "seller":
+        await _render_seller_panel(
+            db,
+            telegram,
+            callback_query,
+            user_id,
+        )
+        return
+
+    await _render_buyer_panel(
+        db,
+        telegram,
+        callback_query,
+        user_id,
     )
 
 
@@ -745,4 +817,5 @@ __all__ = [
     "VALID_MODES",
     "handle_account",
     "handle_set_mode",
+    "render_active_mode",
 ]
