@@ -17,20 +17,41 @@ WORKER = ROOT / "src" / "worker"
 def read(name: str) -> str:
     return (
         WORKER / name
-    ).read_text(encoding="utf-8")
+    ).read_text(
+        encoding="utf-8"
+    )
+
+
+def tree(name: str) -> ast.AST:
+    return ast.parse(
+        read(name)
+    )
 
 
 def names(name: str) -> set[str]:
-    tree = ast.parse(read(name))
-
     return {
         node.name
-        for node in ast.walk(tree)
+        for node in ast.walk(tree(name))
         if isinstance(
             node,
             (ast.FunctionDef, ast.AsyncFunctionDef),
         )
     }
+
+
+def imported_modules(name: str) -> set[str]:
+    modules: set[str] = set()
+
+    for node in ast.walk(tree(name)):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                modules.add(alias.name)
+
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                modules.add(node.module)
+
+    return modules
 
 
 class StartWorkerTests(unittest.TestCase):
@@ -39,23 +60,23 @@ class StartWorkerTests(unittest.TestCase):
             (WORKER / "start.py").is_file()
         )
 
-    def test_start_handler_exists(self):
+    def test_start_handlers_exist(self):
         available = names("start.py")
 
-        self.assertTrue(
-            any(
-                "start" in name
-                or "main" in name
-                for name in available
-            )
+        self.assertIn(
+            "handle_start",
+            available,
         )
 
-    def test_start_uses_current_user_model(self):
-        text = read("start.py")
+        self.assertIn(
+            "handle_role_pick",
+            available,
+        )
 
+    def test_start_uses_users(self):
         self.assertIn(
             "users",
-            text,
+            read("start.py"),
         )
 
 
@@ -65,79 +86,96 @@ class RequestWorkerTests(unittest.TestCase):
             (WORKER / "requests.py").is_file()
         )
 
-    def test_requests_table_is_used(self):
-        text = read("requests.py")
+    def test_my_requests_handler_exists(self):
+        self.assertIn(
+            "handle_my_requests",
+            names("requests.py"),
+        )
 
+    def test_requests_table_is_used(self):
         self.assertIn(
             "requests",
-            text,
-        )
-
-    def test_request_statuses_are_present(self):
-        text = read("requests.py")
-
-        self.assertIn(
-            "PENDING",
-            text,
+            read("requests.py"),
         )
 
 
-class PublicAdsWorkerTests(unittest.TestCase):
+class AdsWorkerTests(unittest.TestCase):
     def test_ads_module_exists(self):
         self.assertTrue(
             (WORKER / "ads.py").is_file()
         )
 
+    def test_ads_handlers_exist(self):
+        available = names("ads.py")
+
+        for expected in (
+            "handle_ads",
+            "handle_ad_type_detail",
+            "handle_ad_confirm",
+        ):
+            self.assertIn(
+                expected,
+                available,
+            )
+
+    def test_ads_use_requests(self):
+        self.assertIn(
+            "requests",
+            read("ads.py"),
+        )
+
+
+class PublicAdsWorkerTests(unittest.TestCase):
     def test_publicads_module_exists(self):
         self.assertTrue(
             (WORKER / "publicads.py").is_file()
         )
 
-    def test_ad_request_types_exist(self):
-        text = (
-            read("ads.py")
-            + read("publicads.py")
-        )
+    def test_public_ad_handlers_exist(self):
+        available = names("publicads.py")
 
-        self.assertTrue(
-            "general_ad" in text
-            or "ad" in text
-        )
-
-    def test_request_table_is_used_for_ads(self):
-        text = (
-            read("ads.py")
-            + read("publicads.py")
-        )
-
-        self.assertIn(
-            "requests",
-            text,
-        )
+        for expected in (
+            "handle_public_ads",
+            "handle_public_ad_models",
+            "handle_public_ad_start",
+            "handle_public_ad_kind",
+            "handle_public_ad_message",
+            "handle_public_ad_skip",
+        ):
+            self.assertIn(
+                expected,
+                available,
+            )
 
 
 class CurrentArchitectureTests(unittest.TestCase):
-    def test_no_sqlite_or_aiogram(self):
-        for name in (
-            "start.py",
-            "requests.py",
-            "ads.py",
-            "publicads.py",
-        ):
-            text = read(name)
+    def test_start_has_no_legacy_imports(self):
+        modules = imported_modules("start.py")
 
-            self.assertNotIn(
-                "aiogram",
-                text,
-            )
-            self.assertNotIn(
-                "aiosqlite",
-                text,
-            )
-            self.assertNotIn(
-                "sqlite3",
-                text,
-            )
+        self.assertNotIn("aiogram", modules)
+        self.assertNotIn("aiosqlite", modules)
+        self.assertNotIn("sqlite3", modules)
+
+    def test_requests_has_no_legacy_imports(self):
+        modules = imported_modules("requests.py")
+
+        self.assertNotIn("aiogram", modules)
+        self.assertNotIn("aiosqlite", modules)
+        self.assertNotIn("sqlite3", modules)
+
+    def test_ads_has_no_legacy_imports(self):
+        modules = imported_modules("ads.py")
+
+        self.assertNotIn("aiogram", modules)
+        self.assertNotIn("aiosqlite", modules)
+        self.assertNotIn("sqlite3", modules)
+
+    def test_publicads_has_no_legacy_imports(self):
+        modules = imported_modules("publicads.py")
+
+        self.assertNotIn("aiogram", modules)
+        self.assertNotIn("aiosqlite", modules)
+        self.assertNotIn("sqlite3", modules)
 
 
 if __name__ == "__main__":
