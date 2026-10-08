@@ -1,27 +1,25 @@
 # -*- coding: utf-8 -*-
 """
-Static analysis for the modular ArzanKadeh AI bot.
+ArzanKadeh AI
+Static analysis for the current Cloudflare Worker architecture.
 
-These tests verify:
+The legacy aiogram/SQLite application is intentionally not used as the
+runtime source of truth for these tests.
 
-- bot.py remains a clean application entry point
-- the legacy monolithic handler architecture is gone
-- the root start.py entry point is gone
-- required modular handler/service/core modules exist
-- all application routers are imported and registered
-- navigation.router remains the final router registration
-- helpers live in their canonical modules
-- moved helpers are not duplicated in bot.py
-- legacy imports/references to the monolithic architecture are absent
-- navigation handler ordering is safe
-- callback patterns do not collide
-- SQL queries do not interpolate runtime values directly
-- unsafe bare "except: pass" blocks are absent
-- all Python source files compile successfully
+Current runtime:
+
+    src/entry.py
+        |
+        +-- src/worker/
+        |
+        +-- src/worker_backend/
+        |
+        +-- Cloudflare D1
 """
 
+from __future__ import annotations
+
 import ast
-import re
 import subprocess
 import sys
 import unittest
@@ -29,68 +27,84 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-BOT_PY_PATH = PROJECT_ROOT / "bot.py"
-BOT_PACKAGE_PATH = PROJECT_ROOT / "bot"
+SRC_PATH = PROJECT_ROOT / "src"
+ENTRY_PATH = SRC_PATH / "entry.py"
+WORKER_PATH = SRC_PATH / "worker"
+BACKEND_PATH = SRC_PATH / "worker_backend"
 
-HANDLERS_PATH = BOT_PACKAGE_PATH / "handlers"
-SERVICES_PATH = BOT_PACKAGE_PATH / "services"
 
-
-EXPECTED_HANDLER_MODULES = {
+EXPECTED_WORKER_MODULES = {
     "account.py",
-    "ads.py",
     "admin.py",
-    "buyer.py",
+    "admin_ads.py",
+    "ads.py",
+    "categories.py",
     "compare.py",
-    "navigation.py",
+    "discovery.py",
+    "favorites.py",
+    "hot.py",
+    "messages.py",
     "notifications.py",
+    "product_management.py",
+    "product_stats.py",
     "products.py",
+    "publicads.py",
     "referrals.py",
-    "search.py",
+    "report.py",
+    "requests.py",
+    "review.py",
     "seller.py",
+    "seller_claims.py",
+    "seller_registration.py",
+    "shop.py",
+    "start.py",
+    "state.py",
+    "store_status.py",
     "support.py",
-}
-
-EXPECTED_SERVICE_MODULES = {
-    "backups.py",
-    "notifications.py",
-    "referrals.py",
-    "tasks.py",
-}
-
-EXPECTED_CORE_MODULES = {
-    "config.py",
-    "constants.py",
-    "database.py",
-    "keyboards.py",
-    "repositories.py",
-    "states.py",
-    "utils.py",
-}
-
-EXPECTED_ROUTER_MODULES = {
-    "account",
-    "ads",
-    "admin",
-    "buyer",
-    "compare",
-    "navigation",
-    "notifications",
-    "products",
-    "referrals",
-    "search",
-    "seller",
-    "support",
+    "telegram.py",
+    "webhook.py",
 }
 
 
-def _python_files(root: Path):
-    """Return sorted Python files below a directory."""
-    return sorted(root.rglob("*.py"))
+EXPECTED_BACKEND_MODULES = {
+    "__init__.py",
+    "backend.py",
+    "database_backend.py",
+    "d1_backend.py",
+}
 
 
-def _defined_functions(tree: ast.AST):
-    """Return all function names defined in an AST."""
+FORBIDDEN_WORKER_TEXT = (
+    "import aiogram",
+    "from aiogram",
+    "import aiosqlite",
+    "from aiosqlite",
+    "import sqlite3",
+    "from sqlite3",
+)
+
+
+def _python_files(root: Path) -> list[Path]:
+    if not root.exists():
+        return []
+
+    return sorted(
+        path
+        for path in root.rglob("*.py")
+        if path.is_file()
+    )
+
+
+def _parse(path: Path) -> ast.AST:
+    return ast.parse(
+        path.read_text(
+            encoding="utf-8"
+        ),
+        filename=str(path),
+    )
+
+
+def _defined_functions(tree: ast.AST) -> set[str]:
     return {
         node.name
         for node in ast.walk(tree)
@@ -104,74 +118,105 @@ def _defined_functions(tree: ast.AST):
     }
 
 
-def _decorator_source(source: str, decorator: ast.AST) -> str:
-    """Return source text for a decorator node."""
-    return ast.get_source_segment(source, decorator) or ""
-
-
-def _call_name(node: ast.Call) -> str:
-    """
-    Return a dotted call name when statically identifiable.
-
-    Examples:
-        dp.include_router(...) -> "dp.include_router"
-        router.message(...) -> "router.message"
-    """
-    parts = []
-    current = node.func
-
-    while isinstance(current, ast.Attribute):
-        parts.append(current.attr)
-        current = current.value
-
-    if isinstance(current, ast.Name):
-        parts.append(current.id)
-
-    return ".".join(reversed(parts))
-
-
-def _router_registrations(tree: ast.AST):
-    """
-    Return router module names registered through dp.include_router().
-
-    The registrations live inside create_dispatcher(), so this helper
-    intentionally walks the entire AST rather than only module-level
-    statements.
-    """
-    registrations = []
+def _called_names(tree: ast.AST) -> list[str]:
+    names: list[str] = []
 
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
 
-        if _call_name(node) != "dp.include_router":
-            continue
+        current = node.func
+        parts: list[str] = []
 
-        if not node.args:
-            continue
+        while isinstance(current, ast.Attribute):
+            parts.append(current.attr)
+            current = current.value
 
-        argument = node.args[0]
+        if isinstance(current, ast.Name):
+            parts.append(current.id)
 
-        if (
-            isinstance(argument, ast.Attribute)
-            and argument.attr == "router"
-            and isinstance(argument.value, ast.Name)
-        ):
-            registrations.append(argument.value.id)
+        if parts:
+            names.append(
+                ".".join(
+                    reversed(parts)
+                )
+            )
 
-    return registrations
+    return names
 
 
-class CompileTests(unittest.TestCase):
-    """Ensure the application and modular Python files compile."""
+class WorkerStructureTests(unittest.TestCase):
+    """Verify the current Worker source tree exists."""
 
-    def test_bot_py_compiles_without_syntax_errors(self):
+    def test_src_directory_exists(self):
+        self.assertTrue(
+            SRC_PATH.is_dir(),
+            "Missing src/ directory.",
+        )
+
+    def test_entry_exists(self):
+        self.assertTrue(
+            ENTRY_PATH.is_file(),
+            "Missing Worker entry: src/entry.py",
+        )
+
+    def test_worker_directory_exists(self):
+        self.assertTrue(
+            WORKER_PATH.is_dir(),
+            "Missing Worker module directory: src/worker/",
+        )
+
+    def test_backend_directory_exists(self):
+        self.assertTrue(
+            BACKEND_PATH.is_dir(),
+            "Missing Worker backend directory: src/worker_backend/",
+        )
+
+    def test_expected_worker_modules_exist(self):
+        missing = [
+            name
+            for name in sorted(
+                EXPECTED_WORKER_MODULES
+            )
+            if not (
+                WORKER_PATH / name
+            ).is_file()
+        ]
+
+        self.assertFalse(
+            missing,
+            "Missing Worker modules: "
+            + ", ".join(missing),
+        )
+
+    def test_expected_backend_modules_exist(self):
+        missing = [
+            name
+            for name in sorted(
+                EXPECTED_BACKEND_MODULES
+            )
+            if not (
+                BACKEND_PATH / name
+            ).is_file()
+        ]
+
+        self.assertFalse(
+            missing,
+            "Missing Worker backend modules: "
+            + ", ".join(missing),
+        )
+
+
+class WorkerCompilationTests(unittest.TestCase):
+    """Verify Worker Python sources compile."""
+
+    def test_entry_compiles(self):
         result = subprocess.run(
             [
                 sys.executable,
                 "-m",
                 "py_compile",
-                str(BOT_PY_PATH),
+                str(ENTRY_PATH),
             ],
             capture_output=True,
             text=True,
@@ -181,23 +226,18 @@ class CompileTests(unittest.TestCase):
             result.returncode,
             0,
             (
-                "py_compile failed:\n"
+                "src/entry.py failed compilation:\n"
                 f"stdout={result.stdout}\n"
                 f"stderr={result.stderr}"
             ),
         )
 
-    def test_bot_package_files_compile_without_syntax_errors(self):
-        python_files = _python_files(BOT_PACKAGE_PATH)
-
-        self.assertTrue(
-            python_files,
-            "No Python files found inside bot/ package.",
-        )
-
+    def test_worker_modules_compile(self):
         failures = []
 
-        for path in python_files:
+        for path in _python_files(
+            WORKER_PATH
+        ):
             result = subprocess.run(
                 [
                     sys.executable,
@@ -212,7 +252,11 @@ class CompileTests(unittest.TestCase):
             if result.returncode != 0:
                 failures.append(
                     (
-                        str(path.relative_to(PROJECT_ROOT)),
+                        str(
+                            path.relative_to(
+                                PROJECT_ROOT
+                            )
+                        ),
                         result.stdout,
                         result.stderr,
                     )
@@ -220,7 +264,7 @@ class CompileTests(unittest.TestCase):
 
         self.assertFalse(
             failures,
-            "Python compilation failures:\n"
+            "Worker compilation failures:\n"
             + "\n".join(
                 (
                     f"{path}\n"
@@ -231,18 +275,12 @@ class CompileTests(unittest.TestCase):
             ),
         )
 
-    def test_all_test_files_compile_without_syntax_errors(self):
-        tests_path = PROJECT_ROOT / "tests"
-        python_files = _python_files(tests_path)
-
-        self.assertTrue(
-            python_files,
-            "No Python test files found.",
-        )
-
+    def test_backend_modules_compile(self):
         failures = []
 
-        for path in python_files:
+        for path in _python_files(
+            BACKEND_PATH
+        ):
             result = subprocess.run(
                 [
                     sys.executable,
@@ -257,7 +295,11 @@ class CompileTests(unittest.TestCase):
             if result.returncode != 0:
                 failures.append(
                     (
-                        str(path.relative_to(PROJECT_ROOT)),
+                        str(
+                            path.relative_to(
+                                PROJECT_ROOT
+                            )
+                        ),
                         result.stdout,
                         result.stderr,
                     )
@@ -265,7 +307,7 @@ class CompileTests(unittest.TestCase):
 
         self.assertFalse(
             failures,
-            "Test compilation failures:\n"
+            "Worker backend compilation failures:\n"
             + "\n".join(
                 (
                     f"{path}\n"
@@ -277,1109 +319,780 @@ class CompileTests(unittest.TestCase):
         )
 
 
-class ModularStructureTests(unittest.TestCase):
-    """Verify the current modular project structure."""
+class WorkerForbiddenDependencyTests(unittest.TestCase):
+    """
+    Ensure the current Worker runtime does not depend on the retired
+    aiogram/SQLite runtime.
+    """
 
-    def test_required_handler_modules_exist(self):
-        missing = [
-            name
-            for name in sorted(EXPECTED_HANDLER_MODULES)
-            if not (HANDLERS_PATH / name).is_file()
+    def _worker_source_files(self):
+        return [
+            ENTRY_PATH,
+            *_python_files(WORKER_PATH),
+            *_python_files(BACKEND_PATH),
         ]
 
-        self.assertFalse(
-            missing,
-            f"Missing handler modules: {missing}",
-        )
-
-    def test_required_service_modules_exist(self):
-        missing = [
-            name
-            for name in sorted(EXPECTED_SERVICE_MODULES)
-            if not (SERVICES_PATH / name).is_file()
-        ]
-
-        self.assertFalse(
-            missing,
-            f"Missing service modules: {missing}",
-        )
-
-    def test_required_core_modules_exist(self):
-        missing = [
-            name
-            for name in sorted(EXPECTED_CORE_MODULES)
-            if not (BOT_PACKAGE_PATH / name).is_file()
-        ]
-
-        self.assertFalse(
-            missing,
-            f"Missing core modules: {missing}",
-        )
-
-    def test_bot_package_has_init_file(self):
-        init_path = BOT_PACKAGE_PATH / "__init__.py"
-
-        self.assertTrue(
-            init_path.is_file(),
-            "bot/ must remain a Python package with __init__.py.",
-        )
-
-    def test_handlers_package_has_init_file(self):
-        init_path = HANDLERS_PATH / "__init__.py"
-
-        self.assertTrue(
-            init_path.is_file(),
-            "bot/handlers/ must remain a Python package.",
-        )
-
-    def test_services_package_has_init_file(self):
-        init_path = SERVICES_PATH / "__init__.py"
-
-        self.assertTrue(
-            init_path.is_file(),
-            "bot/services/ must remain a Python package.",
-        )
-
-
-class EntryPointArchitectureTests(unittest.TestCase):
-    """Verify that bot.py is only the application entry point."""
-
-    @classmethod
-    def setUpClass(cls):
-        cls.source = BOT_PY_PATH.read_text(
-            encoding="utf-8"
-        )
-        cls.tree = ast.parse(
-            cls.source,
-            filename=str(BOT_PY_PATH),
-        )
-
-    def test_root_start_py_does_not_exist(self):
-        legacy_start = PROJECT_ROOT / "start.py"
-
-        self.assertFalse(
-            legacy_start.exists(),
-            (
-                "Legacy root start.py still exists. "
-                "The modular project uses bot.py as its entry point."
-            ),
-        )
-
-    def test_bot_py_contains_expected_entry_point_functions(self):
-        functions = _defined_functions(self.tree)
-
-        expected_functions = {
-            "on_startup",
-            "on_shutdown",
-            "handle_global_error",
-            "create_dispatcher",
-            "main",
-        }
-
-        missing = expected_functions - functions
-
-        self.assertFalse(
-            missing,
-            (
-                "bot.py is missing expected entry-point "
-                f"functions: {sorted(missing)}"
-            ),
-        )
-
-    def test_bot_py_contains_no_handler_decorators(self):
-        forbidden_patterns = (
-            "@dp.message",
-            "@dp.callback_query",
-            "@router.message",
-            "@router.callback_query",
-        )
-
-        found = [
-            pattern
-            for pattern in forbidden_patterns
-            if pattern in self.source
-        ]
-
-        self.assertFalse(
-            found,
-            (
-                "bot.py contains handler decorators. "
-                "Handlers must live under bot/handlers/: "
-                f"{found}"
-            ),
-        )
-
-    def test_bot_py_contains_no_router_handler_decorator_calls(self):
-        leaked = []
-
-        for node in ast.walk(self.tree):
-            if not isinstance(
-                node,
-                (
-                    ast.FunctionDef,
-                    ast.AsyncFunctionDef,
-                ),
-            ):
-                continue
-
-            for decorator in node.decorator_list:
-                decorator_text = _decorator_source(
-                    self.source,
-                    decorator,
-                )
-
-                if (
-                    "message" in decorator_text
-                    or "callback_query" in decorator_text
-                ):
-                    leaked.append(
-                        (
-                            node.name,
-                            decorator_text,
-                        )
-                    )
-
-        self.assertFalse(
-            leaked,
-            (
-                "bot.py still contains handler decorators: "
-                f"{leaked}"
-            ),
-        )
-
-    def test_bot_py_has_no_handler_like_functions(self):
-        functions = _defined_functions(self.tree)
-
-        allowed = {
-            "on_startup",
-            "on_shutdown",
-            "handle_global_error",
-            "create_dispatcher",
-            "main",
-        }
-
-        unexpected = sorted(
-            functions - allowed
-        )
-
-        self.assertFalse(
-            unexpected,
-            (
-                "Unexpected functions found in bot.py. "
-                "The entry point should not contain business "
-                f"logic or handler implementations: {unexpected}"
-            ),
-        )
-
-    def test_bot_py_does_not_define_router_objects(self):
-        assignments = []
-
-        for node in self.tree.body:
-            if not isinstance(node, ast.Assign):
-                continue
-
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    if target.id in {
-                        "router",
-                        "dp",
-                    }:
-                        assignments.append(target.id)
-
-        self.assertNotIn(
-            "router",
-            assignments,
-            (
-                "bot.py must not define its own Router. "
-                "Routers belong to bot/handlers/ modules."
-            ),
-        )
-
-    def test_bot_py_registers_all_main_routers(self):
-        registrations = _router_registrations(
-            self.tree
-        )
-
-        missing = sorted(
-            EXPECTED_ROUTER_MODULES - set(registrations)
-        )
-
-        self.assertFalse(
-            missing,
-            (
-                "Missing router registrations in bot.py: "
-                f"{missing}"
-            ),
-        )
-
-    def test_bot_py_does_not_register_unknown_routers(self):
-        registrations = _router_registrations(
-            self.tree
-        )
-
-        unknown = sorted(
-            set(registrations) - EXPECTED_ROUTER_MODULES
-        )
-
-        self.assertFalse(
-            unknown,
-            (
-                "bot.py registers unexpected routers: "
-                f"{unknown}"
-            ),
-        )
-
-    def test_navigation_router_is_registered_last(self):
-        registrations = _router_registrations(
-            self.tree
-        )
-
-        self.assertTrue(
-            registrations,
-            "No Dispatcher router registrations found.",
-        )
-
-        self.assertEqual(
-            registrations[-1],
-            "navigation",
-            (
-                "navigation.router must remain the last "
-                "registered router because it contains "
-                "generic fallback handlers."
-            ),
-        )
-
-
-class RouterImportTests(unittest.TestCase):
-    """Verify that bot.py imports the modular handler routers."""
-
-    @classmethod
-    def setUpClass(cls):
-        cls.source = BOT_PY_PATH.read_text(
-            encoding="utf-8"
-        )
-        cls.tree = ast.parse(
-            cls.source,
-            filename=str(BOT_PY_PATH),
-        )
-
-    def _imported_handler_modules(self):
-        imported = set()
-
-        for node in self.tree.body:
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    name = alias.name
-
-                    if name.startswith("bot.handlers."):
-                        imported.add(
-                            name.rsplit(".", 1)[-1]
-                        )
-
-            elif isinstance(node, ast.ImportFrom):
-                module = node.module or ""
-
-                if module.startswith("bot.handlers."):
-                    imported.add(
-                        module.rsplit(".", 1)[-1]
-                    )
-
-                elif module == "bot.handlers":
-                    for alias in node.names:
-                        if (
-                            alias.name != "*"
-                            and alias.name in EXPECTED_ROUTER_MODULES
-                        ):
-                            imported.add(
-                                alias.name
-                            )
-
-        return imported
-
-    def test_all_handler_modules_are_imported_by_bot_py(self):
-        imported = self._imported_handler_modules()
-
-        missing = sorted(
-            EXPECTED_ROUTER_MODULES - imported
-        )
-
-        self.assertFalse(
-            missing,
-            (
-                "bot.py does not import all modular handler "
-                f"modules: {missing}"
-            ),
-        )
-
-    def test_no_legacy_monolithic_bot_imports_in_application_code(self):
+    def test_worker_has_no_legacy_runtime_imports(self):
         violations = []
 
-        for path in _python_files(BOT_PACKAGE_PATH):
+        for path in self._worker_source_files():
             source = path.read_text(
                 encoding="utf-8"
             )
 
-            if re.search(
-                r"(?:from\s+bot\s+import|import\s+bot\b)",
-                source,
-            ):
-                violations.append(
-                    str(path.relative_to(PROJECT_ROOT))
-                )
-
-        self.assertFalse(
-            violations,
-            (
-                "Application modules still import the root "
-                f"bot.py module: {violations}"
-            ),
-        )
-
-
-class NavigationStructureTests(unittest.TestCase):
-    """Verify safe ordering of navigation handlers."""
-
-    @classmethod
-    def setUpClass(cls):
-        cls.navigation_path = HANDLERS_PATH / "navigation.py"
-
-        cls.source = cls.navigation_path.read_text(
-            encoding="utf-8"
-        )
-
-        cls.tree = ast.parse(
-            cls.source,
-            filename=str(cls.navigation_path),
-        )
-
-    def _line_of_def(self, func_name: str) -> int:
-        for node in ast.walk(self.tree):
-            if isinstance(
-                node,
-                (
-                    ast.FunctionDef,
-                    ast.AsyncFunctionDef,
-                ),
-            ) and node.name == func_name:
-                return node.lineno
-
-        raise AssertionError(
-            f"Function '{func_name}' not found in navigation.py"
-        )
-
-    def test_command_start_handler_is_before_generic_message_fallback(self):
-        start_line = self._line_of_def(
-            "handle_start"
-        )
-
-        fallback_line = self._line_of_def(
-            "handle_unknown_message"
-        )
-
-        self.assertLess(
-            start_line,
-            fallback_line,
-            (
-                "handle_start must be registered before "
-                "the generic message fallback."
-            ),
-        )
-
-    def test_generic_callback_fallback_is_last(self):
-        fallback_line = self._line_of_def(
-            "handle_unknown_callback"
-        )
-
-        other_callback_lines = []
-
-        for node in ast.walk(self.tree):
-            if not isinstance(
-                node,
-                (
-                    ast.FunctionDef,
-                    ast.AsyncFunctionDef,
-                ),
-            ):
-                continue
-
-            if node.name == "handle_unknown_callback":
-                continue
-
-            for decorator in node.decorator_list:
-                decorator_text = _decorator_source(
-                    self.source,
-                    decorator,
-                )
-
-                if "router.callback_query" in decorator_text:
-                    other_callback_lines.append(
-                        node.lineno
-                    )
-
-        self.assertTrue(
-            other_callback_lines,
-            "No other callback_query handlers found.",
-        )
-
-        self.assertGreater(
-            fallback_line,
-            max(other_callback_lines),
-            (
-                "The generic callback_query fallback must be "
-                "registered after all specific callback handlers."
-            ),
-        )
-
-    def test_generic_message_fallback_is_last(self):
-        fallback_line = self._line_of_def(
-            "handle_unknown_message"
-        )
-
-        other_message_lines = []
-
-        for node in ast.walk(self.tree):
-            if not isinstance(
-                node,
-                (
-                    ast.FunctionDef,
-                    ast.AsyncFunctionDef,
-                ),
-            ):
-                continue
-
-            if node.name == "handle_unknown_message":
-                continue
-
-            for decorator in node.decorator_list:
-                decorator_text = _decorator_source(
-                    self.source,
-                    decorator,
-                )
-
-                if "router.message" in decorator_text:
-                    other_message_lines.append(
-                        node.lineno
-                    )
-
-        self.assertTrue(
-            other_message_lines,
-            "No other message handlers found.",
-        )
-
-        self.assertGreater(
-            fallback_line,
-            max(other_message_lines),
-            (
-                "The generic message fallback must be "
-                "registered after all specific message handlers."
-            ),
-        )
-
-    def test_navigation_has_command_start_handler(self):
-        self.assertIn(
-            "@router.message",
-            self.source,
-        )
-
-        self.assertIn(
-            "CommandStart()",
-            self.source,
-        )
-
-        self.assertIn(
-            "async def handle_start",
-            self.source,
-        )
-
-    def test_navigation_handles_both_restart_callbacks(self):
-        self.assertIn(
-            'F.data == "restart_button"',
-            self.source,
-        )
-
-        self.assertIn(
-            'F.data == "restartmain"',
-            self.source,
-        )
-
-
-class HelperLocationTests(unittest.TestCase):
-    """Verify helpers live in their canonical modules."""
-
-    EXPECTED_HELPERS = {
-        "utils.py": {
-            "ensure_user",
-            "log_event",
-            "safe_edit",
-            "parse_int",
-            "format_price",
-            "status_badge",
-            "instagram_url",
-            "telegram_url",
-            "website_url",
-            "now_iso",
-            "restart_requested",
-        },
-        "services/notifications.py": {
-            "notify_user",
-        },
-        "keyboards.py": {
-            "kb_add_back",
-            "kb_pagination_row",
-            "main_menu_keyboard",
-            "restart_button",
-        },
-        "handlers/products.py": {
-            "_render_product_detail",
-        },
-        "handlers/notifications.py": {
-            "_render_notifications",
-        },
-        "handlers/seller.py": {
-            "_finish_register_seller",
-        },
-    }
-
-    def _defined_functions(self, path: Path):
-        source = path.read_text(
-            encoding="utf-8"
-        )
-
-        tree = ast.parse(
-            source,
-            filename=str(path),
-        )
-
-        return _defined_functions(tree)
-
-    def test_helpers_are_in_expected_modules(self):
-        missing = []
-
-        for relative_path, expected in self.EXPECTED_HELPERS.items():
-            path = BOT_PACKAGE_PATH / relative_path
-
-            self.assertTrue(
-                path.is_file(),
-                f"Expected module does not exist: {relative_path}",
-            )
-
-            defined = self._defined_functions(path)
-
-            for function_name in expected:
-                if function_name not in defined:
-                    missing.append(
-                        f"{relative_path}:{function_name}"
-                    )
-
-        self.assertFalse(
-            missing,
-            "Helpers missing from expected modules: "
-            + ", ".join(missing),
-        )
-
-    def test_bot_py_no_longer_contains_moved_helpers(self):
-        source = BOT_PY_PATH.read_text(
-            encoding="utf-8"
-        )
-
-        tree = ast.parse(
-            source,
-            filename=str(BOT_PY_PATH),
-        )
-
-        defined = _defined_functions(tree)
-
-        moved_helpers = set().union(
-            *self.EXPECTED_HELPERS.values()
-        )
-
-        leaked = defined.intersection(
-            moved_helpers
-        )
-
-        self.assertFalse(
-            leaked,
-            (
-                "Moved helpers are still defined in bot.py: "
-                f"{sorted(leaked)}"
-            ),
-        )
-
-
-class LegacyArchitectureReferenceTests(unittest.TestCase):
-    """Detect stale references to the removed monolithic architecture."""
-
-    LEGACY_PATTERNS = (
-        r"from\s+bot\s+import\s+",
-        r"import\s+bot\b",
-        r"bot\.py['\"]",
-        r"bot\.py[`\"]",
-        r"monolithic\s+bot",
-        r"monolithic\s+architecture",
-    )
-
-    def test_tests_do_not_import_root_bot_module(self):
-        tests_path = PROJECT_ROOT / "tests"
-
-        violations = []
-
-        for path in _python_files(tests_path):
-            source = path.read_text(
-                encoding="utf-8"
-            )
-
-            if re.search(
-                r"(?:from\s+bot\s+import|import\s+bot\b)",
-                source,
-            ):
-                violations.append(
-                    str(path.relative_to(PROJECT_ROOT))
-                )
-
-        self.assertFalse(
-            violations,
-            (
-                "Tests still import the root bot.py module: "
-                f"{violations}"
-            ),
-        )
-
-    def test_application_and_tests_have_no_stale_architecture_references(self):
-        roots = (
-            BOT_PACKAGE_PATH,
-            PROJECT_ROOT / "tests",
-        )
-
-        violations = []
-
-        for root in roots:
-            for path in _python_files(root):
-                if path.name == "test_static_analysis.py":
-                    continue
-
-                source = path.read_text(
-                    encoding="utf-8"
-                )
-
-                for pattern in self.LEGACY_PATTERNS:
-                    if re.search(pattern, source):
-                        violations.append(
-                            (
-                                str(
-                                    path.relative_to(
-                                        PROJECT_ROOT
-                                    )
-                                ),
-                                pattern,
-                            )
-                        )
-
-        self.assertFalse(
-            violations,
-            (
-                "Found stale monolithic architecture references: "
-                f"{violations}"
-            ),
-        )
-
-
-class SourceQualityTests(unittest.TestCase):
-    """General source-level safety checks."""
-
-    def test_no_bare_except_pass_in_bot_package(self):
-        pattern = re.compile(
-            r"except\s*:\s*\n\s*pass"
-        )
-
-        failures = []
-
-        for path in _python_files(BOT_PACKAGE_PATH):
-            source = path.read_text(
-                encoding="utf-8"
-            )
-
-            if pattern.search(source):
-                failures.append(
-                    str(path.relative_to(PROJECT_ROOT))
-                )
-
-        self.assertFalse(
-            failures,
-            (
-                "Found bare 'except: pass' blocks in: "
-                f"{failures}"
-            ),
-        )
-
-    def test_no_wildcard_imports_in_application_package(self):
-        violations = []
-
-        for path in _python_files(BOT_PACKAGE_PATH):
-            source = path.read_text(
-                encoding="utf-8"
-            )
-
-            tree = ast.parse(
-                source,
-                filename=str(path),
-            )
-
-            for node in ast.walk(tree):
-                if isinstance(node, ast.ImportFrom):
-                    if any(
-                        alias.name == "*"
-                        for alias in node.names
-                    ):
-                        violations.append(
-                            str(path.relative_to(PROJECT_ROOT))
-                        )
-
-        self.assertFalse(
-            violations,
-            (
-                "Wildcard imports are not allowed in the "
-                f"application package: {violations}"
-            ),
-        )
-
-    def test_sql_queries_do_not_use_direct_f_string_interpolation(self):
-        """
-        Detect f-strings used directly as SQL statements.
-
-        Dynamic SQL is allowed only when the interpolated expression
-        is the controlled `placeholders` variable.
-        """
-        suspicious = []
-
-        sql_methods = {
-            "execute",
-            "executemany",
-            "executescript",
-            "fetchone",
-            "fetchall",
-        }
-
-        for path in _python_files(BOT_PACKAGE_PATH):
-            source = path.read_text(
-                encoding="utf-8"
-            )
-
-            tree = ast.parse(
-                source,
-                filename=str(path),
-            )
-
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.Call):
-                    continue
-
-                if not isinstance(node.func, ast.Attribute):
-                    continue
-
-                if node.func.attr not in sql_methods:
-                    continue
-
-                if not node.args:
-                    continue
-
-                query_arg = node.args[0]
-
-                if not isinstance(
-                    query_arg,
-                    ast.JoinedStr,
-                ):
-                    continue
-
-                for value in query_arg.values:
-                    if not isinstance(
-                        value,
-                        ast.FormattedValue,
-                    ):
-                        continue
-
-                    expression = ast.get_source_segment(
-                        source,
-                        value.value,
-                    )
-
-                    if not expression:
-                        expression = ast.unparse(
-                            value.value
-                        )
-
-                    expression = expression.strip()
-
-                    if expression == "placeholders":
-                        continue
-
-                    suspicious.append(
+            for forbidden in FORBIDDEN_WORKER_TEXT:
+                if forbidden in source:
+                    violations.append(
                         (
                             str(
                                 path.relative_to(
                                     PROJECT_ROOT
                                 )
                             ),
-                            expression,
+                            forbidden,
                         )
                     )
 
         self.assertFalse(
-            suspicious,
+            violations,
             (
-                "Found database queries that interpolate "
-                f"values directly: {suspicious}"
+                "Legacy runtime imports found in Worker source: "
+                f"{violations}"
             ),
         )
 
-    def test_no_legacy_handler_implementation_remains_in_bot_py(self):
-        source = BOT_PY_PATH.read_text(
-            encoding="utf-8"
-        )
+    def test_worker_has_no_bot_db_reference(self):
+        violations = []
 
-        legacy_patterns = [
-            r"@dp\.message",
-            r"@dp\.callback_query",
-            r"@router\.message",
-            r"@router\.callback_query",
-        ]
-
-        found = []
-
-        for pattern in legacy_patterns:
-            if re.search(pattern, source):
-                found.append(pattern)
-
-        self.assertFalse(
-            found,
-            (
-                "bot.py still contains handler decorators; "
-                f"handlers should live in bot/handlers/: {found}"
-            ),
-        )
-
-
-class CallbackDataCollisionTests(unittest.TestCase):
-    """Detect callback-data patterns that could shadow one another."""
-
-    @classmethod
-    def setUpClass(cls):
-        cls.python_sources = []
-
-        for path in HANDLERS_PATH.rglob("*.py"):
-            cls.python_sources.append(
-                (
-                    path,
-                    path.read_text(
-                        encoding="utf-8"
-                    ),
-                )
+        for path in self._worker_source_files():
+            source = path.read_text(
+                encoding="utf-8"
             )
 
-    def _extract_patterns(self):
-        exact = []
-        prefixes = []
+            if "bot.db" in source:
+                violations.append(
+                    str(
+                        path.relative_to(
+                            PROJECT_ROOT
+                        )
+                    )
+                )
 
-        for path, source in self.python_sources:
-            tree = ast.parse(
-                source,
-                filename=str(path),
+        self.assertFalse(
+            violations,
+            (
+                "Worker source references bot.db: "
+                f"{violations}"
+            ),
+        )
+
+    def test_worker_has_no_todo_markers(self):
+        violations = []
+
+        for path in self._worker_source_files():
+            source = path.read_text(
+                encoding="utf-8"
             )
 
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.Call):
-                    continue
-
-                if not isinstance(node.func, ast.Attribute):
-                    continue
-
-                if node.func.attr != "startswith":
-                    continue
-
-                receiver = node.func.value
-
-                if not (
-                    isinstance(receiver, ast.Attribute)
-                    and receiver.attr == "data"
-                    and isinstance(receiver.value, ast.Name)
-                    and receiver.value.id == "F"
-                ):
-                    continue
-
-                if not node.args:
-                    continue
-
-                argument = node.args[0]
-
-                if not (
-                    isinstance(argument, ast.Constant)
-                    and isinstance(argument.value, str)
-                ):
-                    continue
-
-                prefixes.append(
-                    (
-                        argument.value,
-                        path,
+            if "TODO" in source:
+                violations.append(
+                    str(
+                        path.relative_to(
+                            PROJECT_ROOT
+                        )
                     )
                 )
 
+        self.assertFalse(
+            violations,
+            (
+                "TODO markers remain in Worker source: "
+                f"{violations}"
+            ),
+        )
+
+    def test_worker_has_no_bare_pass_statements(self):
+        violations = []
+
+        for path in self._worker_source_files():
+            tree = _parse(path)
+
             for node in ast.walk(tree):
-                if not isinstance(node, ast.Compare):
-                    continue
-
-                if len(node.ops) != 1:
-                    continue
-
-                if not isinstance(node.ops[0], ast.Eq):
-                    continue
-
-                if len(node.comparators) != 1:
-                    continue
-
-                left = node.left
-                right = node.comparators[0]
-
-                if not (
-                    isinstance(left, ast.Attribute)
-                    and left.attr == "data"
-                    and isinstance(left.value, ast.Name)
-                    and left.value.id == "F"
+                if isinstance(
+                    node,
+                    ast.Pass,
                 ):
-                    continue
-
-                if not (
-                    isinstance(right, ast.Constant)
-                    and isinstance(right.value, str)
-                ):
-                    continue
-
-                exact.append(
-                    (
-                        right.value,
-                        path,
-                    )
-                )
-
-        return exact, prefixes
-
-    def test_exact_match_patterns_are_unique(self):
-        exact, _prefixes = self._extract_patterns()
-
-        values = [
-            value
-            for value, _path in exact
-        ]
-
-        duplicates = {
-            value
-            for value in values
-            if values.count(value) > 1
-        }
-
-        self.assertFalse(
-            duplicates,
-            (
-                "Duplicate exact callback patterns found: "
-                f"{sorted(duplicates)}"
-            ),
-        )
-
-    def test_prefix_patterns_do_not_shadow_each_other(self):
-        _exact, prefixes = self._extract_patterns()
-
-        unique_prefixes = sorted(
-            {
-                value
-                for value, _path in prefixes
-            }
-        )
-
-        collisions = []
-
-        for i, first in enumerate(unique_prefixes):
-            for second in unique_prefixes[i + 1:]:
-                if (
-                    first.startswith(second)
-                    or second.startswith(first)
-                ):
-                    collisions.append(
-                        (first, second)
-                    )
-
-        self.assertFalse(
-            collisions,
-            (
-                "Callback prefixes collide and could shadow "
-                f"one another: {collisions}"
-            ),
-        )
-
-    def test_exact_patterns_are_not_shadowed_by_different_prefix(self):
-        exact, prefixes = self._extract_patterns()
-
-        unique_prefixes = {
-            value
-            for value, _path in prefixes
-        }
-
-        collisions = []
-
-        for exact_value, exact_path in exact:
-            for prefix in unique_prefixes:
-                if (
-                    exact_value.startswith(prefix)
-                    and exact_value != prefix
-                ):
-                    collisions.append(
+                    violations.append(
                         (
-                            exact_value,
                             str(
-                                exact_path.relative_to(
+                                path.relative_to(
                                     PROJECT_ROOT
                                 )
                             ),
-                            prefix,
+                            node.lineno,
                         )
                     )
 
         self.assertFalse(
-            collisions,
+            violations,
             (
-                "Exact callback patterns are shadowed by "
-                f"prefix handlers: {collisions}"
+                "Bare pass statements remain in Worker source: "
+                f"{violations}"
             ),
         )
 
 
-class BackgroundTaskStructureTests(unittest.TestCase):
-    """Verify required background services remain wired into bot.py."""
+class EntryPointTests(unittest.TestCase):
+    """Verify the Worker entry point remains thin and explicit."""
 
     @classmethod
     def setUpClass(cls):
-        cls.source = BOT_PY_PATH.read_text(
+        cls.source = ENTRY_PATH.read_text(
             encoding="utf-8"
         )
 
-    def test_bot_py_imports_background_tasks(self):
-        self.assertIn(
-            "periodic_backup_task",
-            self.source,
+        cls.tree = _parse(
+            ENTRY_PATH
+        )
+
+    def test_entry_defines_worker_fetch_path(self):
+        functions = _defined_functions(
+            self.tree
         )
 
         self.assertIn(
-            "periodic_ad_expiry_task",
+            "fetch",
+            functions,
+            "src/entry.py must define fetch().",
+        )
+
+    def test_entry_defines_worker_class(self):
+        class_names = {
+            node.name
+            for node in ast.walk(
+                self.tree
+            )
+            if isinstance(
+                node,
+                ast.ClassDef,
+            )
+        }
+
+        self.assertIn(
+            "ArzanKadehWorker",
+            class_names,
+            "ArzanKadehWorker is missing from entry.py.",
+        )
+
+    def test_entry_imports_worker_modules(self):
+        required_modules = {
+            "worker.start",
+            "worker.messages",
+            "worker.seller",
+            "worker.report",
+            "worker.store_status",
+            "worker.admin",
+        }
+
+        imported = set()
+
+        for node in self.tree.body:
+            if isinstance(
+                node,
+                ast.ImportFrom,
+            ):
+                if node.module:
+                    imported.add(
+                        node.module
+                    )
+
+            elif isinstance(
+                node,
+                ast.Import,
+            ):
+                for alias in node.names:
+                    imported.add(
+                        alias.name
+                    )
+
+        missing = sorted(
+            required_modules - imported
+        )
+
+        self.assertFalse(
+            missing,
+            (
+                "entry.py does not import required Worker modules: "
+                f"{missing}"
+            ),
+        )
+
+    def test_entry_contains_no_aiogram(self):
+        self.assertNotIn(
+            "aiogram",
             self.source,
         )
 
-    def test_bot_py_starts_background_tasks(self):
-        self.assertRegex(
+    def test_entry_contains_no_sqlite_runtime_import(self):
+        self.assertNotIn(
+            "sqlite3",
             self.source,
-            r"(?:asyncio\.)?create_task\([^)]*periodic_backup_task",
         )
 
-        self.assertRegex(
+        self.assertNotIn(
+            "aiosqlite",
             self.source,
-            r"(?:asyncio\.)?create_task\([^)]*periodic_ad_expiry_task",
+        )
+
+
+class DatabaseBackendContractTests(unittest.TestCase):
+    """Verify the Worker backend exposes the expected database contract."""
+
+    def test_database_backend_defines_required_contract(self):
+        path = (
+            BACKEND_PATH
+            / "database_backend.py"
+        )
+
+        tree = _parse(path)
+
+        classes = {
+            node.name: node
+            for node in ast.walk(tree)
+            if isinstance(
+                node,
+                ast.ClassDef,
+            )
+        }
+
+        self.assertIn(
+            "DatabaseBackend",
+            classes,
+        )
+
+        source = path.read_text(
+            encoding="utf-8"
+        )
+
+        for method_name in (
+            "connect",
+            "close",
+            "execute",
+            "fetchone",
+            "fetchall",
+            "executemany",
+            "transaction",
+        ):
+            self.assertIn(
+                f"def {method_name}",
+                source,
+                (
+                    "DatabaseBackend is missing "
+                    f"{method_name}()."
+                ),
+            )
+
+    def test_d1_backend_defines_required_operations(self):
+        path = (
+            BACKEND_PATH
+            / "d1_backend.py"
+        )
+
+        source = path.read_text(
+            encoding="utf-8"
+        )
+
+        for method_name in (
+            "connect",
+            "close",
+            "execute",
+            "fetchone",
+            "fetchall",
+            "executemany",
+            "transaction",
+        ):
+            self.assertIn(
+                f"def {method_name}",
+                source,
+                (
+                    "D1Backend is missing "
+                    f"{method_name}()."
+                ),
+            )
+
+    def test_d1_backend_uses_d1_batch_for_writes(self):
+        path = (
+            BACKEND_PATH
+            / "d1_backend.py"
+        )
+
+        source = path.read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "await self._database.batch",
+            source,
+        )
+
+        self.assertIn(
+            "await database.batch",
+            source,
+        )
+
+    def test_d1_backend_does_not_use_sqlite(self):
+        path = (
+            BACKEND_PATH
+            / "d1_backend.py"
+        )
+
+        source = path.read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn(
+            "sqlite3",
+            source,
+        )
+
+        self.assertNotIn(
+            "aiosqlite",
+            source,
+        )
+
+
+class WorkerDatabaseUsageTests(unittest.TestCase):
+    """
+    Ensure Worker application modules use the backend abstraction instead
+    of direct SQLite APIs.
+    """
+
+    def test_worker_modules_do_not_call_sqlite_apis(self):
+        violations = []
+
+        for path in _python_files(
+            WORKER_PATH
+        ):
+            source = path.read_text(
+                encoding="utf-8"
+            )
+
+            forbidden = (
+                "sqlite3.",
+                "aiosqlite.",
+                "sqlite_backend",
+                "bot.database",
+            )
+
+            for token in forbidden:
+                if token in source:
+                    violations.append(
+                        (
+                            str(
+                                path.relative_to(
+                                    PROJECT_ROOT
+                                )
+                            ),
+                            token,
+                        )
+                    )
+
+        self.assertFalse(
+            violations,
+            (
+                "Worker modules contain direct SQLite "
+                f"references: {violations}"
+            ),
+        )
+
+    def test_worker_modules_use_database_backend_methods(self):
+        database_methods = (
+            ".execute(",
+            ".fetchone(",
+            ".fetchall(",
+            ".executemany(",
+            ".transaction(",
+        )
+
+        violations = []
+
+        for path in _python_files(
+            WORKER_PATH
+        ):
+            source = path.read_text(
+                encoding="utf-8"
+            )
+
+            if any(
+                method in source
+                for method in database_methods
+            ):
+                continue
+
+            if path.name in {
+                "telegram.py",
+                "webhook.py",
+            }:
+                continue
+
+            violations.append(
+                str(
+                    path.relative_to(
+                        PROJECT_ROOT
+                    )
+                )
+            )
+
+        self.assertFalse(
+            violations,
+            (
+                "Worker modules contain no recognizable "
+                "DatabaseBackend operations: "
+                f"{violations}"
+            ),
+        )
+
+
+class CallbackRouteTests(unittest.TestCase):
+    """Verify important callback routes remain wired in entry.py."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = ENTRY_PATH.read_text(
+            encoding="utf-8"
+        )
+
+    def test_seller_contact_routes_exist(self):
+        for callback_prefix in (
+            "igclick:",
+            "tgclick:",
+            "waclick:",
+        ):
+            self.assertIn(
+                callback_prefix,
+                self.source,
+            )
+
+        for handler_name in (
+            "handle_instagram_click",
+            "handle_telegram_click",
+            "handle_whatsapp_click",
+        ):
+            self.assertIn(
+                handler_name,
+                self.source,
+            )
+
+    def test_store_toggle_route_exists(self):
+        self.assertIn(
+            'data.startswith("storetoggle:")',
+            self.source,
+        )
+
+        self.assertIn(
+            "handle_store_toggle_active",
+            self.source,
+        )
+
+    def test_admin_request_route_exists(self):
+        self.assertIn(
+            'data.startswith("adminreq:")',
+            self.source,
+        )
+
+        self.assertIn(
+            "handle_admin_request_decision",
+            self.source,
+        )
+
+    def test_admin_report_route_exists(self):
+        self.assertIn(
+            'data.startswith("adminreport:")',
+            self.source,
+        )
+
+        self.assertIn(
+            "handle_admin_report_decision",
+            self.source,
+        )
+
+    def test_unknown_callback_fallback_exists(self):
+        self.assertIn(
+            "⚠️ این گزینه هنوز فعال نیست.",
+            self.source,
+        )
+
+        self.assertIn(
+            "show_alert=True",
+            self.source,
+        )
+
+
+class SellerAndReviewSafetyTests(unittest.TestCase):
+    """Verify important inactive-target safety checks remain present."""
+
+    def test_seller_module_checks_owner_and_active_status(self):
+        path = (
+            WORKER_PATH
+            / "seller.py"
+        )
+
+        source = path.read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "owner_user_id",
+            source,
+        )
+
+        self.assertIn(
+            "created_by_user_id",
+            source,
+        )
+
+        self.assertIn(
+            "is_active",
+            source,
+        )
+
+    def test_review_module_checks_active_status(self):
+        path = (
+            WORKER_PATH
+            / "review.py"
+        )
+
+        source = path.read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "is_active",
+            source,
+        )
+
+        self.assertIn(
+            "COALESCE",
+            source,
+        )
+
+    def test_report_module_contains_admin_decision_flow(self):
+        path = (
+            WORKER_PATH
+            / "report.py"
+        )
+
+        source = path.read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "handle_admin_report_decision",
+            source,
+        )
+
+        self.assertIn(
+            "adminreport:approve:",
+            source,
+        )
+
+        self.assertIn(
+            "adminreport:reject:",
+            source,
+        )
+
+
+class SupportFlowTests(unittest.TestCase):
+    """Verify support request flow contains the required admin handoff."""
+
+    def test_support_module_accepts_environment(self):
+        path = (
+            WORKER_PATH
+            / "support.py"
+        )
+
+        source = path.read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "env: Any",
+            source,
+        )
+
+    def test_support_module_uses_admin_chat_id(self):
+        path = (
+            WORKER_PATH
+            / "support.py"
+        )
+
+        source = path.read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "ADMIN_CHAT_ID",
+            source,
+        )
+
+    def test_support_module_contains_admin_decision_callbacks(self):
+        path = (
+            WORKER_PATH
+            / "support.py"
+        )
+
+        source = path.read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "adminreq:approve:",
+            source,
+        )
+
+        self.assertIn(
+            "adminreq:reject:",
+            source,
+        )
+
+
+class SourceQualityTests(unittest.TestCase):
+    """General source-level checks for the current Worker."""
+
+    def test_worker_files_have_no_wildcard_imports(self):
+        violations = []
+
+        roots = (
+            SRC_PATH,
+        )
+
+        for root in roots:
+            for path in _python_files(root):
+                tree = _parse(path)
+
+                for node in ast.walk(tree):
+                    if not isinstance(
+                        node,
+                        ast.ImportFrom,
+                    ):
+                        continue
+
+                    if any(
+                        alias.name == "*"
+                        for alias in node.names
+                    ):
+                        violations.append(
+                            str(
+                                path.relative_to(
+                                    PROJECT_ROOT
+                                )
+                            )
+                        )
+
+        self.assertFalse(
+            violations,
+            (
+                "Wildcard imports found in Worker source: "
+                f"{violations}"
+            ),
+        )
+
+    def test_worker_source_does_not_use_runtime_exec(self):
+        violations = []
+
+        for path in _python_files(
+            SRC_PATH
+        ):
+            source = path.read_text(
+                encoding="utf-8"
+            )
+
+            tree = _parse(path)
+
+            for node in ast.walk(tree):
+                if not isinstance(
+                    node,
+                    ast.Call,
+                ):
+                    continue
+
+                if not isinstance(
+                    node.func,
+                    ast.Name,
+                ):
+                    continue
+
+                if node.func.id in {
+                    "eval",
+                    "exec",
+                }:
+                    violations.append(
+                        (
+                            str(
+                                path.relative_to(
+                                    PROJECT_ROOT
+                                )
+                            ),
+                            node.func.id,
+                        )
+                    )
+
+        self.assertFalse(
+            violations,
+            (
+                "Runtime eval/exec usage found: "
+                f"{violations}"
+            ),
+        )
+
+    def test_entry_uses_d1_binding(self):
+        source = ENTRY_PATH.read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "env.DB",
+            source,
+        )
+
+        self.assertIn(
+            "D1Backend",
+            source,
+        )
+
+    def test_entry_routes_webhook_processing(self):
+        source = ENTRY_PATH.read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "handle_webhook",
+            source,
+        )
+
+    def test_telegram_client_is_worker_specific(self):
+        path = (
+            WORKER_PATH
+            / "telegram.py"
+        )
+
+        source = path.read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "BOT_TOKEN",
+            source,
+        )
+
+        self.assertIn(
+            "api.telegram.org",
+            source,
+        )
+
+        self.assertNotIn(
+            "aiogram",
+            source,
         )
 
 
