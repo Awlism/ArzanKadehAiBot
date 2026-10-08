@@ -1,4 +1,4 @@
-name: Deploy ArzanKadeh AI Worker
+name: Test and Deploy ArzanKadeh AI Worker
 
 on:
   push:
@@ -6,7 +6,25 @@ on:
       - cloudflare-webhook-migration
 
 jobs:
+  test:
+    name: Run Worker Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.20"
+
+      - name: Run tests
+        run: uv run python -m unittest discover -s tests -v
+
   deploy:
+    name: Deploy Worker
+    needs: test
     runs-on: ubuntu-latest
 
     permissions:
