@@ -912,6 +912,26 @@ async def handle_compare_start(
         new_selection,
     )
 
+    await db.execute(
+        """
+        INSERT INTO events (
+            user_id,
+            event_type,
+            entity_type,
+            entity_id,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?);
+        """,
+        (
+            user_id,
+            "compare_add",
+            "product",
+            product_id,
+            _now_iso(),
+        ),
+    )
+
     if outcome == "added_ready":
         await _answer_callback(
             telegram,
