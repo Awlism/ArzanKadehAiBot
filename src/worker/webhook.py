@@ -4,12 +4,13 @@ ArzanKadeh AI
 Cloudflare Worker Telegram webhook foundation.
 
 This module:
-- validates the Telegram webhook secret when configured
+- requires a configured Telegram webhook secret
+- validates the Telegram webhook secret
 - parses Telegram JSON updates
 - identifies the update type
 
 It intentionally does not import aiogram.
-It does not call the Telegram Bot API yet.
+It does not call the Telegram Bot API.
 """
 
 from typing import Any, Optional
@@ -38,7 +39,7 @@ class WebhookError(Exception):
 
 
 class UnauthorizedWebhookError(WebhookError):
-    """Raised when the Telegram webhook secret is invalid."""
+    """Raised when the webhook secret is missing or invalid."""
 
 
 class InvalidWebhookPayloadError(WebhookError):
@@ -68,12 +69,13 @@ def verify_webhook_secret(
     request: Any,
     env: Any,
 ) -> None:
-    expected_secret = get_webhook_secret(
-        env
-    )
+    expected_secret = get_webhook_secret(env)
 
+    # Fail closed: never accept webhook requests without a configured secret.
     if expected_secret is None:
-        return
+        raise UnauthorizedWebhookError(
+            "Telegram webhook secret is not configured."
+        )
 
     received_secret = request.headers.get(
         "X-Telegram-Bot-Api-Secret-Token"
