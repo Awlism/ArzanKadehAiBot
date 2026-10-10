@@ -326,7 +326,7 @@ def _main_menu_keyboard() -> dict[str, Any]:
             [
                 _button(
                     "📂 دسته‌بندی‌ها",
-                    "cat:0",
+                    "cat:0:0",
                 )
             ],
             [
