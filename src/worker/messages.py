@@ -42,7 +42,9 @@ def _now_iso() -> str:
 async def _ensure_message_user(
     message: dict[str, Any],
 ) -> Optional[int]:
-    user = message.get("from")
+    user = message.get(
+        "from"
+    )
 
     if not isinstance(
         user,
@@ -275,6 +277,7 @@ async def _handle_active_state(
         return await handle_report_text(
             message,
             telegram,
+            env,
         )
 
     if state_name == "search":
