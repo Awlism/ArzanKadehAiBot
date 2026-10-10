@@ -947,6 +947,18 @@ async def _set_ad_value(
     audit_action: str,
     success_text: str,
 ) -> None:
+    if field not in {
+        "ad_price",
+        "ad_duration_days",
+        "ad_placement",
+    }:
+        await _send(
+            telegram,
+            chat_id,
+            "⚠️ فیلد نامعتبر است.",
+        )
+        return
+
     request = await _get_ad_request(
         db,
         request_id,
@@ -972,17 +984,16 @@ async def _set_ad_value(
         )
         return
 
-    if field not in {
-        "ad_price",
-        "ad_duration_days",
-        "ad_placement",
-    }:
-        await _send(
-            telegram,
-            chat_id,
-            "⚠️ فیلد نامعتبر است.",
-        )
-        return
+    admin_user_id = await _ensure_user(
+        db,
+        telegram_user_id,
+    )
+
+    operation_time = datetime.now(
+        timezone.utc
+    ).isoformat(
+        timespec="microseconds"
+    )
 
     query = (
         "UPDATE requests "
@@ -993,39 +1004,64 @@ async def _set_ad_value(
         "AND status IN ('PENDING', 'APPROVED');"
     )
 
-    result = await db.execute(
-        query,
-        (
-            value,
-            _now_iso(),
-            request_id,
-        ),
-    )
+    try:
+        async with db.transaction() as tx:
+            await tx.execute(
+                query,
+                (
+                    value,
+                    operation_time,
+                    request_id,
+                ),
+            )
 
-    if getattr(
-        result,
-        "rowcount",
-        0,
-    ) != 1:
+            await tx.execute(
+                """
+                INSERT INTO audit_log (
+                    actor_user_id,
+                    action,
+                    entity_type,
+                    entity_id,
+                    details,
+                    created_at
+                )
+                SELECT ?, ?, 'request', id, ?, ?
+                FROM requests
+                WHERE id = ?
+                  AND request_type IN ('ad', 'general_ad')
+                  AND status IN ('PENDING', 'APPROVED')
+                  AND updated_at = ?;
+                """,
+                (
+                    admin_user_id,
+                    audit_action,
+                    str(value),
+                    operation_time,
+                    request_id,
+                    operation_time,
+                ),
+            )
+
+        results = tx.results
+
+    except Exception:
+        await _send(
+            telegram,
+            chat_id,
+            "⚠️ ذخیره تغییر انجام نشد. لطفاً دوباره تلاش کن.",
+        )
+        return
+
+    if (
+        not results
+        or getattr(results[0], "rowcount", 0) != 1
+    ):
         await _send(
             telegram,
             chat_id,
             "⚠️ تغییر انجام نشد؛ وضعیت درخواست احتمالاً عوض شده.",
         )
         return
-
-    admin_user_id = await _ensure_user(
-        db,
-        telegram_user_id,
-    )
-
-    await _audit(
-        db,
-        admin_user_id,
-        audit_action,
-        request_id,
-        str(value),
-    )
 
     if field == "ad_duration_days":
         updated = await _get_ad_request(
@@ -1074,8 +1110,7 @@ async def _set_ad_value(
                     updated["user_id"],
                     (
                         "تبلیغ در ارزانکده"
-                        if updated["request_type"]
-                        == "general_ad"
+                        if updated["request_type"] == "general_ad"
                         else "درخواست تبلیغات"
                     ),
                     (
