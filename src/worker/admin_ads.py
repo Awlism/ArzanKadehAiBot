@@ -387,7 +387,7 @@ async def _audit(
     await db.execute(
         """
         INSERT INTO audit_log (
-            user_id,
+            actor_user_id,
             action,
             entity_type,
             entity_id,
