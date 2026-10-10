@@ -244,10 +244,16 @@ async def _user_has_any_seller(
         """
         SELECT 1
         FROM sellers
-        WHERE owner_user_id = ?
+        WHERE (
+            owner_user_id = ?
+            OR created_by_user_id = ?
+        )
         LIMIT 1;
         """,
-        (user_id,),
+        (
+            user_id,
+            user_id,
+        ),
     )
 
     return row is not None
