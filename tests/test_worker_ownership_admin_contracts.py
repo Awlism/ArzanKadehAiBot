@@ -14,7 +14,7 @@ Covered:
 - Shop management checks ownership before access.
 - Seller registration prevents duplicate active ownership.
 - Seller registration writes owner and creator IDs.
-- Admin authorization uses ADMIN_CHAT_ID.
+- Admin authorization uses the shared admin authorization helper.
 - Admin handlers require admin authorization.
 - Seller claim admin handlers require admin authorization.
 - Seller claim approval is bound to the claimant user.
@@ -43,6 +43,7 @@ SELLER_REGISTRATION_FILE = (
     SRC_ROOT / "seller_registration.py"
 )
 ADMIN_FILE = SRC_ROOT / "admin.py"
+ADMIN_AUTH_FILE = SRC_ROOT / "admin_auth.py"
 ADMIN_ADS_FILE = SRC_ROOT / "admin_ads.py"
 SELLER_CLAIMS_FILE = (
     SRC_ROOT / "seller_claims.py"
@@ -452,7 +453,7 @@ class WorkerOwnershipAdminContractTests(
             normalized,
         )
 
-    def test_admin_is_bound_to_configured_admin_chat_id(
+    def test_admin_is_bound_to_shared_admin_authorization_helper(
         self,
     ):
         source = _function_source(
@@ -462,6 +463,43 @@ class WorkerOwnershipAdminContractTests(
 
         normalized = _normalized(
             source
+        )
+
+        self.assertIn(
+            "from worker.admin_auth import is_admin_user",
+            normalized,
+        )
+
+        self.assertIn(
+            "return is_admin_user(",
+            normalized,
+        )
+
+        self.assertIn(
+            "env",
+            normalized,
+        )
+
+        self.assertIn(
+            "telegram_user_id",
+            normalized,
+        )
+
+    def test_admin_missing_or_invalid_configuration_is_denied_by_shared_helper(
+        self,
+    ):
+        source = _function_source(
+            ADMIN_AUTH_FILE,
+            "is_admin_user",
+        )
+
+        normalized = _normalized(
+            source
+        )
+
+        self.assertIn(
+            "admin_user_id",
+            normalized,
         )
 
         self.assertIn(
@@ -470,39 +508,12 @@ class WorkerOwnershipAdminContractTests(
         )
 
         self.assertIn(
-            "getattr",
-            normalized,
-        )
-
-        self.assertIn(
-            "int(admin_chat_id)",
-            normalized,
-        )
-
-        self.assertIn(
-            "int(telegram_user_id)",
-            normalized,
-        )
-
-    def test_admin_missing_configuration_is_denied(
-        self,
-    ):
-        source = _function_source(
-            ADMIN_FILE,
-            "_is_admin",
-        )
-
-        normalized = _normalized(
-            source
-        )
-
-        self.assertIn(
-            "if admin_chat_id is none",
-            normalized,
-        )
-
-        self.assertIn(
             "return false",
+            normalized,
+        )
+
+        self.assertIn(
+            "_positive_int",
             normalized,
         )
 
