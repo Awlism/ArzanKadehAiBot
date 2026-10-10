@@ -356,7 +356,11 @@ async def _create_ad_request(
     topic: str,
     seller_id: Optional[int],
 ) -> Optional[int]:
-    now = _now_iso()
+    now = datetime.now(
+        timezone.utc
+    ).isoformat(
+        timespec="microseconds"
+    )
 
     result = await db.execute(
         """
@@ -396,21 +400,23 @@ async def _create_ad_request(
         WHERE user_id = ?
           AND request_type = 'ad'
           AND topic = ?
+          AND created_at = ?
+          AND updated_at = ?
         ORDER BY id DESC
         LIMIT 1;
         """,
         (
             user_id,
             topic,
+            now,
+            now,
         ),
     )
 
     if row is None:
         return None
 
-    return int(
-        row["id"]
-    )
+    return int(row["id"])
 
 
 async def _audit(
