@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from html import escape
 from typing import Any, Optional
 
+from worker.admin_auth import get_admin_chat_id
 from worker.telegram import TelegramClient
 
 
@@ -500,16 +501,11 @@ async def handle_claim(
         details=f"seller_id={seller_id}",
     )
 
-    admin_chat_id = None
+    # Resolve the administrator destination through the shared validator.
+    # This supports personal chats and negative group/supergroup chat IDs.
+    admin_chat_id = get_admin_chat_id(env)
 
-    try:
-        configured = env.ADMIN_CHAT_ID
-        if configured is not None:
-            admin_chat_id = int(configured)
-    except (AttributeError, TypeError, ValueError):
-        admin_chat_id = None
-
-    if admin_chat_id:
+    if admin_chat_id is not None:
         try:
             await telegram.send_message(
                 admin_chat_id,
@@ -523,6 +519,7 @@ async def handle_claim(
                 parse_mode="HTML",
             )
         except Exception:
+            # Notification failure must not undo the claim.
             pass
 
     await _answer_callback(
