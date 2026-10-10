@@ -978,6 +978,34 @@ async def _set_ad_value(
         )
         return
 
+    if field == "ad_duration_days":
+        try:
+            duration_days = int(value)
+        except (TypeError, ValueError):
+            duration_days = 0
+
+        if duration_days < 1:
+            await _send(
+                telegram,
+                chat_id,
+                "⚠️ مدت تبلیغ باید حداقل یک روز باشد.",
+            )
+            return
+
+        value = duration_days
+        expires_at = (
+            datetime.now(timezone.utc)
+            + timedelta(days=duration_days)
+        ).isoformat(timespec="seconds")
+    else:
+        expires_at = None
+
+    admin_user_id = await _ensure_user(
+        db,
+        telegram_user_id,
+    )
+    now = _now_iso()
+
     query = (
         "UPDATE requests "
         f"SET {field} = ?, "
@@ -987,17 +1015,90 @@ async def _set_ad_value(
         "AND status IN ('PENDING', 'APPROVED');"
     )
 
-    result = await db.execute(
-        query,
-        (
-            value,
-            _now_iso(),
-            request_id,
-        ),
-    )
+    async with db.transaction() as tx:
+        await tx.execute(
+            query,
+            (
+                value,
+                now,
+                request_id,
+            ),
+        )
 
-    if getattr(
-        result,
+        await tx.execute(
+            """
+            INSERT INTO audit_log (
+                actor_user_id,
+                action,
+                entity_type,
+                entity_id,
+                details,
+                created_at
+            )
+            SELECT ?, ?, 'request', ?, ?, ?
+            WHERE changes() = 1;
+            """,
+            (
+                admin_user_id,
+                audit_action,
+                request_id,
+                str(value),
+                now,
+            ),
+        )
+
+        if field == "ad_duration_days":
+            await tx.execute(
+                """
+                UPDATE requests
+                SET
+                    status = 'ACTIVE',
+                    ad_expires_at = ?,
+                    updated_at = ?
+                WHERE id = ?
+                  AND status = 'APPROVED'
+                  AND request_type IN ('ad', 'general_ad')
+                  AND changes() = 1;
+                """,
+                (
+                    expires_at,
+                    now,
+                    request_id,
+                ),
+            )
+
+            await tx.execute(
+                """
+                INSERT INTO notifications (
+                    user_id,
+                    title,
+                    message,
+                    notification_type,
+                    is_read,
+                    created_at
+                )
+                SELECT ?, ?, ?, 'info', 0, ?
+                WHERE changes() = 1;
+                """,
+                (
+                    request["user_id"],
+                    (
+                        "تبلیغ در ارزانکده"
+                        if request["request_type"] == "general_ad"
+                        else "درخواست تبلیغات"
+                    ),
+                    (
+                        "✅ تبلیغت فعال شد و برای "
+                        f"{value} روز نمایش داده می‌شه."
+                    ),
+                    now,
+                ),
+            )
+
+    results = tx.results
+
+    if not results or getattr(
+        results[0],
         "rowcount",
         0,
     ) != 1:
@@ -1007,76 +1108,6 @@ async def _set_ad_value(
             "⚠️ تغییر انجام نشد؛ وضعیت درخواست احتمالاً عوض شده.",
         )
         return
-
-    admin_user_id = await _ensure_user(
-        db,
-        telegram_user_id,
-    )
-
-    await _audit(
-        db,
-        admin_user_id,
-        audit_action,
-        request_id,
-        str(value),
-    )
-
-    if field == "ad_duration_days":
-        updated = await _get_ad_request(
-            db,
-            request_id,
-        )
-
-        if (
-            updated
-            and updated["status"] == "APPROVED"
-        ):
-            expires_at = (
-                datetime.now(timezone.utc)
-                + timedelta(
-                    days=int(value)
-                )
-            ).isoformat(
-                timespec="seconds"
-            )
-
-            activation = await db.execute(
-                """
-                UPDATE requests
-                SET
-                    status = 'ACTIVE',
-                    ad_expires_at = ?,
-                    updated_at = ?
-                WHERE id = ?
-                  AND status = 'APPROVED'
-                  AND request_type IN ('ad', 'general_ad');
-                """,
-                (
-                    expires_at,
-                    _now_iso(),
-                    request_id,
-                ),
-            )
-
-            if getattr(
-                activation,
-                "rowcount",
-                0,
-            ) == 1:
-                await _notify_user(
-                    db,
-                    updated["user_id"],
-                    (
-                        "تبلیغ در ارزانکده"
-                        if updated["request_type"]
-                        == "general_ad"
-                        else "درخواست تبلیغات"
-                    ),
-                    (
-                        "✅ تبلیغت فعال شد و برای "
-                        f"{value} روز نمایش داده می‌شه."
-                    ),
-                )
 
     await _send(
         telegram,
