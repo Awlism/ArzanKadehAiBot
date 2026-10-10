@@ -681,21 +681,51 @@ async def _finish_registration(
                 ),
             )
 
-            seller = await tx.fetchone(
+        # Read the inserted ID only after the transaction commits.
+        results = tx.results
+        insert_result = (
+            results[0]
+            if results
+            else None
+        )
+
+        seller_id = (
+            insert_result.lastrowid
+            if insert_result is not None
+            else None
+        )
+
+        # Fallback for runtimes that do not return lastrowid.
+        if seller_id is None:
+            seller = await db.fetchone(
                 """
                 SELECT id
                 FROM sellers
                 WHERE created_by_user_id = ?
+                  AND created_at = ?
+                  AND name = ?
+                  AND city_id = ?
                 ORDER BY id DESC
                 LIMIT 1;
                 """,
-                (user_id,),
+                (
+                    user_id,
+                    now,
+                    name,
+                    city_id,
+                ),
             )
 
-        if seller is None:
-            raise RuntimeError(
-                "Seller registration returned no seller id."
-            )
+            if seller is None:
+                raise RuntimeError(
+                    "Seller registration returned no seller id."
+                )
+
+            seller_id = seller["id"]
+
+        seller_id = int(
+            seller_id
+        )
 
     except Exception:
         await _send(
@@ -707,10 +737,6 @@ async def _finish_registration(
             ),
         )
         return
-
-    seller_id = int(
-        seller["id"]
-    )
 
     await clear_state(
         db,
