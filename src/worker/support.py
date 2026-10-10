@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from html import escape
 from typing import Any, Optional
 
+from worker.admin_auth import get_admin_chat_id
 from worker.state import clear_state, get_state, set_state
 
 
@@ -236,30 +237,14 @@ async def _send_admin_support_request(
     """
     Notify the configured admin about a new support request.
 
-    ADMIN_CHAT_ID is read from the Worker environment.
+    ADMIN_CHAT_ID is read and validated through the shared helper.
+    Negative Telegram group chat IDs are supported.
     No token or secret is handled here.
     """
 
-    admin_chat_id = getattr(
-        env,
-        "ADMIN_CHAT_ID",
-        None,
-    )
+    admin_chat_id = get_admin_chat_id(env)
 
     if admin_chat_id is None:
-        return
-
-    try:
-        admin_chat_id = int(
-            admin_chat_id
-        )
-    except (
-        TypeError,
-        ValueError,
-    ):
-        return
-
-    if admin_chat_id < 1:
         return
 
     user = await db.fetchone(
