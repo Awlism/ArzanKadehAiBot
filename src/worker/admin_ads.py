@@ -193,15 +193,13 @@ def _message_context(
 
 def _is_admin(
     env: Any,
-    telegram_user_id: Optional[int],
+    telegram_user_id: int,
 ) -> bool:
-    if telegram_user_id is None:
-        return False
+    from worker.admin_auth import is_admin_user
 
-    configured = getattr(
+    return is_admin_user(
         env,
-        "ADMIN_CHAT_ID",
-        None,
+        telegram_user_id,
     )
 
     if configured is None:
