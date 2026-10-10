@@ -1037,6 +1037,7 @@ async def handle_report_skip(
 async def handle_report_text(
     message: dict[str, Any],
     telegram: TelegramClient,
+    env: Optional[Any] = None,
 ) -> bool:
     telegram_id = _get_message_telegram_id(
         message
