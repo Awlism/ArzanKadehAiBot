@@ -602,6 +602,7 @@ async def _handle_callback_query(
         return await handle_report_skip(
             callback_query,
             telegram,
+            env,
         )
 
     if data.startswith("report:"):
