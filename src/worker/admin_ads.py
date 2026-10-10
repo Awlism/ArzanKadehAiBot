@@ -202,19 +202,6 @@ def _is_admin(
         telegram_user_id,
     )
 
-    if configured is None:
-        return False
-
-    try:
-        return int(configured) == int(
-            telegram_user_id
-        )
-    except (
-        TypeError,
-        ValueError,
-    ):
-        return False
-
 
 async def _ensure_user(
     db: Any,
