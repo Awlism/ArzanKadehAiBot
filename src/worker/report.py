@@ -920,6 +920,7 @@ async def _complete_report(
 async def handle_report_skip(
     callback_query: dict[str, Any],
     telegram: TelegramClient,
+    env: Optional[Any] = None,
 ) -> bool:
     callback_data = callback_query.get("data")
 
@@ -929,19 +930,14 @@ async def handle_report_skip(
     telegram_id = _get_callback_telegram_id(
         callback_query
     )
-
     chat_id = _get_callback_chat_id(
         callback_query
     )
-
     callback_query_id = _get_callback_query_id(
         callback_query
     )
 
-    if (
-        telegram_id is None
-        or chat_id is None
-    ):
+    if telegram_id is None or chat_id is None:
         return False
 
     if callback_query_id is not None:
@@ -977,10 +973,7 @@ async def handle_report_skip(
 
     data = state.get("data")
 
-    if not isinstance(
-        data,
-        dict,
-    ):
+    if not isinstance(data, dict):
         await clear_state(
             backend,
             user_id,
@@ -992,7 +985,7 @@ async def handle_report_skip(
         return True
 
     try:
-        await _complete_report(
+        report_id = await _complete_report(
             user_id,
             data,
             None,
@@ -1020,6 +1013,18 @@ async def handle_report_skip(
         backend,
         user_id,
     )
+
+    if report_id > 0 and env is not None:
+        await _notify_admin_new_report(
+            telegram=telegram,
+            env=env,
+            report_id=report_id,
+            user_id=user_id,
+            target_type=str(data["target_type"]),
+            target_id=int(data["target_id"]),
+            reason_code=str(data["reason_code"]),
+            description=None,
+        )
 
     await telegram.send_message(
         chat_id,
