@@ -80,7 +80,7 @@ def _normalized(value: str) -> str:
 class WorkerReportAdminNotificationContractTests(
     unittest.TestCase
 ):
-    def test_admin_notification_reads_admin_chat_id(
+    def test_admin_notification_uses_shared_chat_id_helper(
         self,
     ):
         source = _normalized(
@@ -91,36 +91,21 @@ class WorkerReportAdminNotificationContractTests(
         )
 
         self.assertIn(
-            "admin_chat_id",
+            "get_admin_chat_id(env)",
             source,
         )
 
         self.assertIn(
-            '"admin_chat_id"',
+            "if admin_chat_id is none:",
             source,
         )
 
-    def test_admin_notification_validates_chat_id(
-        self,
-    ):
-        source = _normalized(
-            _source(
-                REPORT_FILE,
-                "_notify_admin_new_report",
-            )
-        )
-
-        self.assertIn(
-            "admin_chat_id = int(",
-            source,
-        )
-
-        self.assertIn(
+        self.assertNotIn(
             "if admin_chat_id < 1:",
             source,
         )
 
-    def test_notification_contains_report_details(
+    def test_admin_notification_contains_report_details(
         self,
     ):
         source = _normalized(
