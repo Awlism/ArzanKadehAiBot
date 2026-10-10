@@ -35,7 +35,7 @@ from worker.start import (
 )
 from worker.messages import handle_message
 from worker.telegram import TelegramClient
-from worker.state import ensure_state_table
+from worker.state import clear_state, ensure_state_table
 
 from worker.categories import handle_category
 
@@ -462,10 +462,48 @@ async def _handle_callback_query(
 
     data = callback_data
 
-    if data in (
-        "main",
-        "restart_button",
-    ):
+    # شروع دوباره: پاک‌کردن وضعیت موقت مکالمه و نمایش منوی اصلی
+    if data == "restart_button":
+        callback_user = callback_query.get("from") or {}
+        telegram_user_id = callback_user.get("id")
+
+        try:
+            telegram_user_id = int(telegram_user_id)
+        except (TypeError, ValueError):
+            telegram_user_id = None
+
+        if telegram_user_id is not None and telegram_user_id > 0:
+            user_row = await backend.fetchone(
+                """
+                SELECT id
+                FROM users
+                WHERE telegram_id = ?
+                LIMIT 1;
+                """,
+                (telegram_user_id,),
+            )
+
+            if user_row is not None:
+                internal_user_id = user_row.get("id")
+
+                try:
+                    internal_user_id = int(internal_user_id)
+                except (TypeError, ValueError):
+                    internal_user_id = None
+
+                if internal_user_id is not None and internal_user_id > 0:
+                    await clear_state(
+                        backend,
+                        internal_user_id,
+                    )
+
+        return await _handle_main_menu(
+            callback_query,
+            telegram,
+        )
+
+    # منوی اصلی معمولی؛ وضعیت موقت کاربر را پاک نمی‌کند
+    if data == "main":
         return await _handle_main_menu(
             callback_query,
             telegram,
