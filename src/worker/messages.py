@@ -21,7 +21,11 @@ from worker.search import handle_search_message
 from worker.seller_registration import handle_register_seller_message
 from worker.shop import handle_shop_edit_message
 from worker.start import _send_main_menu
-from worker.state import ensure_state_table, get_state
+from worker.state import (
+    clear_state,
+    ensure_state_table,
+    get_state,
+)
 from worker.support import handle_support_text
 from worker.telegram import TelegramClient
 from worker_backend.backend import backend
@@ -164,8 +168,8 @@ async def handle_message(
     The active persistent Worker state is loaded from D1 so
     multi-request flows can continue across webhook requests.
 
-    If no active state exists, this behaves like the legacy
-    generic message fallback and returns the user to the main menu.
+    If no active state exists, or an unknown state is found,
+    the user is returned to the main menu.
     """
 
     user_id = await _ensure_message_user(
@@ -184,21 +188,28 @@ async def handle_message(
         user_id,
     )
 
+    chat = message.get(
+        "chat"
+    ) or {}
+
+    chat_id = chat.get(
+        "id"
+    )
+
+    if chat_id is None:
+        return None
+
+    try:
+        chat_id = int(
+            chat_id
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return None
+
     if state is None:
-        chat = message.get("chat") or {}
-        chat_id = chat.get("id")
-
-        if chat_id is None:
-            return None
-
-        try:
-            chat_id = int(chat_id)
-        except (
-            TypeError,
-            ValueError,
-        ):
-            return None
-
         await _send_main_menu(
             telegram,
             chat_id,
@@ -210,6 +221,8 @@ async def handle_message(
         message=message,
         telegram=telegram,
         state=state,
+        user_id=user_id,
+        chat_id=chat_id,
         env=env,
     )
 
@@ -219,10 +232,15 @@ async def _handle_active_state(
     message: dict[str, Any],
     telegram: TelegramClient,
     state: dict[str, Any],
+    user_id: int,
+    chat_id: int,
     env: Optional[Any] = None,
 ) -> Any:
     """
     Dispatch an active persistent state.
+
+    Unknown or malformed states are cleared to prevent a
+    user from becoming stuck in an unsupported conversation flow.
     """
 
     state_name = state.get(
@@ -232,8 +250,20 @@ async def _handle_active_state(
     if not isinstance(
         state_name,
         str,
-    ):
+    ) or not state_name.strip():
+        await clear_state(
+            backend,
+            user_id,
+        )
+
+        await _send_main_menu(
+            telegram,
+            chat_id,
+        )
+
         return None
+
+    state_name = state_name.strip()
 
     if state_name == "review:waiting_text":
         return await handle_review_text(
@@ -313,6 +343,18 @@ async def _handle_active_state(
             message,
             env,
         )
+
+    # A state not handled by this Worker version is stale.
+    # Clear it and give the user a safe way to continue.
+    await clear_state(
+        backend,
+        user_id,
+    )
+
+    await _send_main_menu(
+        telegram,
+        chat_id,
+    )
 
     return None
 
