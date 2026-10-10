@@ -1021,8 +1021,7 @@ async def handle_admin_request_decision(
     advertisement requests.
 
     Advertisement requests are delegated to the existing
-    advertisement decision handler so their current behavior
-    remains unchanged.
+    advertisement decision handler.
     """
 
     _, telegram_user_id = _message_context(
@@ -1062,10 +1061,7 @@ async def handle_admin_request_decision(
 
     _, action, request_id_raw = parts
 
-    if action not in (
-        "approve",
-        "reject",
-    ):
+    if action not in ("approve", "reject"):
         await _answer_callback(
             telegram,
             callback_query,
@@ -1076,10 +1072,7 @@ async def handle_admin_request_decision(
 
     try:
         request_id = int(request_id_raw)
-    except (
-        TypeError,
-        ValueError,
-    ):
+    except (TypeError, ValueError):
         request_id = 0
 
     if request_id < 1:
@@ -1110,29 +1103,12 @@ async def handle_admin_request_decision(
         )
         return None
 
-    if request.get("status") != "PENDING":
-        status = request.get("status") or "UNKNOWN"
-
-        await _answer_callback(
-            telegram,
-            callback_query,
-            (
-                "⚠️ این درخواست قبلاً تعیین‌تکلیف شده: "
-                f"{_html(status)}"
-            ),
-            show_alert=True,
-        )
-        return None
-
     request_type = str(
         request.get("request_type")
         or ""
     ).strip().lower()
 
-    if request_type in (
-        "ad",
-        "general_ad",
-    ):
+    if request_type in ("ad", "general_ad"):
         from worker.admin_ads import (
             handle_admin_ad_decision,
         )
@@ -1144,17 +1120,27 @@ async def handle_admin_request_decision(
             env=env,
         )
 
+    if request.get("status") != "PENDING":
+        status = request.get("status") or "UNKNOWN"
+
+        await _answer_callback(
+            telegram,
+            callback_query,
+            text=(
+                "⚠️ این درخواست قبلاً تعیین‌تکلیف شده: "
+                f"{_html(status)}"
+            ),
+            show_alert=True,
+        )
+        return None
+
+    admin_user = callback_query.get("from") or {}
+
     admin_user_id = await _ensure_user(
         telegram_user_id,
-        username=(
-            callback_query.get("from") or {}
-        ).get("username"),
-        first_name=(
-            callback_query.get("from") or {}
-        ).get("first_name"),
-        last_name=(
-            callback_query.get("from") or {}
-        ).get("last_name"),
+        username=admin_user.get("username"),
+        first_name=admin_user.get("first_name"),
+        last_name=admin_user.get("last_name"),
     )
 
     new_status = (
@@ -1162,83 +1148,14 @@ async def handle_admin_request_decision(
         if action == "approve"
         else "REJECTED"
     )
-
-    result = await backend.execute(
-        """
-        UPDATE requests
-        SET
-            status = ?,
-            updated_at = ?
-        WHERE id = ?
-          AND status = 'PENDING';
-        """,
-        (
-            new_status,
-            _now_iso(),
-            request_id,
-        ),
+    now = _now_iso()
+    audit_action = (
+        "request_approved"
+        if action == "approve"
+        else "request_rejected"
     )
 
-    if getattr(
-        result,
-        "rowcount",
-        0,
-    ) != 1:
-        current = await backend.fetchone(
-            """
-            SELECT status
-            FROM requests
-            WHERE id = ?
-            LIMIT 1;
-            """,
-            (request_id,),
-        )
-
-        if current is None:
-            await _answer_callback(
-                telegram,
-                callback_query,
-                "⚠️ این درخواست دیگر یافت نشد.",
-                show_alert=True,
-            )
-        else:
-            await _answer_callback(
-                telegram,
-                callback_query,
-                (
-                    "⚠️ این درخواست قبلاً "
-                    "تعیین‌تکلیف شده است."
-                ),
-                show_alert=True,
-            )
-
-        return None
-
-    await backend.execute(
-        """
-        INSERT INTO audit_log (
-            actor_user_id,
-            action,
-            entity_type,
-            entity_id,
-            details,
-            created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?);
-        """,
-        (
-            admin_user_id,
-            (
-                "request_approved"
-                if action == "approve"
-                else "request_rejected"
-            ),
-            "request",
-            request_id,
-            None,
-            _now_iso(),
-        ),
-    )
+    notification_values = None
 
     if request_type == "support":
         if action == "approve":
@@ -1254,31 +1171,112 @@ async def handle_admin_request_decision(
                 "اگر همچنان مشکل داری، دوباره از منو درخواست بده."
             )
 
-        await backend.execute(
+        notification_values = (
+            request["user_id"],
+            notification_title,
+            notification_message,
+            "support",
+            now,
+        )
+
+    # Queue the status update, audit record, and optional
+    # support notification in one D1 batch transaction.
+    # Conditional INSERT statements avoid side effects if
+    # the guarded status update did not change a row.
+    async with backend.transaction() as tx:
+        await tx.execute(
             """
-            INSERT INTO notifications (
-                user_id,
-                title,
-                message,
-                notification_type,
-                is_read,
-                created_at
-            )
-            VALUES (?, ?, ?, ?, 0, ?);
+            UPDATE requests
+            SET
+                status = ?,
+                updated_at = ?
+            WHERE id = ?
+              AND status = 'PENDING';
             """,
             (
-                request["user_id"],
-                notification_title,
-                notification_message,
-                "support",
-                _now_iso(),
+                new_status,
+                now,
+                request_id,
             ),
         )
+
+        await tx.execute(
+            """
+            INSERT INTO audit_log (
+                actor_user_id,
+                action,
+                entity_type,
+                entity_id,
+                details,
+                created_at
+            )
+            SELECT ?, ?, 'request', ?, ?, ?
+            WHERE changes() = 1;
+            """,
+            (
+                admin_user_id,
+                audit_action,
+                request_id,
+                None,
+                now,
+            ),
+        )
+
+        if notification_values is not None:
+            await tx.execute(
+                """
+                INSERT INTO notifications (
+                    user_id,
+                    title,
+                    message,
+                    notification_type,
+                    is_read,
+                    created_at
+                )
+                SELECT ?, ?, ?, ?, 0, ?
+                WHERE changes() = 1;
+                """,
+                notification_values,
+            )
+
+    statement_results = tx.results
+
+    update_result = (
+        statement_results[0]
+        if statement_results
+        else None
+    )
+
+    if (
+        update_result is None
+        or update_result.rowcount != 1
+    ):
+        current = await backend.fetchone(
+            """
+            SELECT status
+            FROM requests
+            WHERE id = ?
+            LIMIT 1;
+            """,
+            (request_id,),
+        )
+
+        await _answer_callback(
+            telegram,
+            callback_query,
+            text=(
+                "⚠️ این درخواست دیگر یافت نشد."
+                if current is None
+                else "⚠️ این درخواست قبلاً تعیین‌تکلیف شده است."
+            ),
+            show_alert=True,
+        )
+        return None
 
     await _answer_callback(
         telegram,
         callback_query,
-        f"وضعیت درخواست #{request_id} به‌روزرسانی شد.",
+        text=f"وضعیت درخواست #{request_id} به‌روزرسانی شد.",
     )
 
     message = callback_query.get("message") or {}
@@ -1297,8 +1295,7 @@ async def handle_admin_request_decision(
         f"{current_text}\n\n"
         f"— تصمیم ثبت شد: {status_label}"
         if current_text
-        else
-        (
+        else (
             f"درخواست #{request_id}\n\n"
             f"— تصمیم ثبت شد: {status_label}"
         )
