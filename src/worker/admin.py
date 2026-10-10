@@ -151,27 +151,12 @@ async def _is_admin(
     env: Any,
     telegram_user_id: int,
 ) -> bool:
-    try:
-        admin_chat_id = getattr(
-            env,
-            "ADMIN_CHAT_ID",
-            None,
-        )
-    except Exception:
-        admin_chat_id = None
+    from worker.admin_auth import is_admin_user
 
-    if admin_chat_id is None:
-        return False
-
-    try:
-        return int(admin_chat_id) == int(
-            telegram_user_id
-        )
-    except (
-        TypeError,
-        ValueError,
-    ):
-        return False
+    return is_admin_user(
+        env,
+        telegram_user_id,
+    )
 
 
 async def _ensure_user(
