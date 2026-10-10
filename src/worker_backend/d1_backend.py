@@ -109,6 +109,29 @@ class D1Transaction:
             self._active = False
             self._statements = []
 
+    @property
+    def results(self) -> tuple[DatabaseResult, ...]:
+        """
+        Return the result of each statement after a successful commit.
+
+        Results are unavailable while the transaction is active or if
+        the transaction did not finish successfully.
+        """
+        if self._active:
+            raise RuntimeError(
+                "Transaction results are not available before it exits."
+            )
+
+        if not self._committed:
+            raise RuntimeError(
+                "Transaction did not commit successfully."
+            )
+
+        return tuple(
+            _result_to_database_result(result)
+            for result in self._batch_results
+        )
+
     def _require_active(self) -> None:
         if not self._active:
             raise RuntimeError(
