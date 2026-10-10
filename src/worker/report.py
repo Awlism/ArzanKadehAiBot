@@ -483,147 +483,168 @@ def _report_description_keyboard() -> dict[str, Any]:
     }
 
 
-async def _save_report(
+async def _notify_admin_new_report(
+    telegram: TelegramClient,
+    env: Any,
+    report_id: int,
     user_id: int,
     target_type: str,
     target_id: int,
     reason_code: str,
     description: Optional[str],
-) -> int:
-    seller_id = (
-        target_id
-        if target_type == "seller"
-        else None
+) -> None:
+    """
+    Send a newly saved report to the configured admin.
+
+    A notification failure must never undo or hide the saved report.
+    """
+
+    admin_chat_id = getattr(
+        env,
+        "ADMIN_CHAT_ID",
+        None,
     )
 
-    product_id = (
-        target_id
-        if target_type == "product"
-        else None
-    )
-
-    now = _now_iso()
-
-    async with backend.transaction(
-        immediate=True
-    ) as transaction:
-        await transaction.execute(
-            """
-            INSERT INTO reports (
-                user_id,
-                seller_id,
-                product_id,
-                reason,
-                description,
-                status,
-                created_at
-            )
-            VALUES (?, ?, ?, ?, ?, 'PENDING', ?);
-            """,
-            (
-                user_id,
-                seller_id,
-                product_id,
-                reason_code,
-                description,
-                now,
-            ),
-        )
-
-        await transaction.execute(
-            """
-            INSERT INTO events (
-                user_id,
-                event_type,
-                entity_type,
-                entity_id,
-                created_at
-            )
-            VALUES (?, ?, ?, ?, ?);
-            """,
-            (
-                user_id,
-                "report",
-                target_type,
-                target_id,
-                now,
-            ),
-        )
-
-        await transaction.execute(
-            """
-            INSERT INTO audit_log (
-                actor_user_id,
-                action,
-                entity_type,
-                entity_id,
-                details,
-                created_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?);
-            """,
-            (
-                user_id,
-                "report_created",
-                target_type,
-                target_id,
-                reason_code,
-                now,
-            ),
-        )
-
-    # Transaction completed; retrieve the INSERT result.
-    results = transaction.results
-    insert_result = (
-        results[0]
-        if results
-        else None
-    )
-
-    report_id = (
-        insert_result.lastrowid
-        if insert_result is not None
-        else None
-    )
-
-    # Fallback only if the runtime did not return lastrowid.
-    if report_id is None:
-        row = await backend.fetchone(
-            """
-            SELECT id
-            FROM reports
-            WHERE user_id = ?
-              AND seller_id IS ?
-              AND product_id IS ?
-              AND reason = ?
-              AND description IS ?
-              AND created_at = ?
-            ORDER BY id DESC
-            LIMIT 1;
-            """,
-            (
-                user_id,
-                seller_id,
-                product_id,
-                reason_code,
-                description,
-                now,
-            ),
-        )
-
-        if row is not None:
-            report_id = row["id"]
-
-    if report_id is None:
-        return 0
+    if admin_chat_id is None:
+        return
 
     try:
-        return int(report_id)
+        admin_chat_id = int(
+            admin_chat_id
+        )
     except (
         TypeError,
         ValueError,
     ):
-        return 0
+        return
+
+    if admin_chat_id < 1:
+        return
+
+    try:
+        user = await backend.fetchone(
+            """
+            SELECT
+                telegram_id,
+                username,
+                first_name,
+                last_name
+            FROM users
+            WHERE id = ?
+            LIMIT 1;
+            """,
+            (
+                user_id,
+            ),
+        )
+
+        if user is None:
+            reporter_label = (
+                f"کاربر داخلی #{user_id}"
+            )
+        else:
+            first_name = str(
+                user.get("first_name") or ""
+            ).strip()
+
+            last_name = str(
+                user.get("last_name") or ""
+            ).strip()
+
+            username = str(
+                user.get("username") or ""
+            ).strip()
+
+            full_name = " ".join(
+                part
+                for part in (
+                    first_name,
+                    last_name,
+                )
+                if part
+            )
+
+            if username and full_name:
+                reporter_label = (
+                    f"{full_name} (@{username})"
+                )
+            elif username:
+                reporter_label = f"@{username}"
+            elif full_name:
+                reporter_label = full_name
+            else:
+                reporter_label = (
+                    f"کاربر داخلی #{user_id}"
+                )
+
+            telegram_id = user.get(
+                "telegram_id"
+            )
+
+            if telegram_id is not None:
+                reporter_label += (
+                    f" | Telegram ID: {telegram_id}"
+                )
+
+        target_label = (
+            "فروشگاه"
+            if target_type == "seller"
+            else "محصول"
+        )
+
+        reason_label = REPORT_REASONS.get(
+            reason_code,
+            reason_code,
+        )
+
+        description_text = (
+            description.strip()
+            if isinstance(description, str)
+            and description.strip()
+            else "—"
+        )
+
+        keyboard = {
+            "inline_keyboard": [
+                [
+                    {
+                        "text": "🟢 تأیید گزارش",
+                        "callback_data": (
+                            f"adminreport:approve:{report_id}"
+                        ),
+                    },
+                    {
+                        "text": "🔴 رد گزارش",
+                        "callback_data": (
+                            f"adminreport:reject:{report_id}"
+                        ),
+                    },
+                ],
+            ],
+        }
+
+        text = (
+            "🚨 <b>گزارش جدید</b>\n\n"
+            f"شناسه گزارش: <b>#{report_id}</b>\n"
+            f"نوع مورد: {_html(target_label)}\n"
+            f"شناسه مورد: <b>#{target_id}</b>\n"
+            f"دلیل: {_html(reason_label)}\n"
+            f"توضیحات: {_html(description_text)}\n"
+            f"گزارش‌دهنده: {_html(reporter_label)}\n"
+            f"شناسه داخلی کاربر: <code>{user_id}</code>"
+        )
+
+        await telegram.send_message(
+            admin_chat_id,
+            text,
+            reply_markup=keyboard,
+            parse_mode="HTML",
+        )
+
+    except Exception:
+        # The report is already saved.
+        # Admin notification errors must not break the user flow.
+        return
 
 
 async def handle_report_start(
