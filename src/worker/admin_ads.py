@@ -296,18 +296,29 @@ async def _edit_callback(
         or {}
     )
 
-    chat_id = _parse_int(
-        chat.get("id")
-    )
+    raw_chat_id = chat.get("id")
+    raw_message_id = message.get("message_id")
+
+    try:
+        if isinstance(raw_chat_id, bool):
+            return
+
+        chat_id = int(raw_chat_id)
+
+        if chat_id == 0:
+            return
+    except (
+        TypeError,
+        ValueError,
+        OverflowError,
+    ):
+        return
 
     message_id = _parse_int(
-        message.get("message_id")
+        raw_message_id
     )
 
-    if (
-        chat_id is None
-        or message_id is None
-    ):
+    if message_id is None:
         return
 
     await telegram.edit_message_text(
