@@ -1039,26 +1039,15 @@ async def handle_report_text(
     telegram: TelegramClient,
     env: Optional[Any] = None,
 ) -> bool:
-    telegram_id = _get_message_telegram_id(
-        message
-    )
+    telegram_id = _get_message_telegram_id(message)
+    chat_id = _get_message_chat_id(message)
 
-    chat_id = _get_message_chat_id(
-        message
-    )
-
-    if (
-        telegram_id is None
-        or chat_id is None
-    ):
+    if telegram_id is None or chat_id is None:
         return False
 
     text = message.get("text")
 
-    if not isinstance(
-        text,
-        str,
-    ):
+    if not isinstance(text, str):
         await telegram.send_message(
             chat_id,
             "لطفاً توضیح گزارش رو به صورت پیام متنی بفرست.",
@@ -1074,9 +1063,7 @@ async def handle_report_text(
         )
         return True
 
-    user_id = await _get_internal_user_id(
-        telegram_id
-    )
+    user_id = await _get_internal_user_id(telegram_id)
 
     if user_id is None:
         await telegram.send_message(
@@ -1085,10 +1072,7 @@ async def handle_report_text(
         )
         return True
 
-    state = await get_state(
-        backend,
-        user_id,
-    )
+    state = await get_state(backend, user_id)
 
     if state is None:
         await telegram.send_message(
@@ -1102,14 +1086,8 @@ async def handle_report_text(
 
     data = state.get("data")
 
-    if not isinstance(
-        data,
-        dict,
-    ):
-        await clear_state(
-            backend,
-            user_id,
-        )
+    if not isinstance(data, dict):
+        await clear_state(backend, user_id)
         await telegram.send_message(
             chat_id,
             "اطلاعات گزارش ناقصه. دوباره شروع کن.",
@@ -1117,16 +1095,13 @@ async def handle_report_text(
         return True
 
     try:
-        await _complete_report(
+        report_id = await _complete_report(
             user_id,
             data,
             description,
         )
     except ValueError as exc:
-        await clear_state(
-            backend,
-            user_id,
-        )
+        await clear_state(backend, user_id)
 
         if str(exc) == "An open report already exists.":
             await telegram.send_message(
@@ -1141,10 +1116,19 @@ async def handle_report_text(
 
         return True
 
-    await clear_state(
-        backend,
-        user_id,
-    )
+    await clear_state(backend, user_id)
+
+    if report_id > 0 and env is not None:
+        await _notify_admin_new_report(
+            telegram=telegram,
+            env=env,
+            report_id=report_id,
+            user_id=user_id,
+            target_type=str(data["target_type"]),
+            target_id=int(data["target_id"]),
+            reason_code=str(data["reason_code"]),
+            description=description,
+        )
 
     await telegram.send_message(
         chat_id,
