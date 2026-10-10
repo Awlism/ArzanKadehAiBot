@@ -82,6 +82,13 @@ class DatabaseBackend(Protocol):
 
 
 class DatabaseTransaction(Protocol):
+    @property
+    def results(self) -> tuple[DatabaseResult, ...]:
+        """
+        Per-statement results, available only after successful commit.
+        """
+        ...
+
     async def __aenter__(self) -> "DatabaseTransaction":
         ...
 
