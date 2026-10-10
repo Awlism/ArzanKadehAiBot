@@ -814,15 +814,11 @@ async def handle_support_text(
 
     if (
         current_state is None
-        or current_state.get("state")
-        != STATE_NAME
+        or current_state.get("state") != STATE_NAME
     ):
         return
 
-    data = current_state.get(
-        "data"
-    ) or {}
-
+    data = current_state.get("data") or {}
     topic = data.get("topic")
 
     if not topic:
@@ -856,9 +852,7 @@ async def handle_support_text(
         return
 
     if len(text) > SUPPORT_MESSAGE_MAX_LEN:
-        text = text[
-            :SUPPORT_MESSAGE_MAX_LEN
-        ]
+        text = text[:SUPPORT_MESSAGE_MAX_LEN]
 
     if await _has_open_request(
         db,
@@ -885,61 +879,82 @@ async def handle_support_text(
 
     now = _now_iso()
 
-    async with db.transaction(
-        immediate=True
-    ) as tx:
-        await tx.execute(
-            """
-            INSERT INTO requests (
-                user_id,
-                request_type,
-                topic,
-                message,
-                status,
-                created_at,
-                updated_at
+    try:
+        async with db.transaction(
+            immediate=True
+        ) as tx:
+            await tx.execute(
+                """
+                INSERT INTO requests (
+                    user_id,
+                    request_type,
+                    topic,
+                    message,
+                    status,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?);
+                """,
+                (
+                    user_id,
+                    "support",
+                    topic,
+                    text,
+                    "PENDING",
+                    now,
+                    now,
+                ),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?);
-            """,
-            (
-                user_id,
-                "support",
-                topic,
-                text,
-                "PENDING",
-                now,
-                now,
-            ),
+
+        # The queued INSERT has committed. Read its result now.
+        results = tx.results
+        insert_result = (
+            results[0]
+            if results
+            else None
         )
 
-    request_row = await db.fetchone(
-        """
-        SELECT id
-        FROM requests
-        WHERE user_id = ?
-          AND request_type = 'support'
-          AND topic = ?
-          AND message = ?
-          AND status = 'PENDING'
-          AND created_at = ?
-        ORDER BY id DESC
-        LIMIT 1;
-        """,
-        (
-            user_id,
-            topic,
-            text,
-            now,
-        ),
-    )
+        request_id = (
+            insert_result.lastrowid
+            if insert_result is not None
+            else None
+        )
 
-    request_id = (
-        int(request_row["id"])
-        if request_row is not None
-        else None
-    )
+        # Fallback only when the runtime did not return lastrowid.
+        if request_id is None:
+            request_row = await db.fetchone(
+                """
+                SELECT id
+                FROM requests
+                WHERE user_id = ?
+                  AND request_type = 'support'
+                  AND topic = ?
+                  AND message = ?
+                  AND status = 'PENDING'
+                  AND created_at = ?
+                ORDER BY id DESC
+                LIMIT 1;
+                """,
+                (
+                    user_id,
+                    topic,
+                    text,
+                    now,
+                ),
+            )
 
-    if request_id is None:
+            if request_row is not None:
+                request_id = request_row["id"]
+
+        if request_id is None:
+            raise RuntimeError(
+                "Support request ID could not be resolved."
+            )
+
+        request_id = int(request_id)
+
+    except Exception:
         await clear_state(
             db,
             user_id,
@@ -983,8 +998,6 @@ async def handle_support_text(
         user_id,
     )
 
-    # First notify the admin so the request immediately appears
-    # with approve/reject controls.
     await _send_admin_support_request(
         db,
         telegram,
