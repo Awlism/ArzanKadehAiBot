@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from html import escape
 from typing import Any, Optional
 
+from worker.admin_auth import get_admin_chat_id
 from worker.state import clear_state, get_state, set_state
 from worker.telegram import TelegramClient
 from worker_backend.backend import backend
@@ -188,7 +189,11 @@ async def _edit_callback_message(
     if not isinstance(chat, dict):
         return
 
-    chat_id = chat.get("id")
+    chat_id = message.get("chat_id")
+
+    if chat_id is None:
+        chat_id = chat.get("id")
+
     message_id = message.get("message_id")
 
     if (
@@ -484,26 +489,9 @@ async def _notify_admin_new_report(
     A notification failure must never undo or hide the saved report.
     """
 
-    admin_chat_id = getattr(
-        env,
-        "ADMIN_CHAT_ID",
-        None,
-    )
+    admin_chat_id = get_admin_chat_id(env)
 
     if admin_chat_id is None:
-        return
-
-    try:
-        admin_chat_id = int(
-            admin_chat_id
-        )
-    except (
-        TypeError,
-        ValueError,
-    ):
-        return
-
-    if admin_chat_id < 1:
         return
 
     try:
