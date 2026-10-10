@@ -311,10 +311,10 @@ class Default(WorkerEntrypoint):
                 status=405,
             )
 
-        except Exception as exc:
+        except Exception:
+            # Do not expose internal exception details to public requests.
             return Response(
-                "ArzanKadeh Worker ERROR\n\n"
-                f"{type(exc).__name__}: {exc}",
+                "Internal Server Error",
                 status=500,
             )
 
@@ -325,25 +325,12 @@ class Default(WorkerEntrypoint):
 
         await backend.connect()
 
-        rows = await backend.fetchall(
-            """
-            SELECT name
-            FROM sqlite_master
-            WHERE type = 'table'
-            ORDER BY name;
-            """
+        # Verify the D1 connection without exposing schema details.
+        await backend.fetchone(
+            "SELECT 1 AS healthy;"
         )
 
-        tables = [
-            row["name"]
-            for row in rows
-        ]
-
-        body = (
-            "ArzanKadeh Worker + D1Backend OK\n\n"
-            f"Tables: {len(tables)}\n"
-            f"{', '.join(tables)}"
-        )
+        body = "ArzanKadeh Worker OK"
 
         return Response(
             body,
