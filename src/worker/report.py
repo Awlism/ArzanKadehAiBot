@@ -254,27 +254,12 @@ async def _is_admin(
     telegram_id: int,
     env: Any,
 ) -> bool:
-    try:
-        admin_chat_id = getattr(
-            env,
-            "ADMIN_CHAT_ID",
-            None,
-        )
-    except Exception:
-        admin_chat_id = None
+    from worker.admin_auth import is_admin_user
 
-    if admin_chat_id is None:
-        return False
-
-    try:
-        return int(admin_chat_id) == int(
-            telegram_id
-        )
-    except (
-        TypeError,
-        ValueError,
-    ):
-        return False
+    return is_admin_user(
+        env,
+        telegram_id,
+    )
 
 
 def _parse_report_target(
