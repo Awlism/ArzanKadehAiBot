@@ -219,18 +219,12 @@ async def _notify_user(
 
 
 def _is_admin(env: Any, telegram_user_id: int) -> bool:
-    try:
-        configured = env.ADMIN_CHAT_ID
-    except Exception:
-        return False
+    from worker.admin_auth import is_admin_user
 
-    if configured is None:
-        return False
-
-    try:
-        return int(configured) == int(telegram_user_id)
-    except (TypeError, ValueError):
-        return False
+    return is_admin_user(
+        env,
+        telegram_user_id,
+    )
 
 
 async def _get_seller_claim(
