@@ -1250,7 +1250,7 @@ async def handle_admin_report_decision(
         else "REJECTED"
     )
 
-    await backend.execute(
+    update_result = await backend.execute(
         """
         UPDATE reports
         SET status = ?
@@ -1263,26 +1263,15 @@ async def handle_admin_report_decision(
         ),
     )
 
-    updated_report = await backend.fetchone(
-        """
-        SELECT status
-        FROM reports
-        WHERE id = ?
-        LIMIT 1;
-        """,
-        (
-            report_id,
-        ),
-    )
-
-    if (
-        updated_report is None
-        or updated_report.get("status") != new_status
-    ):
+    # Only the callback that actually changed PENDING may create
+    # an audit entry or notify the reporter. A read-after-write status
+    # check is insufficient because another concurrent callback may
+    # have committed the same requested status first.
+    if update_result.rowcount != 1:
         await _answer_callback(
             telegram,
             callback_query,
-            "⚠️ وضعیت گزارش تغییر نکرد. دوباره تلاش کن.",
+            "⚠️ این گزارش قبلاً تعیین‌تکلیف شده است.",
             show_alert=True,
         )
         return True
