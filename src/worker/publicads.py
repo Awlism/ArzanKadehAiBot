@@ -944,22 +944,70 @@ async def _finish_public_ad(
 
     now = _now_iso()
 
-    async with db.transaction(
-        immediate=True
-    ) as tx:
-        existing = await tx.fetchone(
-            """
-            SELECT 1
-            FROM requests
-            WHERE user_id = ?
-              AND request_type = 'general_ad'
-              AND status = 'PENDING'
-            LIMIT 1;
-            """,
-            (user_id,),
-        )
+    try:
+        async with db.transaction(
+            immediate=True
+        ) as tx:
+            existing = await tx.fetchone(
+                """
+                SELECT 1
+                FROM requests
+                WHERE user_id = ?
+                  AND request_type = 'general_ad'
+                  AND status = 'PENDING'
+                LIMIT 1;
+                """,
+                (user_id,),
+            )
 
-        if existing is not None:
+            if existing is not None:
+                request_already_exists = True
+            else:
+                request_already_exists = False
+
+                await tx.execute(
+                    """
+                    INSERT INTO requests (
+                        user_id,
+                        request_type,
+                        topic,
+                        message,
+                        status,
+                        created_at,
+                        updated_at,
+                        ad_kind,
+                        ad_title,
+                        ad_image_url,
+                        ad_link
+                    )
+                    VALUES (
+                        ?,
+                        'general_ad',
+                        ?,
+                        ?,
+                        'PENDING',
+                        ?,
+                        ?,
+                        ?,
+                        ?,
+                        ?,
+                        ?
+                    );
+                    """,
+                    (
+                        user_id,
+                        title.strip(),
+                        data.get("description"),
+                        now,
+                        now,
+                        kind,
+                        title.strip(),
+                        data.get("image_url"),
+                        data.get("link"),
+                    ),
+                )
+
+        if request_already_exists:
             await clear_state(
                 db,
                 user_id,
@@ -982,76 +1030,74 @@ async def _finish_public_ad(
 
             return
 
-        result = await tx.execute(
-            """
-            INSERT INTO requests (
-                user_id,
-                request_type,
-                topic,
-                message,
-                status,
-                created_at,
-                updated_at,
-                ad_kind,
-                ad_title,
-                ad_image_url,
-                ad_link
-            )
-            VALUES (
-                ?,
-                'general_ad',
-                ?,
-                ?,
-                'PENDING',
-                ?,
-                ?,
-                ?,
-                ?,
-                ?,
-                ?
-            );
-            """,
-            (
-                user_id,
-                title.strip(),
-                data.get("description"),
-                now,
-                now,
-                kind,
-                title.strip(),
-                data.get("image_url"),
-                data.get("link"),
-            ),
+        # Read the INSERT result after the D1 transaction commits.
+        results = tx.results
+        insert_result = (
+            results[0]
+            if results
+            else None
         )
 
-    request_row = await db.fetchone(
-        """
-        SELECT id
-        FROM requests
-        WHERE user_id = ?
-          AND request_type = 'general_ad'
-          AND status = 'PENDING'
-          AND topic = ?
-        ORDER BY id DESC
-        LIMIT 1;
-        """,
-        (
-            user_id,
-            title.strip(),
-        ),
-    )
+        request_id = (
+            insert_result.lastrowid
+            if insert_result is not None
+            else None
+        )
 
-    request_id = (
-        int(request_row["id"])
-        if request_row is not None
-        else None
-    )
+        # Fallback only if D1 did not return the inserted row ID.
+        if request_id is None:
+            request_row = await db.fetchone(
+                """
+                SELECT id
+                FROM requests
+                WHERE user_id = ?
+                  AND request_type = 'general_ad'
+                  AND status = 'PENDING'
+                  AND topic = ?
+                  AND message IS ?
+                  AND created_at = ?
+                ORDER BY id DESC
+                LIMIT 1;
+                """,
+                (
+                    user_id,
+                    title.strip(),
+                    data.get("description"),
+                    now,
+                ),
+            )
 
-    if request_id is None:
+            if request_row is not None:
+                request_id = request_row["id"]
+
+        if request_id is None:
+            raise RuntimeError(
+                "Public ad request ID could not be resolved."
+            )
+
+        request_id = int(request_id)
+
+    except Exception:
         await clear_state(
             db,
             user_id,
         )
+
+        if chat_id is not None:
+            await _send(
+                telegram,
+                chat_id,
+                (
+                    "⚠️ ثبت درخواست تبلیغ با مشکل روبه‌رو شد. "
+                    "لطفاً دوباره تلاش کن."
+                ),
+                _keyboard(
+                    [
+                        _back_button("main"),
+                    ]
+                ),
+            )
+
         return
 
     await clear_state(
