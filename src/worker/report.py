@@ -572,36 +572,54 @@ async def _save_report(
             ),
         )
 
-    row = await backend.fetchone(
-        """
-        SELECT id
-        FROM reports
-        WHERE user_id = ?
-          AND seller_id IS ?
-          AND product_id IS ?
-          AND reason = ?
-          AND created_at = ?
-        ORDER BY id DESC
-        LIMIT 1;
-        """,
-        (
-            user_id,
-            seller_id,
-            product_id,
-            reason_code,
-            now,
-        ),
+    # Transaction completed; retrieve the INSERT result.
+    results = transaction.results
+    insert_result = (
+        results[0]
+        if results
+        else None
     )
 
-    if row is None:
+    report_id = (
+        insert_result.lastrowid
+        if insert_result is not None
+        else None
+    )
+
+    # Fallback only if the runtime did not return lastrowid.
+    if report_id is None:
+        row = await backend.fetchone(
+            """
+            SELECT id
+            FROM reports
+            WHERE user_id = ?
+              AND seller_id IS ?
+              AND product_id IS ?
+              AND reason = ?
+              AND description IS ?
+              AND created_at = ?
+            ORDER BY id DESC
+            LIMIT 1;
+            """,
+            (
+                user_id,
+                seller_id,
+                product_id,
+                reason_code,
+                description,
+                now,
+            ),
+        )
+
+        if row is not None:
+            report_id = row["id"]
+
+    if report_id is None:
         return 0
 
     try:
-        return int(
-            row["id"]
-        )
+        return int(report_id)
     except (
-        KeyError,
         TypeError,
         ValueError,
     ):
