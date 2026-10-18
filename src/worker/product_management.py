@@ -1515,25 +1515,38 @@ async def _finish_product_add(
         user_id,
     )
 
-    await _edit(
-        telegram,
-        callback_query,
-        (
-            "✅ محصول با موفقیت اضافه شد.\n\n"
-            f"🛍️ <b>{_html(name)}</b>"
-        ),
-        _keyboard(
-            [
-                [
-                    _button(
-                        "📦 محصولاتم",
-                        f"prodlist:{seller_id}",
-                    )
-                ],
-                _back(),
-            ]
-        ),
+    success_text = (
+        "✅ محصول با موفقیت اضافه شد.\n\n"
+        f"🛍️ <b>{_html(name)}</b>"
     )
+    success_keyboard = _keyboard(
+        [
+            [
+                _button(
+                    "📦 محصولاتم",
+                    f"prodlist:{seller_id}",
+                )
+            ],
+            _back(),
+        ]
+    )
+
+    if callback_query.get("id"):
+        await _edit(
+            telegram,
+            callback_query,
+            success_text,
+            success_keyboard,
+        )
+    else:
+        source_message = callback_query.get("message")
+        if isinstance(source_message, dict):
+            await _send(
+                telegram,
+                source_message,
+                success_text,
+                success_keyboard,
+            )
 
     await _answer(
         telegram,
