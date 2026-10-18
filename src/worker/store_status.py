@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 """
 ArzanKadeh AI
@@ -24,11 +25,27 @@ def _html(value: Any) -> str:
 
 def _parse_id(value: Any) -> Optional[int]:
     try:
+        if isinstance(value, bool):
+            return None
         result = int(str(value).strip())
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
     if result < 1:
+        return None
+
+    return result
+
+
+def _parse_chat_id(value: Any) -> Optional[int]:
+    try:
+        if isinstance(value, bool):
+            return None
+        result = int(str(value).strip())
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+    if result == 0:
         return None
 
     return result
@@ -94,7 +111,7 @@ async def _edit_callback(
         or {}
     )
 
-    chat_id = _parse_id(
+    chat_id = _parse_chat_id(
         chat.get("id")
     )
 
