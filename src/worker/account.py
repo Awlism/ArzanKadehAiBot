@@ -471,32 +471,14 @@ async def _render_seller_panel(
 async def _render_admin_panel(
     telegram: Any,
     callback_query: dict[str, Any],
+    env: Any,
 ) -> None:
-    """
-    Temporary integration boundary for the future Worker
-    admin module.
+    from worker.admin import handle_admin_home
 
-    The admin panel itself will be migrated separately.
-    """
-
-    await _edit_callback(
-        telegram,
+    await handle_admin_home(
         callback_query,
-        (
-            "🛡️ <b>پنل مدیریت</b>\n\n"
-            "پنل مدیریت در حال انتقال به نسخه Cloudflare است."
-        ),
-        _keyboard(
-            [
-                [
-                    _button(
-                        "👤 حالت خرید",
-                        "setmode:buyer",
-                    )
-                ],
-                _back_button("main"),
-            ]
-        ),
+        telegram,
+        env,
     )
 
 
