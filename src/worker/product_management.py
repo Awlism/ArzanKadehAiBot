@@ -2463,6 +2463,19 @@ async def handle_product_message(
         return False
 
     data = state.get("data") or {}
+
+    if not isinstance(data, dict):
+        await clear_state(
+            db,
+            user_id,
+        )
+        await _send(
+            telegram,
+            message,
+            "⚠️ اطلاعات این فرآیند نامعتبر است. دوباره از منو شروع کن.",
+        )
+        return True
+
     step = data.get("step")
     text = str(
         message.get("text") or ""
