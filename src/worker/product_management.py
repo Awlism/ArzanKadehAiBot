@@ -1235,18 +1235,18 @@ async def handle_product_add_start(
     )
 
 
+
 async def handle_product_add_skip(
     db: Any,
     telegram: Any,
     callback_query: dict[str, Any],
 ) -> None:
-    data = str(
+    callback_data = str(
         callback_query.get("data", "")
     )
+    parts = callback_data.split(":")
 
-    parts = data.split(":")
-
-    if len(parts) != 2:
+    if len(parts) != 2 or parts[0] != "prodaddskip":
         await _answer(
             telegram,
             callback_query,
@@ -1256,6 +1256,20 @@ async def handle_product_add_skip(
         return
 
     field = parts[1]
+    expected_steps = {
+        "description": "add_description",
+        "old_price": "add_old_price",
+        "image": "add_image",
+    }
+
+    if field not in expected_steps:
+        await _answer(
+            telegram,
+            callback_query,
+            "⚠️ گزینه نامعتبر است.",
+            True,
+        )
+        return
 
     user_data = callback_query.get("from") or {}
 
@@ -1273,9 +1287,11 @@ async def handle_product_add_skip(
         )
         return
 
+    user_id = int(user["id"])
+
     state = await get_state(
         db,
-        int(user["id"]),
+        user_id,
     )
 
     if not state or state.get("state") != STATE_NAME:
@@ -1289,12 +1305,70 @@ async def handle_product_add_skip(
 
     state_data = state.get("data") or {}
 
+    if not isinstance(state_data, dict):
+        await clear_state(
+            db,
+            user_id,
+        )
+        await _answer(
+            telegram,
+            callback_query,
+            "⚠️ اطلاعات ثبت محصول نامعتبر است. دوباره شروع کن.",
+            True,
+        )
+        return
+
+    if state_data.get("step") != expected_steps[field]:
+        await _answer(
+            telegram,
+            callback_query,
+            "⚠️ این دکمه مربوط به مرحلهٔ فعلی نیست. از گزینه‌های همین مرحله استفاده کن.",
+            True,
+        )
+        return
+
+    seller_id = _parse_id(
+        state_data.get("seller_id")
+    )
+
+    if seller_id is None:
+        await clear_state(
+            db,
+            user_id,
+        )
+        await _answer(
+            telegram,
+            callback_query,
+            "⚠️ اطلاعات فروشگاه ناقص است. دوباره شروع کن.",
+            True,
+        )
+        return
+
+    seller = await _owned_seller(
+        db,
+        user_id,
+        seller_id,
+    )
+
+    if seller is None:
+        await clear_state(
+            db,
+            user_id,
+        )
+        await _answer(
+            telegram,
+            callback_query,
+            "⚠️ شما به این فروشگاه دسترسی ندارید.",
+            True,
+        )
+        return
+
     if field == "description":
         state_data["description"] = None
 
         await _set_state(
             db,
-            int(user["id"]),
+            user_id,
             "add_price",
             state_data,
         )
@@ -1306,7 +1380,7 @@ async def handle_product_add_skip(
             _keyboard(
                 [
                     _back(
-                        f"prodlist:{state_data['seller_id']}"
+                        f"prodlist:{seller_id}"
                     )
                 ]
             ),
@@ -1317,7 +1391,7 @@ async def handle_product_add_skip(
 
         await _set_state(
             db,
-            int(user["id"]),
+            user_id,
             "add_image",
             state_data,
         )
@@ -1335,7 +1409,7 @@ async def handle_product_add_skip(
                         )
                     ],
                     _back(
-                        f"prodlist:{state_data['seller_id']}"
+                        f"prodlist:{seller_id}"
                     ),
                 ]
             ),
@@ -1348,17 +1422,9 @@ async def handle_product_add_skip(
             db,
             telegram,
             callback_query,
-            int(user["id"]),
+            user_id,
             state_data,
         )
-    else:
-        await _answer(
-            telegram,
-            callback_query,
-            "⚠️ گزینه نامعتبر است.",
-            True,
-        )
-        return
 
     await _answer(
         telegram,
