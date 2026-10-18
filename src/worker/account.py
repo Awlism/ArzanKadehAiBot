@@ -489,6 +489,7 @@ async def render_active_mode(
     user_id: int,
     mode: str,
     telegram_user_id: Optional[int] = None,
+    env: Any = None,
 ) -> None:
     """
     Render an active account mode from a normal message context.
@@ -541,6 +542,7 @@ async def render_active_mode(
         await _render_admin_panel(
             telegram,
             callback_query,
+            env,
         )
         return
 
@@ -615,6 +617,7 @@ async def handle_account(
             await _render_admin_panel(
                 telegram,
                 callback_query,
+                env,
             )
         else:
             await db.execute(
