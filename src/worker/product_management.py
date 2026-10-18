@@ -895,6 +895,7 @@ async def _render_product_category_picker(
     )
 
 
+
 async def _select_product_category(
     db: Any,
     telegram: Any,
@@ -902,6 +903,44 @@ async def _select_product_category(
     user_id: int,
     category_id: int,
 ) -> None:
+    state = await get_state(
+        db,
+        user_id,
+    )
+
+    if not state or state.get("state") != STATE_NAME:
+        await _answer(
+            telegram,
+            callback_query,
+            "⚠️ فرآیند ثبت محصول منقضی شده. دوباره شروع کن.",
+            True,
+        )
+        return
+
+    state_data = state.get("data") or {}
+
+    if not isinstance(state_data, dict):
+        await clear_state(
+            db,
+            user_id,
+        )
+        await _answer(
+            telegram,
+            callback_query,
+            "⚠️ اطلاعات ثبت محصول نامعتبر است. دوباره شروع کن.",
+            True,
+        )
+        return
+
+    if state_data.get("step") != "add_category":
+        await _answer(
+            telegram,
+            callback_query,
+            "⚠️ این انتخاب مربوط به مرحلهٔ فعلی نیست. از گزینه‌های همین مرحله استفاده کن.",
+            True,
+        )
+        return
+
     category = await db.fetchone(
         """
         SELECT
@@ -943,21 +982,6 @@ async def _select_product_category(
         )
         return
 
-    state = await get_state(
-        db,
-        user_id,
-    )
-
-    if not state or state.get("state") != STATE_NAME:
-        await _answer(
-            telegram,
-            callback_query,
-            "⚠️ فرآیند ثبت محصول منقضی شده. دوباره شروع کن.",
-            True,
-        )
-        return
-
-    state_data = state.get("data") or {}
     seller_id = _parse_id(
         state_data.get("seller_id")
     )
@@ -1014,7 +1038,7 @@ async def _select_product_category(
         _keyboard(
             [
                 _back(
-                    f"prodadd:cat:0:0"
+                    "prodadd:cat:0:0"
                 )
             ]
         ),
