@@ -496,6 +496,8 @@ async def _go_to_start(
         chat_id,
         user_id,
         mode,
+        telegram_user_id=telegram_user_id,
+        env=env,
     )
 
 
