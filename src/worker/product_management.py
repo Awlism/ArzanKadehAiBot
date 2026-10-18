@@ -131,6 +131,29 @@ async def _answer(
         show_alert=show_alert,
     )
 
+async def _answer_or_send(
+    telegram: Any,
+    callback_query: dict[str, Any],
+    text: str,
+    show_alert: bool = False,
+) -> None:
+    if callback_query.get("id"):
+        await _answer(
+            telegram,
+            callback_query,
+            text,
+            show_alert,
+        )
+        return
+
+    source_message = callback_query.get("message")
+    if isinstance(source_message, dict):
+        await _send(
+            telegram,
+            source_message,
+            text,
+        )
+
 
 def _context(
     callback_query: dict[str, Any],
