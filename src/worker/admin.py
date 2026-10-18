@@ -338,12 +338,25 @@ async def handle_admin_home(
         ]
     )
 
-    await _edit_callback(
-        telegram,
-        callback_query,
-        "🛡 <b>پنل مدیریت</b>",
-        keyboard,
-    )
+    message = callback_query.get("message") or {}
+    chat = message.get("chat") or {}
+    chat_id = chat.get("id")
+    message_id = message.get("message_id")
+
+    if message_id is not None:
+        await _edit_callback(
+            telegram,
+            callback_query,
+            "🛡 <b>پنل مدیریت</b>",
+            keyboard,
+        )
+    elif chat_id is not None:
+        await _send(
+            telegram,
+            int(chat_id),
+            "🛡 <b>پنل مدیریت</b>",
+            keyboard,
+        )
 
     await _answer_callback(
         telegram,
