@@ -707,46 +707,86 @@ async def _toggle_store_active(
     )
 
     new_active = not current_active
+    now = _now_iso()
 
-    await db.execute(
-        """
-        UPDATE sellers
-        SET is_active = ?,
-            updated_at = ?
-        WHERE id = ?;
-        """,
-        (
-            1 if new_active else 0,
-            _now_iso(),
-            seller_id,
-        ),
-    )
+    try:
+        async with db.transaction(immediate=True) as transaction:
+            await transaction.execute(
+                """
+                UPDATE sellers
+                SET is_active = ?,
+                    updated_at = ?
+                WHERE id = ?
+                  AND (
+                      owner_user_id = ?
+                      OR created_by_user_id = ?
+                  )
+                  AND COALESCE(is_active, 1) = ?;
+                """,
+                (
+                    1 if new_active else 0,
+                    now,
+                    seller_id,
+                    user_id,
+                    user_id,
+                    1 if current_active else 0,
+                ),
+            )
 
-    await db.execute(
-        """
-        INSERT INTO audit_log (
-            actor_user_id,
-            action,
-            entity_type,
-            entity_id,
-            details,
-            created_at
+            await transaction.execute(
+                """
+                INSERT INTO audit_log (
+                    actor_user_id,
+                    action,
+                    entity_type,
+                    entity_id,
+                    details,
+                    created_at
+                )
+                SELECT
+                    ?,
+                    ?,
+                    'seller',
+                    id,
+                    NULL,
+                    ?
+                FROM sellers
+                WHERE id = ?
+                  AND changes() = 1;
+                """,
+                (
+                    user_id,
+                    (
+                        "store_activated"
+                        if new_active
+                        else "store_deactivated"
+                    ),
+                    now,
+                    seller_id,
+                ),
+            )
+
+        results = transaction.results
+
+        if (
+            len(results) != 2
+            or any(
+                getattr(result, "rowcount", 0) != 1
+                for result in results
+            )
+        ):
+            raise RuntimeError(
+                "Store status update or audit insert failed."
+            )
+
+    except Exception:
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ تغییر وضعیت فروشگاه ذخیره نشد. دوباره تلاش کن.",
+            True,
         )
-        VALUES (?, ?, ?, ?, ?, ?);
-        """,
-        (
-            user_id,
-            (
-                "store_activated"
-                if new_active
-                else "store_deactivated"
-            ),
-            "seller",
-            seller_id,
-            None,
-            _now_iso(),
-        ),
-    )
+        return
 
     await _render_store_status(
         db,
