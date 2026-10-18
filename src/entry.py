@@ -5,6 +5,7 @@ Cloudflare Worker entrypoint.
 
 Routes:
 - GET  / -> D1 health check
+- GET  /contact -> seller contact redirect
 - POST / -> Telegram webhook router
 
 No aiogram is imported here.
@@ -334,7 +335,22 @@ class Default(WorkerEntrypoint):
             )
 
     async def _health_check(self):
-        
+        d1_backend = D1Backend(self.env.DB)
+
+        backend.set_backend(d1_backend)
+
+        await backend.connect()
+
+        # Verify the D1 connection without exposing schema details.
+        await backend.fetchone(
+            "SELECT 1 AS healthy;"
+        )
+
+        return Response(
+            "ArzanKadeh Worker OK",
+            status=200,
+        )
+
     async def _handle_contact_redirect(
         self,
         request,
@@ -409,7 +425,9 @@ class Default(WorkerEntrypoint):
         field, event_type, url_builder = config
 
         d1_backend = D1Backend(self.env.DB)
+
         backend.set_backend(d1_backend)
+
         await backend.connect()
 
         seller = await backend.fetchone(
@@ -490,24 +508,6 @@ class Default(WorkerEntrypoint):
                 "Location": link,
                 "Cache-Control": "no-store",
             },
-        )
-        
-        d1_backend = D1Backend(self.env.DB)
-
-        backend.set_backend(d1_backend)
-
-        await backend.connect()
-
-        # Verify the D1 connection without exposing schema details.
-        await backend.fetchone(
-            "SELECT 1 AS healthy;"
-        )
-
-        body = "ArzanKadeh Worker OK"
-
-        return Response(
-            body,
-            status=200,
         )
 
     async def _handle_webhook(
