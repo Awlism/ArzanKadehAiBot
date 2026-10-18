@@ -301,7 +301,22 @@ class Default(WorkerEntrypoint):
             method = request.method
 
             if method == "GET":
-                return await self._health_check()
+                from urllib.parse import urlsplit
+
+                path = urlsplit(request.url).path
+
+                if path == "/contact":
+                    return await self._handle_contact_redirect(
+                        request
+                    )
+
+                if path == "/":
+                    return await self._health_check()
+
+                return Response(
+                    "Not Found",
+                    status=404,
+                )
 
             if method == "POST":
                 return await self._handle_webhook(request)
@@ -319,6 +334,164 @@ class Default(WorkerEntrypoint):
             )
 
     async def _health_check(self):
+        
+    async def _handle_contact_redirect(
+        self,
+        request,
+    ):
+        from datetime import datetime, timezone
+        from urllib.parse import parse_qs, urlsplit
+
+        from worker.seller import (
+            _instagram_url,
+            _telegram_url,
+            _whatsapp_url,
+        )
+
+        query = parse_qs(
+            urlsplit(request.url).query
+        )
+
+        channel_values = query.get("channel", [])
+        seller_id_values = query.get("seller_id", [])
+
+        if (
+            len(channel_values) != 1
+            or len(seller_id_values) != 1
+        ):
+            return Response(
+                "Invalid contact link",
+                status=400,
+            )
+
+        channel = channel_values[0].strip().lower()
+
+        try:
+            seller_id = int(seller_id_values[0])
+        except (TypeError, ValueError):
+            return Response(
+                "Invalid seller",
+                status=400,
+            )
+
+        if seller_id < 1:
+            return Response(
+                "Invalid seller",
+                status=400,
+            )
+
+        channel_config = {
+            "instagram": (
+                "instagram",
+                "instagram_click",
+                _instagram_url,
+            ),
+            "telegram": (
+                "telegram",
+                "telegram_click",
+                _telegram_url,
+            ),
+            "whatsapp": (
+                "whatsapp",
+                "whatsapp_click",
+                _whatsapp_url,
+            ),
+        }
+
+        config = channel_config.get(channel)
+
+        if config is None:
+            return Response(
+                "Unsupported contact channel",
+                status=400,
+            )
+
+        field, event_type, url_builder = config
+
+        d1_backend = D1Backend(self.env.DB)
+        backend.set_backend(d1_backend)
+        await backend.connect()
+
+        seller = await backend.fetchone(
+            f"""
+            SELECT
+                id,
+                {field},
+                is_active
+            FROM sellers
+            WHERE id = ?
+            LIMIT 1;
+            """,
+            (seller_id,),
+        )
+
+        if seller is None:
+            return Response(
+                "Seller not found",
+                status=404,
+            )
+
+        is_active = (
+            bool(seller.get("is_active"))
+            if seller.get("is_active") is not None
+            else True
+        )
+
+        if not is_active:
+            return Response(
+                "Seller is inactive",
+                status=410,
+            )
+
+        link = url_builder(
+            seller.get(field)
+        )
+
+        if not link:
+            return Response(
+                "Contact link unavailable",
+                status=404,
+            )
+
+        now = datetime.now(
+            timezone.utc
+        ).isoformat(
+            timespec="seconds"
+        )
+
+        await backend.execute(
+            """
+            INSERT INTO events (
+                user_id,
+                event_type,
+                entity_type,
+                entity_id,
+                created_at
+            )
+            VALUES (
+                NULL,
+                ?,
+                'seller',
+                ?,
+                ?
+            );
+            """,
+            (
+                event_type,
+                seller_id,
+                now,
+            ),
+        )
+
+        return Response(
+            "",
+            status=302,
+            headers={
+                "Location": link,
+                "Cache-Control": "no-store",
+            },
+        )
+        
         d1_backend = D1Backend(self.env.DB)
 
         backend.set_backend(d1_backend)
