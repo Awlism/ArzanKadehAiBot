@@ -227,9 +227,11 @@ _STOPWORD_TOKENS = {
 }
 
 
+
 _PRICE_UNIT_RE = (
-    r"(\d+(?:\.\d+)?)\s*(میلیون|هزار)?"
+    r"(\d+(?:\.\d+)?)\s*(میلیارد|میلیون|هزار)?"
 )
+
 
 
 _PRICE_RANGE_RE = re.compile(
@@ -408,18 +410,22 @@ def _remove_stopwords(
     )
 
 
+
 def _convert_number_unit(
     value: str,
     unit: Optional[str],
 ) -> float:
     number = float(value)
 
-    if unit == "میلیون":
+    if unit == "میلیارد":
+        number *= 1_000_000_000
+    elif unit == "میلیون":
         number *= 1_000_000
     elif unit == "هزار":
         number *= 1_000
 
     return number
+
 
 
 def _extract_price(
