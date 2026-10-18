@@ -30,9 +30,7 @@ REPORT_REASONS = {
 
 
 def _now_iso() -> str:
-    return datetime.now(
-        timezone.utc
-    ).isoformat(
+    return datetime.now(timezone.utc).isoformat(
         timespec="seconds"
     )
 
@@ -41,10 +39,7 @@ def _html(value: Any) -> str:
     if value is None:
         return ""
 
-    return escape(
-        str(value),
-        quote=False,
-    )
+    return escape(str(value), quote=False)
 
 
 def _get_callback_telegram_id(
@@ -99,9 +94,7 @@ def _get_callback_message(
 def _get_callback_chat_id(
     callback_query: dict[str, Any],
 ) -> Optional[int]:
-    message = _get_callback_message(
-        callback_query
-    )
+    message = _get_callback_message(callback_query)
 
     if message is None:
         return None
@@ -143,9 +136,7 @@ def _get_callback_query_id(
     if callback_query_id is None:
         return None
 
-    value = str(
-        callback_query_id
-    ).strip()
+    value = str(callback_query_id).strip()
 
     return value or None
 
@@ -177,9 +168,7 @@ async def _edit_callback_message(
     text: str,
     reply_markup: Optional[dict[str, Any]] = None,
 ) -> None:
-    message = _get_callback_message(
-        callback_query
-    )
+    message = _get_callback_message(callback_query)
 
     if message is None:
         return
@@ -196,19 +185,13 @@ async def _edit_callback_message(
 
     message_id = message.get("message_id")
 
-    if (
-        chat_id is None
-        or message_id is None
-    ):
+    if chat_id is None or message_id is None:
         return
 
     try:
         chat_id = int(chat_id)
         message_id = int(message_id)
-    except (
-        TypeError,
-        ValueError,
-    ):
+    except (TypeError, ValueError):
         return
 
     await telegram.edit_message_text(
@@ -230,23 +213,15 @@ async def _get_internal_user_id(
         WHERE telegram_id = ?
         LIMIT 1;
         """,
-        (
-            telegram_id,
-        ),
+        (telegram_id,),
     )
 
     if row is None:
         return None
 
     try:
-        user_id = int(
-            row["id"]
-        )
-    except (
-        TypeError,
-        ValueError,
-        KeyError,
-    ):
+        user_id = int(row["id"])
+    except (TypeError, ValueError, KeyError):
         return None
 
     if user_id < 1:
@@ -261,10 +236,7 @@ async def _is_admin(
 ) -> bool:
     from worker.admin_auth import is_admin_user
 
-    return is_admin_user(
-        env,
-        telegram_id,
-    )
+    return is_admin_user(env, telegram_id)
 
 
 def _parse_report_target(
@@ -280,20 +252,12 @@ def _parse_report_target(
 
     target_type = parts[1]
 
-    if target_type not in {
-        "seller",
-        "product",
-    }:
+    if target_type not in {"seller", "product"}:
         return None
 
     try:
-        target_id = int(
-            parts[2]
-        )
-    except (
-        TypeError,
-        ValueError,
-    ):
+        target_id = int(parts[2])
+    except (TypeError, ValueError):
         return None
 
     if target_id < 1:
@@ -315,20 +279,12 @@ def _parse_report_reason(
 
     target_type = parts[1]
 
-    if target_type not in {
-        "seller",
-        "product",
-    }:
+    if target_type not in {"seller", "product"}:
         return None
 
     try:
-        target_id = int(
-            parts[2]
-        )
-    except (
-        TypeError,
-        ValueError,
-    ):
+        target_id = int(parts[2])
+    except (TypeError, ValueError):
         return None
 
     if target_id < 1:
@@ -339,11 +295,7 @@ def _parse_report_reason(
     if reason_code not in REPORT_REASONS:
         return None
 
-    return (
-        target_type,
-        target_id,
-        reason_code,
-    )
+    return target_type, target_id, reason_code
 
 
 async def _target_exists(
@@ -358,9 +310,7 @@ async def _target_exists(
             WHERE id = ?
             LIMIT 1;
             """,
-            (
-                target_id,
-            ),
+            (target_id,),
         )
         return row is not None
 
@@ -372,9 +322,7 @@ async def _target_exists(
             WHERE id = ?
             LIMIT 1;
             """,
-            (
-                target_id,
-            ),
+            (target_id,),
         )
         return row is not None
 
@@ -396,10 +344,7 @@ async def _has_open_report(
               AND status = 'PENDING'
             LIMIT 1;
             """,
-            (
-                user_id,
-                target_id,
-            ),
+            (user_id, target_id),
         )
         return row is not None
 
@@ -413,10 +358,7 @@ async def _has_open_report(
               AND status = 'PENDING'
             LIMIT 1;
             """,
-            (
-                user_id,
-                target_id,
-            ),
+            (user_id, target_id),
         )
         return row is not None
 
@@ -448,16 +390,12 @@ def _report_reason_keyboard(
         [
             {
                 "text": "↩️ بازگشت",
-                "callback_data": (
-                    f"{target_type}:{target_id}"
-                ),
+                "callback_data": f"{target_type}:{target_id}",
             }
         ]
     )
 
-    return {
-        "inline_keyboard": rows,
-    }
+    return {"inline_keyboard": rows}
 
 
 def _report_description_keyboard() -> dict[str, Any]:
@@ -488,7 +426,6 @@ async def _notify_admin_new_report(
 
     A notification failure must never undo or hide the saved report.
     """
-
     admin_chat_id = get_admin_chat_id(env)
 
     if admin_chat_id is None:
@@ -506,15 +443,11 @@ async def _notify_admin_new_report(
             WHERE id = ?
             LIMIT 1;
             """,
-            (
-                user_id,
-            ),
+            (user_id,),
         )
 
         if user is None:
-            reporter_label = (
-                f"کاربر داخلی #{user_id}"
-            )
+            reporter_label = f"کاربر داخلی #{user_id}"
         else:
             first_name = str(
                 user.get("first_name") or ""
@@ -530,29 +463,20 @@ async def _notify_admin_new_report(
 
             full_name = " ".join(
                 part
-                for part in (
-                    first_name,
-                    last_name,
-                )
+                for part in (first_name, last_name)
                 if part
             )
 
             if username and full_name:
-                reporter_label = (
-                    f"{full_name} (@{username})"
-                )
+                reporter_label = f"{full_name} (@{username})"
             elif username:
                 reporter_label = f"@{username}"
             elif full_name:
                 reporter_label = full_name
             else:
-                reporter_label = (
-                    f"کاربر داخلی #{user_id}"
-                )
+                reporter_label = f"کاربر داخلی #{user_id}"
 
-            telegram_id = user.get(
-                "telegram_id"
-            )
+            telegram_id = user.get("telegram_id")
 
             if telegram_id is not None:
                 reporter_label += (
@@ -626,47 +550,27 @@ async def handle_report_start(
 ) -> bool:
     callback_data = callback_query.get("data")
 
-    if not isinstance(
-        callback_data,
-        str,
-    ):
+    if not isinstance(callback_data, str):
         return False
 
-    parsed = _parse_report_target(
-        callback_data
-    )
+    parsed = _parse_report_target(callback_data)
 
     if parsed is None:
         return False
 
     target_type, target_id = parsed
 
-    telegram_id = _get_callback_telegram_id(
-        callback_query
-    )
+    telegram_id = _get_callback_telegram_id(callback_query)
+    chat_id = _get_callback_chat_id(callback_query)
+    callback_query_id = _get_callback_query_id(callback_query)
 
-    chat_id = _get_callback_chat_id(
-        callback_query
-    )
-
-    callback_query_id = _get_callback_query_id(
-        callback_query
-    )
-
-    if (
-        telegram_id is None
-        or chat_id is None
-    ):
+    if telegram_id is None or chat_id is None:
         return False
 
     if callback_query_id is not None:
-        await telegram.answer_callback_query(
-            callback_query_id
-        )
+        await telegram.answer_callback_query(callback_query_id)
 
-    user_id = await _get_internal_user_id(
-        telegram_id
-    )
+    user_id = await _get_internal_user_id(telegram_id)
 
     if user_id is None:
         await telegram.send_message(
@@ -675,31 +579,21 @@ async def handle_report_start(
         )
         return True
 
-    if not await _target_exists(
-        target_type,
-        target_id,
-    ):
+    if not await _target_exists(target_type, target_id):
         await telegram.send_message(
             chat_id,
             "این مورد پیدا نشد.",
         )
         return True
 
-    if await _has_open_report(
-        user_id,
-        target_type,
-        target_id,
-    ):
+    if await _has_open_report(user_id, target_type, target_id):
         await telegram.send_message(
             chat_id,
             "گزارش قبلی شما برای همین مورد هنوز در حال بررسی است.",
         )
         return True
 
-    await clear_state(
-        backend,
-        user_id,
-    )
+    await clear_state(backend, user_id)
 
     await telegram.send_message(
         chat_id,
@@ -719,47 +613,27 @@ async def handle_report_reason(
 ) -> bool:
     callback_data = callback_query.get("data")
 
-    if not isinstance(
-        callback_data,
-        str,
-    ):
+    if not isinstance(callback_data, str):
         return False
 
-    parsed = _parse_report_reason(
-        callback_data
-    )
+    parsed = _parse_report_reason(callback_data)
 
     if parsed is None:
         return False
 
     target_type, target_id, reason_code = parsed
 
-    telegram_id = _get_callback_telegram_id(
-        callback_query
-    )
+    telegram_id = _get_callback_telegram_id(callback_query)
+    chat_id = _get_callback_chat_id(callback_query)
+    callback_query_id = _get_callback_query_id(callback_query)
 
-    chat_id = _get_callback_chat_id(
-        callback_query
-    )
-
-    callback_query_id = _get_callback_query_id(
-        callback_query
-    )
-
-    if (
-        telegram_id is None
-        or chat_id is None
-    ):
+    if telegram_id is None or chat_id is None:
         return False
 
     if callback_query_id is not None:
-        await telegram.answer_callback_query(
-            callback_query_id
-        )
+        await telegram.answer_callback_query(callback_query_id)
 
-    user_id = await _get_internal_user_id(
-        telegram_id
-    )
+    user_id = await _get_internal_user_id(telegram_id)
 
     if user_id is None:
         await telegram.send_message(
@@ -768,29 +642,16 @@ async def handle_report_reason(
         )
         return True
 
-    if not await _target_exists(
-        target_type,
-        target_id,
-    ):
-        await clear_state(
-            backend,
-            user_id,
-        )
+    if not await _target_exists(target_type, target_id):
+        await clear_state(backend, user_id)
         await telegram.send_message(
             chat_id,
             "این مورد دیگه پیدا نشد. دوباره گزارش رو شروع کن.",
         )
         return True
 
-    if await _has_open_report(
-        user_id,
-        target_type,
-        target_id,
-    ):
-        await clear_state(
-            backend,
-            user_id,
-        )
+    if await _has_open_report(user_id, target_type, target_id):
+        await clear_state(backend, user_id)
         await telegram.send_message(
             chat_id,
             "گزارش قبلی شما برای همین مورد هنوز در حال بررسی است.",
@@ -822,64 +683,29 @@ async def _complete_report(
     data: dict[str, Any],
     description: Optional[str],
 ) -> int:
-    target_type = data.get(
-        "target_type"
-    )
+    target_type = data.get("target_type")
+    target_id = data.get("target_id")
+    reason_code = data.get("reason_code")
 
-    target_id = data.get(
-        "target_id"
-    )
-
-    reason_code = data.get(
-        "reason_code"
-    )
-
-    if target_type not in {
-        "seller",
-        "product",
-    }:
-        raise ValueError(
-            "Invalid report target type."
-        )
+    if target_type not in {"seller", "product"}:
+        raise ValueError("Invalid report target type.")
 
     try:
-        target_id = int(
-            target_id
-        )
-    except (
-        TypeError,
-        ValueError,
-    ):
-        raise ValueError(
-            "Invalid report target id."
-        )
+        target_id = int(target_id)
+    except (TypeError, ValueError):
+        raise ValueError("Invalid report target id.")
 
     if target_id < 1:
-        raise ValueError(
-            "Invalid report target id."
-        )
+        raise ValueError("Invalid report target id.")
 
     if reason_code not in REPORT_REASONS:
-        raise ValueError(
-            "Invalid report reason."
-        )
+        raise ValueError("Invalid report reason.")
 
-    if not await _target_exists(
-        target_type,
-        target_id,
-    ):
-        raise ValueError(
-            "Report target no longer exists."
-        )
+    if not await _target_exists(target_type, target_id):
+        raise ValueError("Report target no longer exists.")
 
-    if await _has_open_report(
-        user_id,
-        target_type,
-        target_id,
-    ):
-        raise ValueError(
-            "An open report already exists."
-        )
+    if await _has_open_report(user_id, target_type, target_id):
+        raise ValueError("An open report already exists.")
 
     return await _save_report(
         user_id,
@@ -900,27 +726,17 @@ async def handle_report_skip(
     if callback_data != "reportskip":
         return False
 
-    telegram_id = _get_callback_telegram_id(
-        callback_query
-    )
-    chat_id = _get_callback_chat_id(
-        callback_query
-    )
-    callback_query_id = _get_callback_query_id(
-        callback_query
-    )
+    telegram_id = _get_callback_telegram_id(callback_query)
+    chat_id = _get_callback_chat_id(callback_query)
+    callback_query_id = _get_callback_query_id(callback_query)
 
     if telegram_id is None or chat_id is None:
         return False
 
     if callback_query_id is not None:
-        await telegram.answer_callback_query(
-            callback_query_id
-        )
+        await telegram.answer_callback_query(callback_query_id)
 
-    user_id = await _get_internal_user_id(
-        telegram_id
-    )
+    user_id = await _get_internal_user_id(telegram_id)
 
     if user_id is None:
         await telegram.send_message(
@@ -929,10 +745,7 @@ async def handle_report_skip(
         )
         return True
 
-    state = await get_state(
-        backend,
-        user_id,
-    )
+    state = await get_state(backend, user_id)
 
     if state is None:
         await telegram.send_message(
@@ -947,10 +760,7 @@ async def handle_report_skip(
     data = state.get("data")
 
     if not isinstance(data, dict):
-        await clear_state(
-            backend,
-            user_id,
-        )
+        await clear_state(backend, user_id)
         await telegram.send_message(
             chat_id,
             "اطلاعات گزارش ناقصه. دوباره شروع کن.",
@@ -958,16 +768,9 @@ async def handle_report_skip(
         return True
 
     try:
-        report_id = await _complete_report(
-            user_id,
-            data,
-            None,
-        )
+        report_id = await _complete_report(user_id, data, None)
     except ValueError as exc:
-        await clear_state(
-            backend,
-            user_id,
-        )
+        await clear_state(backend, user_id)
 
         if str(exc) == "An open report already exists.":
             await telegram.send_message(
@@ -982,10 +785,7 @@ async def handle_report_skip(
 
         return True
 
-    await clear_state(
-        backend,
-        user_id,
-    )
+    await clear_state(backend, user_id)
 
     if report_id > 0 and env is not None:
         await _notify_admin_new_report(
@@ -1119,10 +919,11 @@ async def _save_report(
     description: Optional[str],
 ) -> int:
     """
-    Save a report and its audit/event records in one D1 batch.
+    Save a report and its audit/event records atomically.
 
-    D1Transaction.execute() queues writes and does not expose a
-    usable lastrowid. Retrieve the report ID only after commit.
+    The report INSERT is conditional, so a duplicate pending report
+    cannot create a second report. Event and audit entries are only
+    inserted if the report with this exact creation timestamp exists.
     """
     if user_id < 1:
         raise ValueError("Invalid report user ID.")
@@ -1167,7 +968,18 @@ async def _save_report(
                 status,
                 created_at
             )
-            VALUES (?, ?, ?, ?, ?, 'PENDING', ?);
+            SELECT ?, ?, ?, ?, ?, 'PENDING', ?
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM reports
+                WHERE user_id = ?
+                  AND status = 'PENDING'
+                  AND (
+                      (? IS NOT NULL AND seller_id = ?)
+                      OR
+                      (? IS NOT NULL AND product_id = ?)
+                  )
+            );
             """,
             (
                 user_id,
@@ -1176,9 +988,17 @@ async def _save_report(
                 reason_code,
                 clean_description,
                 created_at,
+                user_id,
+                seller_id,
+                seller_id,
+                product_id,
+                product_id,
             ),
         )
 
+        # The transaction backend exposes statement results after commit.
+        # Dependent event/audit writes are guarded by the exact report
+        # created by this operation.
         await transaction.execute(
             """
             INSERT INTO events (
@@ -1188,13 +1008,30 @@ async def _save_report(
                 entity_id,
                 created_at
             )
-            VALUES (?, ?, ?, ?, ?);
+            SELECT ?, ?, ?, ?, ?
+            WHERE EXISTS (
+                SELECT 1
+                FROM reports
+                WHERE user_id = ?
+                  AND seller_id IS ?
+                  AND product_id IS ?
+                  AND reason = ?
+                  AND description IS ?
+                  AND status = 'PENDING'
+                  AND created_at = ?
+            );
             """,
             (
                 user_id,
                 "report_created",
                 target_type,
                 target_id,
+                created_at,
+                user_id,
+                seller_id,
+                product_id,
+                reason_code,
+                clean_description,
                 created_at,
             ),
         )
@@ -1209,7 +1046,18 @@ async def _save_report(
                 details,
                 created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?);
+            SELECT ?, ?, ?, ?, ?, ?
+            WHERE EXISTS (
+                SELECT 1
+                FROM reports
+                WHERE user_id = ?
+                  AND seller_id IS ?
+                  AND product_id IS ?
+                  AND reason = ?
+                  AND description IS ?
+                  AND status = 'PENDING'
+                  AND created_at = ?
+            );
             """,
             (
                 user_id,
@@ -1221,8 +1069,26 @@ async def _save_report(
                     f"report_status=PENDING"
                 ),
                 created_at,
+                user_id,
+                seller_id,
+                product_id,
+                reason_code,
+                clean_description,
+                created_at,
             ),
         )
+
+    results = getattr(transaction, "results", None)
+
+    if not results:
+        raise RuntimeError(
+            "Report transaction returned no statement results."
+        )
+
+    report_insert_result = results[0]
+
+    if report_insert_result is None or report_insert_result.rowcount != 1:
+        raise ValueError("An open report already exists.")
 
     report = await backend.fetchone(
         """
@@ -1266,7 +1132,6 @@ async def _save_report(
     return report_id
 
 
-
 async def handle_admin_report_decision(
     callback_query: dict[str, Any],
     telegram: TelegramClient,
@@ -1279,13 +1144,9 @@ async def handle_admin_report_decision(
     - adminreport:approve:<report_id>
     - adminreport:reject:<report_id>
     """
-
     callback_data = callback_query.get("data")
 
-    if not isinstance(
-        callback_data,
-        str,
-    ):
+    if not isinstance(callback_data, str):
         return False
 
     parts = callback_data.split(":")
@@ -1304,10 +1165,7 @@ async def handle_admin_report_decision(
     if prefix != "adminreport":
         return False
 
-    if action not in {
-        "approve",
-        "reject",
-    }:
+    if action not in {"approve", "reject"}:
         await _answer_callback(
             telegram,
             callback_query,
@@ -1317,13 +1175,8 @@ async def handle_admin_report_decision(
         return True
 
     try:
-        report_id = int(
-            report_id_raw
-        )
-    except (
-        TypeError,
-        ValueError,
-    ):
+        report_id = int(report_id_raw)
+    except (TypeError, ValueError):
         report_id = 0
 
     if report_id < 1:
@@ -1335,17 +1188,12 @@ async def handle_admin_report_decision(
         )
         return True
 
-    telegram_id = _get_callback_telegram_id(
-        callback_query
-    )
+    telegram_id = _get_callback_telegram_id(callback_query)
 
     if telegram_id is None:
         return True
 
-    if not await _is_admin(
-        telegram_id,
-        env,
-    ):
+    if not await _is_admin(telegram_id, env):
         await _answer_callback(
             telegram,
             callback_query,
@@ -1354,9 +1202,7 @@ async def handle_admin_report_decision(
         )
         return True
 
-    admin_user_id = await _get_internal_user_id(
-        telegram_id
-    )
+    admin_user_id = await _get_internal_user_id(telegram_id)
 
     if admin_user_id is None:
         await _answer_callback(
@@ -1374,9 +1220,7 @@ async def handle_admin_report_decision(
         WHERE id = ?
         LIMIT 1;
         """,
-        (
-            report_id,
-        ),
+        (report_id,),
     )
 
     if report is None:
@@ -1402,11 +1246,7 @@ async def handle_admin_report_decision(
         )
         return True
 
-    new_status = (
-        "APPROVED"
-        if action == "approve"
-        else "REJECTED"
-    )
+    new_status = "APPROVED" if action == "approve" else "REJECTED"
 
     update_result = await backend.execute(
         """
@@ -1422,10 +1262,8 @@ async def handle_admin_report_decision(
     )
 
     # Only the callback that actually changed PENDING may create
-    # an audit entry or notify the reporter. A read-after-write status
-    # check is insufficient because another concurrent callback may
-    # have committed the same requested status first.
-    if update_result.rowcount != 1:
+    # an audit entry or notify the reporter.
+    if update_result is None or update_result.rowcount != 1:
         await _answer_callback(
             telegram,
             callback_query,
@@ -1502,15 +1340,10 @@ async def handle_admin_report_decision(
         f"وضعیت گزارش #{report_id} به‌روزرسانی شد.",
     )
 
-    message = _get_callback_message(
-        callback_query
-    )
+    message = _get_callback_message(callback_query)
 
     if message is not None:
-        current_text = str(
-            message.get("text")
-            or ""
-        ).strip()
+        current_text = str(message.get("text") or "").strip()
 
         status_label = (
             "تأیید شد"
@@ -1519,11 +1352,9 @@ async def handle_admin_report_decision(
         )
 
         updated_text = (
-            f"{current_text}\n\n"
-            f"— تصمیم ثبت شد: {status_label}"
+            f"{current_text}\n\n— تصمیم ثبت شد: {status_label}"
             if current_text
-            else
-            (
+            else (
                 f"گزارش #{report_id}\n\n"
                 f"— تصمیم ثبت شد: {status_label}"
             )
