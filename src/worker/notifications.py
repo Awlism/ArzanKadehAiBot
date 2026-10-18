@@ -75,6 +75,14 @@ def _parse_int(
 
     return result
 
+def _parse_chat_id(value: Any) -> Optional[int]:
+    try:
+        result = int(str(value).strip())
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+    return result if result != 0 else None
+
 
 def _callback_context(
     callback_query: dict[str, Any],
