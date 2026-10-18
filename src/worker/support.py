@@ -42,58 +42,33 @@ SUPPORT_TOPICS_SELLER = {
 
 
 def _now_iso() -> str:
-    return datetime.now(
-        timezone.utc
-    ).isoformat(
-        timespec="seconds"
-    )
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _html(value: Any) -> str:
     if value is None:
         return ""
-
-    return escape(
-        str(value),
-        quote=False,
-    )
+    return escape(str(value), quote=False)
 
 
-def _button(
-    text: str,
-    callback_data: str,
-) -> dict[str, Any]:
+def _button(text: str, callback_data: str) -> dict[str, Any]:
     return {
         "text": text,
         "callback_data": callback_data,
     }
 
 
-def _keyboard(
-    rows: list[list[dict[str, Any]]],
-) -> dict[str, Any]:
-    return {
-        "inline_keyboard": rows,
-    }
+def _keyboard(rows: list[list[dict[str, Any]]]) -> dict[str, Any]:
+    return {"inline_keyboard": rows}
 
 
-def _back_button(
-    callback_data: str = "account",
-) -> list[dict[str, Any]]:
-    return [
-        _button(
-            "🔙 برگردیم",
-            callback_data,
-        )
-    ]
+def _back_button(callback_data: str = "account") -> list[dict[str, Any]]:
+    return [_button("🔙 برگردیم", callback_data)]
 
 
 def _message_context(
     callback_query: dict[str, Any],
-) -> tuple[
-    Optional[int],
-    Optional[int],
-]:
+) -> tuple[Optional[int], Optional[int]]:
     message = callback_query.get("message") or {}
     chat = message.get("chat") or {}
     user = callback_query.get("from") or {}
@@ -103,24 +78,15 @@ def _message_context(
 
     try:
         chat_id = int(chat_id)
-    except (
-        TypeError,
-        ValueError,
-    ):
+    except (TypeError, ValueError):
         chat_id = None
 
     try:
         telegram_user_id = int(telegram_user_id)
-    except (
-        TypeError,
-        ValueError,
-    ):
+    except (TypeError, ValueError):
         telegram_user_id = None
 
-    return (
-        chat_id,
-        telegram_user_id,
-    )
+    return chat_id, telegram_user_id
 
 
 async def _ensure_user(
@@ -172,9 +138,7 @@ async def _ensure_user(
     )
 
     if row is None:
-        raise RuntimeError(
-            "Failed to resolve internal user id."
-        )
+        raise RuntimeError("Failed to resolve internal user id.")
 
     return int(row["id"])
 
@@ -210,10 +174,7 @@ async def _edit_callback(
     chat_id = chat.get("id")
     message_id = message.get("message_id")
 
-    if (
-        chat_id is None
-        or message_id is None
-    ):
+    if chat_id is None or message_id is None:
         return
 
     await telegram.edit_message_text(
@@ -241,7 +202,6 @@ async def _send_admin_support_request(
     Negative Telegram group chat IDs are supported.
     No token or secret is handled here.
     """
-
     admin_chat_id = get_admin_chat_id(env)
 
     if admin_chat_id is None:
@@ -264,52 +224,32 @@ async def _send_admin_support_request(
     if user is None:
         user_label = f"کاربر داخلی #{user_id}"
     else:
-        first_name = str(
-            user.get("first_name") or ""
-        ).strip()
-
-        last_name = str(
-            user.get("last_name") or ""
-        ).strip()
-
-        username = str(
-            user.get("username") or ""
-        ).strip()
+        first_name = str(user.get("first_name") or "").strip()
+        last_name = str(user.get("last_name") or "").strip()
+        username = str(user.get("username") or "").strip()
 
         full_name = " ".join(
             part
-            for part in (
-                first_name,
-                last_name,
-            )
+            for part in (first_name, last_name)
             if part
         )
 
         if username:
             user_label = (
-                f"{full_name} "
-                f"(@{username})"
+                f"{full_name} (@{username})"
                 if full_name
                 else f"@{username}"
             )
         elif full_name:
             user_label = full_name
         else:
-            user_label = (
-                f"کاربر داخلی #{user_id}"
-            )
+            user_label = f"کاربر داخلی #{user_id}"
 
     keyboard = _keyboard(
         [
             [
-                _button(
-                    "✅ تأیید",
-                    f"adminreq:approve:{request_id}",
-                ),
-                _button(
-                    "❌ رد",
-                    f"adminreq:reject:{request_id}",
-                ),
+                _button("✅ تأیید", f"adminreq:approve:{request_id}"),
+                _button("❌ رد", f"adminreq:reject:{request_id}"),
             ],
         ]
     )
@@ -356,10 +296,7 @@ async def _get_request_topics(
         ORDER BY id DESC
         LIMIT 20;
         """,
-        (
-            user_id,
-            request_type,
-        ),
+        (user_id, request_type),
     )
 
     return rows
@@ -379,10 +316,7 @@ async def _has_open_request(
         "APPROVED",
     )
 
-    placeholders = ", ".join(
-        "?"
-        for _ in open_statuses
-    )
+    placeholders = ", ".join("?" for _ in open_statuses)
 
     if topic is None:
         row = await db.fetchone(
@@ -422,12 +356,8 @@ async def _has_open_request(
     return row is not None
 
 
-def _status_label(
-    status: Any,
-) -> str:
-    value = str(
-        status or ""
-    ).strip().upper()
+def _status_label(status: Any) -> str:
+    value = str(status or "").strip().upper()
 
     labels = {
         "PENDING": "⏳ در انتظار بررسی",
@@ -440,10 +370,7 @@ def _status_label(
         "CANCELLED": "🚫 لغو شده",
     }
 
-    return labels.get(
-        value,
-        value or "نامشخص",
-    )
+    return labels.get(value, value or "نامشخص")
 
 
 async def handle_my_requests(
@@ -451,9 +378,7 @@ async def handle_my_requests(
     telegram: Any,
     callback_query: dict[str, Any],
 ) -> None:
-    chat_id, telegram_user_id = _message_context(
-        callback_query
-    )
+    chat_id, telegram_user_id = _message_context(callback_query)
 
     if telegram_user_id is None:
         await _answer_callback(
@@ -474,16 +399,9 @@ async def handle_my_requests(
         last_name=user.get("last_name"),
     )
 
-    await clear_state(
-        db,
-        user_id,
-    )
+    await clear_state(db, user_id)
 
-    items = await _get_request_topics(
-        db,
-        user_id,
-        "support",
-    )
+    items = await _get_request_topics(db, user_id, "support")
 
     if not items:
         text = (
@@ -497,23 +415,10 @@ async def handle_my_requests(
         ]
 
         for item in items:
-            topic = _html(
-                item.get("topic")
-            )
-
-            status = _status_label(
-                item.get("status")
-            )
-
-            created_at = str(
-                item.get("created_at") or ""
-            )
-
-            date_text = (
-                created_at[:10]
-                if created_at
-                else ""
-            )
+            topic = _html(item.get("topic"))
+            status = _status_label(item.get("status"))
+            created_at = str(item.get("created_at") or "")
+            date_text = created_at[:10] if created_at else ""
 
             if topic:
                 lines.append(
@@ -534,17 +439,10 @@ async def handle_my_requests(
         telegram,
         callback_query,
         text,
-        _keyboard(
-            [
-                _back_button("account"),
-            ]
-        ),
+        _keyboard([_back_button("account")]),
     )
 
-    await _answer_callback(
-        telegram,
-        callback_query,
-    )
+    await _answer_callback(telegram, callback_query)
 
 
 async def handle_support_start(
@@ -552,9 +450,7 @@ async def handle_support_start(
     telegram: Any,
     callback_query: dict[str, Any],
 ) -> None:
-    _, telegram_user_id = _message_context(
-        callback_query
-    )
+    _, telegram_user_id = _message_context(callback_query)
 
     if telegram_user_id is None:
         await _answer_callback(
@@ -575,14 +471,9 @@ async def handle_support_start(
         last_name=user.get("last_name"),
     )
 
-    await clear_state(
-        db,
-        user_id,
-    )
+    await clear_state(db, user_id)
 
-    data = str(
-        callback_query.get("data") or ""
-    )
+    data = str(callback_query.get("data") or "")
 
     if ":" not in data:
         await _answer_callback(
@@ -593,10 +484,7 @@ async def handle_support_start(
         )
         return
 
-    audience = data.split(
-        ":",
-        1,
-    )[1].strip().lower()
+    audience = data.split(":", 1)[1].strip().lower()
 
     if audience not in VALID_SUPPORT_AUDIENCES:
         await _answer_callback(
@@ -623,9 +511,7 @@ async def handle_support_start(
         for code, label in topics.items()
     ]
 
-    rows.append(
-        _back_button("account")
-    )
+    rows.append(_back_button("account"))
 
     await _edit_callback(
         telegram,
@@ -634,10 +520,7 @@ async def handle_support_start(
         _keyboard(rows),
     )
 
-    await _answer_callback(
-        telegram,
-        callback_query,
-    )
+    await _answer_callback(telegram, callback_query)
 
 
 async def handle_support_topic(
@@ -645,10 +528,7 @@ async def handle_support_topic(
     telegram: Any,
     callback_query: dict[str, Any],
 ) -> None:
-    data = str(
-        callback_query.get("data") or ""
-    )
-
+    data = str(callback_query.get("data") or "")
     parts = data.split(":")
 
     if len(parts) != 3:
@@ -689,9 +569,7 @@ async def handle_support_topic(
         )
         return
 
-    _, telegram_user_id = _message_context(
-        callback_query
-    )
+    _, telegram_user_id = _message_context(callback_query)
 
     if telegram_user_id is None:
         await _answer_callback(
@@ -753,10 +631,7 @@ async def handle_support_topic(
         None,
     )
 
-    await _answer_callback(
-        telegram,
-        callback_query,
-    )
+    await _answer_callback(telegram, callback_query)
 
 
 async def handle_support_text(
@@ -775,13 +650,8 @@ async def handle_support_text(
         return
 
     try:
-        telegram_user_id = int(
-            telegram_user_id
-        )
-    except (
-        TypeError,
-        ValueError,
-    ):
+        telegram_user_id = int(telegram_user_id)
+    except (TypeError, ValueError):
         return
 
     user_id = await _ensure_user(
@@ -792,10 +662,7 @@ async def handle_support_text(
         last_name=from_user.get("last_name"),
     )
 
-    current_state = await get_state(
-        db,
-        user_id,
-    )
+    current_state = await get_state(db, user_id)
 
     if (
         current_state is None
@@ -807,10 +674,7 @@ async def handle_support_text(
     topic = data.get("topic")
 
     if not topic:
-        await clear_state(
-            db,
-            user_id,
-        )
+        await clear_state(db, user_id)
 
         if chat_id is not None:
             await telegram.send_message(
@@ -823,9 +687,7 @@ async def handle_support_text(
 
         return
 
-    text = str(
-        message.get("text") or ""
-    ).strip()
+    text = str(message.get("text") or "").strip()
 
     if not text:
         if chat_id is not None:
@@ -833,7 +695,6 @@ async def handle_support_text(
                 int(chat_id),
                 "⚠️ لطفاً یک متن معتبر بفرست.",
             )
-
         return
 
     if len(text) > SUPPORT_MESSAGE_MAX_LEN:
@@ -845,10 +706,7 @@ async def handle_support_text(
         "support",
         topic=topic,
     ):
-        await clear_state(
-            db,
-            user_id,
-        )
+        await clear_state(db, user_id)
 
         if chat_id is not None:
             await telegram.send_message(
@@ -865,9 +723,7 @@ async def handle_support_text(
     now = _now_iso()
 
     try:
-        async with db.transaction(
-            immediate=True
-        ) as tx:
+        async with db.transaction(immediate=True) as tx:
             await tx.execute(
                 """
                 INSERT INTO requests (
@@ -879,7 +735,20 @@ async def handle_support_text(
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?);
+                SELECT ?, ?, ?, ?, ?, ?, ?
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM requests
+                    WHERE user_id = ?
+                      AND request_type = 'support'
+                      AND topic = ?
+                      AND status IN (
+                          'PENDING',
+                          'OPEN',
+                          'IN_PROGRESS',
+                          'APPROVED'
+                      )
+                );
                 """,
                 (
                     user_id,
@@ -889,22 +758,36 @@ async def handle_support_text(
                     "PENDING",
                     now,
                     now,
+                    user_id,
+                    topic,
                 ),
             )
 
         # The queued INSERT has committed. Read its result now.
         results = tx.results
-        insert_result = (
-            results[0]
-            if results
-            else None
-        )
+        insert_result = results[0] if results else None
 
-        request_id = (
-            insert_result.lastrowid
-            if insert_result is not None
-            else None
-        )
+        if insert_result is None:
+            raise RuntimeError(
+                "Support request INSERT result is missing."
+            )
+
+        if insert_result.rowcount == 0:
+            await clear_state(db, user_id)
+
+            if chat_id is not None:
+                await telegram.send_message(
+                    int(chat_id),
+                    (
+                        "⚠️ برای این موضوع یک "
+                        "درخواست باز داری و فعلاً "
+                        "درخواست جدید ثبت نمی‌شه."
+                    ),
+                )
+
+            return
+
+        request_id = insert_result.lastrowid
 
         # Fallback only when the runtime did not return lastrowid.
         if request_id is None:
@@ -940,10 +823,7 @@ async def handle_support_text(
         request_id = int(request_id)
 
     except Exception:
-        await clear_state(
-            db,
-            user_id,
-        )
+        await clear_state(db, user_id)
 
         if chat_id is not None:
             await telegram.send_message(
@@ -978,10 +858,7 @@ async def handle_support_text(
         ),
     )
 
-    await clear_state(
-        db,
-        user_id,
-    )
+    await clear_state(db, user_id)
 
     await _send_admin_support_request(
         db,
