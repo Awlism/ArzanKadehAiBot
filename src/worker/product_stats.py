@@ -592,9 +592,6 @@ async def handle_stats_product(
         f"📊 <b>{_html(product['name'])}</b>\n\n"
         f"👀 بازدید: {int(product['views'] or 0)}\n"
         f"❤️ ذخیره: {favorite_count}\n"
-        "📸 کلیک Instagram: 0\n"
-        "✈️ کلیک Telegram: 0\n"
-        "🟢 کلیک WhatsApp: 0\n"
     )
 
     rows = [
