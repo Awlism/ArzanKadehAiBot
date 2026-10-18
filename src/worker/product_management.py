@@ -2612,6 +2612,25 @@ async def handle_product_message(
                 )
                 return True
 
+            try:
+                current_price = int(data.get("price"))
+            except (TypeError, ValueError):
+                await clear_state(db, user_id)
+                await _send(
+                    telegram,
+                    message,
+                    "⚠️ اطلاعات قیمت محصول نامعتبر است. لطفاً ثبت محصول را دوباره شروع کن.",
+                )
+                return True
+
+            if old_price <= current_price:
+                await _send(
+                    telegram,
+                    message,
+                    "⚠️ قیمت قبل از تخفیف باید بیشتر از قیمت فعلی باشد. دوباره وارد کن:",
+                )
+                return True
+
             data["old_price"] = old_price
 
         await _set_state(
