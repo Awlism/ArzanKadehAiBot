@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 """
 ArzanKadeh AI
@@ -6,6 +7,7 @@ Cloudflare Worker database backend selector.
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from typing import Iterable, Optional
 
 from .database_backend import (
@@ -20,21 +22,28 @@ class BackendProxy:
     """
     Stable database backend proxy for the Cloudflare Worker.
 
-    Unlike the main application backend, this Worker-specific proxy
-    never imports SQLite or aiosqlite.
+    Each asynchronous request context gets its own active backend,
+    preventing concurrent requests from overwriting one another.
     """
 
     def __init__(self) -> None:
-        self._backend: Optional[DatabaseBackend] = None
+        self._backend: ContextVar[
+            Optional[DatabaseBackend]
+        ] = ContextVar(
+            f"arzan_kadeh_backend_{id(self)}",
+            default=None,
+        )
 
     @property
     def active(self) -> DatabaseBackend:
-        if self._backend is None:
+        backend = self._backend.get()
+
+        if backend is None:
             raise RuntimeError(
                 "Cloudflare Worker database backend is not configured."
             )
 
-        return self._backend
+        return backend
 
     def set_backend(
         self,
@@ -45,7 +54,7 @@ class BackendProxy:
                 "Database backend is required."
             )
 
-        self._backend = backend
+        self._backend.set(backend)
 
     async def connect(self) -> None:
         await self.active.connect()
