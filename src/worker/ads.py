@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 """
 ArzanKadeh AI
@@ -134,6 +135,23 @@ def _parse_int(
     return result
 
 
+def _parse_chat_id(
+    value: Any,
+) -> Optional[int]:
+    if isinstance(value, bool):
+        return None
+
+    try:
+        result = int(str(value).strip())
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+    if result == 0:
+        return None
+
+    return result
+
+
 def _callback_context(
     callback_query: dict[str, Any],
 ) -> tuple[
@@ -155,7 +173,7 @@ def _callback_context(
         or {}
     )
 
-    chat_id = _parse_int(
+    chat_id = _parse_chat_id(
         chat.get("id")
     )
 
@@ -204,7 +222,7 @@ async def _edit_callback(
         or {}
     )
 
-    chat_id = _parse_int(
+    chat_id = _parse_chat_id(
         chat.get("id")
     )
 
@@ -462,7 +480,7 @@ async def _notify_admin(
         None,
     )
 
-    admin_chat_id = _parse_int(
+    admin_chat_id = _parse_chat_id(
         admin_chat_id
     )
 
