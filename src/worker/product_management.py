@@ -391,14 +391,14 @@ async def _set_state(
     step: str,
     data: dict[str, Any] | None = None,
 ) -> None:
+    state_data = dict(data or {})
+    state_data["step"] = step
+
     await set_state(
         db,
         user_id,
         STATE_NAME,
-        {
-            "step": step,
-            **(data or {}),
-        },
+        state_data,
     )
 
 
