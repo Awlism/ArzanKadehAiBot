@@ -1111,6 +1111,162 @@ async def handle_report_text(
     return True
 
 
+async def _save_report(
+    user_id: int,
+    target_type: str,
+    target_id: int,
+    reason_code: str,
+    description: Optional[str],
+) -> int:
+    """
+    Save a report and its audit/event records in one D1 batch.
+
+    D1Transaction.execute() queues writes and does not expose a
+    usable lastrowid. Retrieve the report ID only after commit.
+    """
+    if user_id < 1:
+        raise ValueError("Invalid report user ID.")
+
+    if target_type not in {"seller", "product"}:
+        raise ValueError("Invalid report target type.")
+
+    if target_id < 1:
+        raise ValueError("Invalid report target ID.")
+
+    if reason_code not in REPORT_REASONS:
+        raise ValueError("Invalid report reason.")
+
+    if not await _target_exists(target_type, target_id):
+        raise ValueError("Report target no longer exists.")
+
+    if await _has_open_report(user_id, target_type, target_id):
+        raise ValueError("An open report already exists.")
+
+    created_at = datetime.now(timezone.utc).isoformat(
+        timespec="microseconds"
+    )
+
+    seller_id = target_id if target_type == "seller" else None
+    product_id = target_id if target_type == "product" else None
+
+    clean_description = (
+        description.strip()
+        if isinstance(description, str) and description.strip()
+        else None
+    )
+
+    async with backend.transaction(immediate=True) as transaction:
+        await transaction.execute(
+            """
+            INSERT INTO reports (
+                user_id,
+                seller_id,
+                product_id,
+                reason,
+                description,
+                status,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, 'PENDING', ?);
+            """,
+            (
+                user_id,
+                seller_id,
+                product_id,
+                reason_code,
+                clean_description,
+                created_at,
+            ),
+        )
+
+        await transaction.execute(
+            """
+            INSERT INTO events (
+                user_id,
+                event_type,
+                entity_type,
+                entity_id,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?);
+            """,
+            (
+                user_id,
+                "report_created",
+                target_type,
+                target_id,
+                created_at,
+            ),
+        )
+
+        await transaction.execute(
+            """
+            INSERT INTO audit_log (
+                actor_user_id,
+                action,
+                entity_type,
+                entity_id,
+                details,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?);
+            """,
+            (
+                user_id,
+                "report_created",
+                target_type,
+                target_id,
+                (
+                    f"reason={reason_code}; "
+                    f"report_status=PENDING"
+                ),
+                created_at,
+            ),
+        )
+
+    report = await backend.fetchone(
+        """
+        SELECT id
+        FROM reports
+        WHERE user_id = ?
+          AND seller_id IS ?
+          AND product_id IS ?
+          AND reason = ?
+          AND description IS ?
+          AND status = 'PENDING'
+          AND created_at = ?
+        ORDER BY id DESC
+        LIMIT 1;
+        """,
+        (
+            user_id,
+            seller_id,
+            product_id,
+            reason_code,
+            clean_description,
+            created_at,
+        ),
+    )
+
+    if report is None:
+        raise RuntimeError(
+            "Report was committed but its ID could not be retrieved."
+        )
+
+    try:
+        report_id = int(report["id"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "The saved report has an invalid ID."
+        ) from exc
+
+    if report_id < 1:
+        raise RuntimeError("The saved report has an invalid ID.")
+
+    return report_id
+
+
+
 async def handle_admin_report_decision(
     callback_query: dict[str, Any],
     telegram: TelegramClient,
