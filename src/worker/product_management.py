@@ -2431,22 +2431,12 @@ async def handle_product_delete_confirmed(
                       WHERE owner_user_id = ?
                          OR created_by_user_id = ?
                   )
-                  AND EXISTS (
-                      SELECT 1
-                      FROM audit_log
-                      WHERE actor_user_id = ?
-                        AND action = 'product_deleted'
-                        AND entity_type = 'product'
-                        AND entity_id = products.id
-                        AND created_at = ?
-                  );
+                  AND changes() = 1;
                 """,
                 (
                     product_id,
                     user_id,
                     user_id,
-                    user_id,
-                    now,
                 ),
             )
 
