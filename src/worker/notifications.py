@@ -60,13 +60,18 @@ def _back_button(
 def _parse_int(
     value: Any,
 ) -> Optional[int]:
+    """Parse a positive integer for user and internal object IDs."""
     try:
+        if isinstance(value, bool):
+            return None
+
         result = int(
             str(value).strip()
         )
     except (
         TypeError,
         ValueError,
+        OverflowError,
     ):
         return None
 
@@ -75,13 +80,29 @@ def _parse_int(
 
     return result
 
-def _parse_chat_id(value: Any) -> Optional[int]:
+
+def _parse_chat_id(
+    value: Any,
+) -> Optional[int]:
+    """Parse a Telegram chat ID, including negative group IDs."""
     try:
-        result = int(str(value).strip())
-    except (TypeError, ValueError, OverflowError):
+        if isinstance(value, bool):
+            return None
+
+        result = int(
+            str(value).strip()
+        )
+    except (
+        TypeError,
+        ValueError,
+        OverflowError,
+    ):
         return None
 
-    return result if result != 0 else None
+    if result == 0:
+        return None
+
+    return result
 
 
 def _callback_context(
@@ -105,10 +126,12 @@ def _callback_context(
         or {}
     )
 
-    chat_id = _parse_int(
+    # Telegram group and supergroup chat IDs may be negative.
+    chat_id = _parse_chat_id(
         chat.get("id")
     )
 
+    # Telegram user IDs must remain positive.
     telegram_user_id = _parse_int(
         user.get("id")
     )
@@ -220,10 +243,12 @@ async def _edit_callback(
         or {}
     )
 
-    chat_id = _parse_int(
+    # Accept negative IDs for groups and supergroups.
+    chat_id = _parse_chat_id(
         chat.get("id")
     )
 
+    # Message IDs remain positive.
     message_id = _parse_int(
         message.get("message_id")
     )
