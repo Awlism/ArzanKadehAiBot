@@ -1058,156 +1058,7 @@ async def handle_product_add_start(
     data = str(
         callback_query.get("data", "")
     )
-
     parts = data.split(":")
-
-    if (
-        len(parts) >= 2
-        and parts[0] == "prodadd"
-        and parts[1] == "cat"
-    ):
-        user_data = callback_query.get("from") or {}
-
-        try:
-            user = await _ensure_user(
-                db,
-                user_data,
-            )
-        except (ValueError, RuntimeError):
-            await _answer(
-                telegram,
-                callback_query,
-                "⚠️ اطلاعات کاربر نامعتبر است.",
-                True,
-            )
-            return
-
-        user_id = int(user["id"])
-
-        state = await get_state(
-            db,
-            user_id,
-        )
-
-        if not state or state.get("state") != STATE_NAME:
-            await _answer(
-                telegram,
-                callback_query,
-                "⚠️ فرآیند ثبت محصول منقضی شده. دوباره شروع کن.",
-                True,
-            )
-            return
-
-        state_data = state.get("data") or {}
-        seller_id = _parse_id(
-            state_data.get("seller_id")
-        )
-
-        if seller_id is None:
-            await clear_state(
-                db,
-                user_id,
-            )
-            await _answer(
-                telegram,
-                callback_query,
-                "⚠️ اطلاعات فروشگاه ناقص است.",
-                True,
-            )
-            return
-
-        if len(parts) != 4:
-            await _answer(
-                telegram,
-                callback_query,
-                "⚠️ درخواست نامعتبر است.",
-                True,
-            )
-            return
-
-        category_id = _parse_id(parts[2])
-
-        if category_id == 0:
-            parent_id = None
-        else:
-            parent_id = category_id
-
-        page = _parse_id(parts[3])
-        page_index = max(
-            0,
-            (page or 0),
-        )
-
-        await _render_product_category_picker(
-            db,
-            telegram,
-            callback_query,
-            seller_id,
-            parent_id,
-            page_index,
-        )
-        return
-
-    if (
-        len(parts) == 3
-        and parts[0] == "prodadd"
-        and parts[1] == "pick"
-    ):
-        user_data = callback_query.get("from") or {}
-
-        try:
-            user = await _ensure_user(
-                db,
-                user_data,
-            )
-        except (ValueError, RuntimeError):
-            await _answer(
-                telegram,
-                callback_query,
-                "⚠️ اطلاعات کاربر نامعتبر است.",
-                True,
-            )
-            return
-
-        category_id = _parse_id(parts[2])
-
-        if category_id is None:
-            await _answer(
-                telegram,
-                callback_query,
-                "⚠️ دسته‌بندی نامعتبر است.",
-                True,
-            )
-            return
-
-        await _select_product_category(
-            db,
-            telegram,
-            callback_query,
-            int(user["id"]),
-            category_id,
-        )
-        return
-
-    if len(parts) != 2:
-        await _answer(
-            telegram,
-            callback_query,
-            "⚠️ درخواست نامعتبر است.",
-            True,
-        )
-        return
-
-    seller_id = _parse_id(parts[1])
-
-    if seller_id is None:
-        await _answer(
-            telegram,
-            callback_query,
-            "⚠️ شناسه نامعتبر است.",
-            True,
-        )
-        return
 
     user_data = callback_query.get("from") or {}
 
@@ -1225,9 +1076,180 @@ async def handle_product_add_start(
         )
         return
 
+    user_id = int(user["id"])
+
+    if (
+        len(parts) >= 2
+        and parts[0] == "prodadd"
+        and parts[1] == "cat"
+    ):
+        if len(parts) != 4:
+            await _answer(
+                telegram,
+                callback_query,
+                "⚠️ درخواست نامعتبر است.",
+                True,
+            )
+            return
+
+        state = await get_state(
+            db,
+            user_id,
+        )
+
+        if not state or state.get("state") != STATE_NAME:
+            await _answer(
+                telegram,
+                callback_query,
+                "⚠️ فرآیند ثبت محصول منقضی شده. دوباره شروع کن.",
+                True,
+            )
+            return
+
+        state_data = state.get("data") or {}
+
+        if not isinstance(state_data, dict):
+            await clear_state(
+                db,
+                user_id,
+            )
+            await _answer(
+                telegram,
+                callback_query,
+                "⚠️ اطلاعات ثبت محصول نامعتبر است. دوباره شروع کن.",
+                True,
+            )
+            return
+
+        if state_data.get("step") != "add_category":
+            await _answer(
+                telegram,
+                callback_query,
+                "⚠️ این دکمه مربوط به مرحلهٔ فعلی نیست.",
+                True,
+            )
+            return
+
+        seller_id = _parse_id(
+            state_data.get("seller_id")
+        )
+
+        if seller_id is None:
+            await clear_state(
+                db,
+                user_id,
+            )
+            await _answer(
+                telegram,
+                callback_query,
+                "⚠️ اطلاعات فروشگاه ناقص است.",
+                True,
+            )
+            return
+
+        seller = await _owned_seller(
+            db,
+            user_id,
+            seller_id,
+        )
+
+        if seller is None:
+            await clear_state(
+                db,
+                user_id,
+            )
+            await _answer(
+                telegram,
+                callback_query,
+                "⚠️ شما به این فروشگاه دسترسی ندارید.",
+                True,
+            )
+            return
+
+        category_id = _parse_id(parts[2])
+        page = _parse_id(parts[3])
+
+        if (
+            category_id is None
+            or category_id < 0
+            or page is None
+            or page < 0
+        ):
+            await _answer(
+                telegram,
+                callback_query,
+                "⚠️ دسته‌بندی یا شمارهٔ صفحه نامعتبر است.",
+                True,
+            )
+            return
+
+        parent_id = (
+            None
+            if category_id == 0
+            else category_id
+        )
+
+        await _render_product_category_picker(
+            db,
+            telegram,
+            callback_query,
+            seller_id,
+            parent_id,
+            page,
+        )
+        return
+
+    if (
+        len(parts) == 3
+        and parts[0] == "prodadd"
+        and parts[1] == "pick"
+    ):
+        category_id = _parse_id(parts[2])
+
+        if category_id is None or category_id <= 0:
+            await _answer(
+                telegram,
+                callback_query,
+                "⚠️ دسته‌بندی نامعتبر است.",
+                True,
+            )
+            return
+
+        await _select_product_category(
+            db,
+            telegram,
+            callback_query,
+            user_id,
+            category_id,
+        )
+        return
+
+    if (
+        len(parts) != 2
+        or parts[0] != "prodadd"
+    ):
+        await _answer(
+            telegram,
+            callback_query,
+            "⚠️ درخواست نامعتبر است.",
+            True,
+        )
+        return
+
+    seller_id = _parse_id(parts[1])
+
+    if seller_id is None or seller_id <= 0:
+        await _answer(
+            telegram,
+            callback_query,
+            "⚠️ شناسهٔ فروشگاه نامعتبر است.",
+            True,
+        )
+        return
+
     seller = await _owned_seller(
         db,
-        int(user["id"]),
+        user_id,
         seller_id,
     )
 
@@ -1242,7 +1264,7 @@ async def handle_product_add_start(
 
     await _set_state(
         db,
-        int(user["id"]),
+        user_id,
         "add_category",
         {
             "seller_id": seller_id,
@@ -1257,7 +1279,6 @@ async def handle_product_add_start(
         None,
         0,
     )
-
 
 
 async def handle_product_add_skip(
