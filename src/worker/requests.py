@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 """
 ArzanKadeh AI
@@ -40,17 +41,46 @@ def _html(value: Any) -> str:
 def _parse_int(
     value: Any,
 ) -> Optional[int]:
+    """Parse positive user and internal object IDs."""
     try:
+        if isinstance(value, bool):
+            return None
+
         result = int(
             str(value).strip()
         )
     except (
         TypeError,
         ValueError,
+        OverflowError,
     ):
         return None
 
     if result < 1:
+        return None
+
+    return result
+
+
+def _parse_chat_id(
+    value: Any,
+) -> Optional[int]:
+    """Parse Telegram chat IDs, including negative group IDs."""
+    try:
+        if isinstance(value, bool):
+            return None
+
+        result = int(
+            str(value).strip()
+        )
+    except (
+        TypeError,
+        ValueError,
+        OverflowError,
+    ):
+        return None
+
+    if result == 0:
         return None
 
     return result
@@ -232,10 +262,12 @@ async def _edit_callback(
         or {}
     )
 
-    chat_id = _parse_int(
+    # Group and supergroup chat IDs can be negative.
+    chat_id = _parse_chat_id(
         chat.get("id")
     )
 
+    # Telegram message IDs must be positive.
     message_id = _parse_int(
         message.get("message_id")
     )
