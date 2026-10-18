@@ -601,6 +601,7 @@ async def handle_product_list(
     )
 
 
+
 async def _render_product_list(
     db: Any,
     telegram: Any,
@@ -608,14 +609,46 @@ async def _render_product_list(
     seller_id: int,
     page: int,
 ) -> None:
+    count_row = await db.fetchone(
+        """
+        SELECT COUNT(*) AS total
+        FROM products
+        WHERE seller_id = ?;
+        """,
+        (seller_id,),
+    )
+
+    total_products = int(
+        (count_row or {}).get("total", 0) or 0
+    )
+
+    total_pages = (
+        (total_products + PAGE_SIZE - 1) // PAGE_SIZE
+    )
+
+    if total_pages > 0:
+        page = max(
+            0,
+            min(int(page), total_pages - 1),
+        )
+    else:
+        page = 0
+
+    start = page * PAGE_SIZE
+
     products = await db.fetchall(
         """
         SELECT *
         FROM products
         WHERE seller_id = ?
-        ORDER BY created_at DESC;
+        ORDER BY created_at DESC, id DESC
+        LIMIT ? OFFSET ?;
         """,
-        (seller_id,),
+        (
+            seller_id,
+            PAGE_SIZE,
+            start,
+        ),
     )
 
     rows: list[list[dict[str, Any]]] = [
@@ -627,18 +660,13 @@ async def _render_product_list(
         ]
     ]
 
-    if not products:
+    if total_products == 0:
         text = (
             "📦 هنوز محصولی اینجا نیست.\n\n"
             "بیا اولین محصولت رو اضافه کنیم 😊"
         )
     else:
-        start = page * PAGE_SIZE
-        page_rows = products[
-            start:start + PAGE_SIZE
-        ]
-
-        for product in page_rows:
+        for product in products:
             product_id = _parse_id(
                 product.get("id")
             )
@@ -682,15 +710,9 @@ async def _render_product_list(
                 ]
             )
 
-        has_previous = page > 0
-        has_next = (
-            start + PAGE_SIZE
-            < len(products)
-        )
-
         navigation: list[dict[str, Any]] = []
 
-        if has_previous:
+        if page > 0:
             navigation.append(
                 _button(
                     "⬅️ قبلی",
@@ -698,7 +720,7 @@ async def _render_product_list(
                 )
             )
 
-        if has_next:
+        if start + PAGE_SIZE < total_products:
             navigation.append(
                 _button(
                     "بعدی ➡️",
@@ -721,11 +743,6 @@ async def _render_product_list(
         callback_query,
         text,
         _keyboard(rows),
-    )
-
-    await _answer(
-        telegram,
-        callback_query,
     )
 
 
