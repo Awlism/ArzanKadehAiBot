@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from html import escape
 from typing import Any
+from urllib.parse import urlsplit
 
 from worker.state import clear_state, get_state, set_state
 
@@ -49,6 +50,31 @@ def _html(value: Any) -> str:
         str(value),
         quote=False,
     )
+    
+def _is_valid_image_url(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+
+    value = value.strip()
+
+    if not value or len(value) > 2048:
+        return False
+
+    if any(char.isspace() for char in value):
+        return False
+
+    try:
+        parsed = urlsplit(value)
+
+        return (
+            parsed.scheme.lower() == "https"
+            and bool(parsed.hostname)
+            and parsed.username is None
+            and parsed.password is None
+            and parsed.port != 0
+        )
+    except (TypeError, ValueError):
+        return False
 
 
 def _parse_id(value: Any) -> int | None:
