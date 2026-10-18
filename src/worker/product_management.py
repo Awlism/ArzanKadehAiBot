@@ -2193,6 +2193,7 @@ async def handle_product_stock_set(
                     user_id,
                     user_id,
                 ),
+            )
 
         results = transaction.results
 
@@ -2882,6 +2883,7 @@ async def handle_product_message(
                         user_id,
                         user_id,
                     ),
+                )
 
             results = transaction.results
 
