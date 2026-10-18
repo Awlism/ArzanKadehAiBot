@@ -2683,7 +2683,25 @@ async def handle_product_message(
         return True
 
     if step == "add_image":
-        data["image_url"] = text or None
+        image_url = text.strip() if text else ""
+
+        if image_url and not _is_valid_image_url(image_url):
+            await _send(
+                telegram,
+                message,
+                "⚠️ لینک تصویر معتبر نیست. لطفاً یک لینک کامل HTTPS بفرست یا از دکمهٔ رد کردن استفاده کن.",
+                _keyboard(
+                    [[
+                        _button(
+                            "⏭ رد کردن",
+                            "prodaddskip:image",
+                        )
+                    ]]
+                ),
+            )
+            return True
+
+        data["image_url"] = image_url or None
 
         callback_query = {
             "id": None,
@@ -2761,6 +2779,21 @@ async def handle_product_message(
                         "⚠️ لطفاً فقط عدد بفرست:",
                     )
                     return True
+
+        elif field == "image_url":
+            image_url = text.strip() if text else ""
+
+            if image_url.lower() in ("", "حذف"):
+                value = None
+            elif not _is_valid_image_url(image_url):
+                await _send(
+                    telegram,
+                    message,
+                    "⚠️ لینک تصویر معتبر نیست. لطفاً یک لینک کامل HTTPS بفرست یا «حذف» را وارد کن:",
+                )
+                return True
+            else:
+                value = image_url
 
         else:
             value = text or None
