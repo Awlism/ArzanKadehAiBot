@@ -1166,15 +1166,19 @@ async def handle_product_add_start(
             )
             return
 
-        category_id = _parse_id(parts[2])
-        page = _parse_id(parts[3])
+        try:
+            category_id = int(parts[2])
+            page = int(parts[3])
+        except (TypeError, ValueError):
+            await _answer(
+                telegram,
+                callback_query,
+                "⚠️ دسته‌بندی یا شمارهٔ صفحه نامعتبر است.",
+                True,
+            )
+            return
 
-        if (
-            category_id is None
-            or category_id < 0
-            or page is None
-            or page < 0
-        ):
+        if category_id < 0 or page < 0:
             await _answer(
                 telegram,
                 callback_query,
