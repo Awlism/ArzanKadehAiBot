@@ -1014,6 +1014,22 @@ async def _finish_public_ad(
                     ),
                 )
 
+        if not request_already_exists:
+            results = tx.results
+            insert_result = (
+                results[0]
+                if results
+                else None
+            )
+
+            if insert_result is None:
+                raise RuntimeError(
+                    "Public ad request INSERT result is missing."
+                )
+
+            if insert_result.rowcount == 0:
+                request_already_exists = True
+
         if request_already_exists:
             await clear_state(
                 db,
