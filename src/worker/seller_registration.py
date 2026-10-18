@@ -656,7 +656,7 @@ async def _finish_registration(
                     created_at,
                     updated_at
                 )
-                VALUES (
+                SELECT
                     ?, ?, ?, ?, ?, ?, ?, ?,
                     'UNCLAIMED',
                     1,
@@ -665,6 +665,14 @@ async def _finish_registration(
                     0,
                     ?,
                     ?
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM sellers
+                    WHERE (
+                        owner_user_id = ?
+                        OR created_by_user_id = ?
+                    )
+                    AND status != 'REJECTED'
                 );
                 """,
                 (
@@ -678,6 +686,8 @@ async def _finish_registration(
                     user_id,
                     now,
                     now,
+                    user_id,
+                    user_id,
                 ),
             )
 
@@ -688,6 +698,23 @@ async def _finish_registration(
             if results
             else None
         )
+
+        if insert_result is None:
+            raise RuntimeError(
+                "Seller registration INSERT result is missing."
+            )
+
+        if insert_result.rowcount == 0:
+            await clear_state(
+                db,
+                user_id,
+            )
+            await _send(
+                telegram,
+                message,
+                "⚠️ شما قبلاً یک فروشگاه ثبت کرده‌اید.",
+            )
+            return
 
         seller_id = (
             insert_result.lastrowid
