@@ -37,7 +37,7 @@ def _now_iso() -> str:
     return datetime.now(
         timezone.utc
     ).isoformat(
-        timespec="seconds"
+        timespec="microseconds"
     )
 
 
@@ -130,6 +130,7 @@ async def _answer(
         text=text,
         show_alert=show_alert,
     )
+
 
 async def _answer_or_send(
     telegram: Any,
@@ -1473,45 +1474,83 @@ async def _finish_product_add(
 
     now = _now_iso()
 
-    result = await db.execute(
-        """
-        INSERT INTO products (
-            seller_id,
-            category_id,
-            name,
-            description,
-            price,
-            old_price,
-            image_url,
-            stock_status,
-            rating,
-            review_count,
-            views,
-            created_at,
-            updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'AVAILABLE', 0, 0, 0, ?, ?);
-        """,
-        (
-            seller_id,
-            category_id,
-            name,
-            data.get("description"),
-            data.get("price"),
-            data.get("old_price"),
-            data.get("image_url"),
-            now,
-            now,
-        ),
-    )
+    try:
+        async with db.transaction(immediate=True) as transaction:
+            await transaction.execute(
+                """
+                INSERT INTO products (
+                    seller_id,
+                    category_id,
+                    name,
+                    description,
+                    price,
+                    old_price,
+                    image_url,
+                    stock_status,
+                    rating,
+                    review_count,
+                    views,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'AVAILABLE', 0, 0, 0, ?, ?);
+                """,
+                (
+                    seller_id,
+                    category_id,
+                    name,
+                    data.get("description"),
+                    data.get("price"),
+                    data.get("old_price"),
+                    data.get("image_url"),
+                    now,
+                    now,
+                ),
+            )
 
-    product_id = getattr(
-        result,
-        "lastrowid",
-        None,
-    )
+            await transaction.execute(
+                """
+                INSERT INTO audit_log (
+                    actor_user_id,
+                    action,
+                    entity_type,
+                    entity_id,
+                    details,
+                    created_at
+                )
+                SELECT ?, 'product_created', 'product', id, ?, ?
+                FROM products
+                WHERE seller_id = ?
+                  AND category_id = ?
+                  AND name = ?
+                  AND created_at = ?
+                ORDER BY id DESC
+                LIMIT 1;
+                """,
+                (
+                    user_id,
+                    name,
+                    now,
+                    seller_id,
+                    category_id,
+                    name,
+                    now,
+                ),
+            )
 
-    if product_id is None:
+        results = transaction.results
+
+        if (
+            len(results) != 2
+            or getattr(results[0], "rowcount", 0) != 1
+            or getattr(results[0], "lastrowid", None) is None
+            or getattr(results[1], "rowcount", 0) != 1
+        ):
+            raise RuntimeError(
+                "Product creation or audit insert failed."
+            )
+
+    except Exception:
         await clear_state(
             db,
             user_id,
@@ -1520,18 +1559,10 @@ async def _finish_product_add(
         await _answer_or_send(
             telegram,
             callback_query,
-            "⚠️ ثبت محصول انجام نشد.",
+            "⚠️ ثبت محصول انجام نشد. دوباره تلاش کن.",
             True,
         )
         return
-
-    await _audit(
-        db,
-        user_id,
-        "product_created",
-        int(product_id),
-        name,
-    )
 
     await clear_state(
         db,
@@ -1542,6 +1573,7 @@ async def _finish_product_add(
         "✅ محصول با موفقیت اضافه شد.\n\n"
         f"🛍️ <b>{_html(name)}</b>"
     )
+
     success_keyboard = _keyboard(
         [
             [
@@ -1563,6 +1595,7 @@ async def _finish_product_add(
         )
     else:
         source_message = callback_query.get("message")
+
         if isinstance(source_message, dict):
             await _send(
                 telegram,
@@ -1913,9 +1946,11 @@ async def handle_product_stock_set(
         )
         return
 
+    user_id = int(user["id"])
+
     product = await _owned_product(
         db,
-        int(user["id"]),
+        user_id,
         product_id,
     )
 
@@ -1928,27 +1963,92 @@ async def handle_product_stock_set(
         )
         return
 
-    await db.execute(
-        """
-        UPDATE products
-        SET stock_status = ?,
-            updated_at = ?
-        WHERE id = ?;
-        """,
-        (
-            status,
-            _now_iso(),
-            product_id,
-        ),
-    )
+    now = _now_iso()
 
-    await _audit(
-        db,
-        int(user["id"]),
-        "product_updated",
-        product_id,
-        "stock_status",
-    )
+    try:
+        async with db.transaction(immediate=True) as transaction:
+            await transaction.execute(
+                """
+                UPDATE products
+                SET stock_status = ?,
+                    updated_at = ?
+                WHERE id = ?
+                  AND seller_id IN (
+                      SELECT id
+                      FROM sellers
+                      WHERE owner_user_id = ?
+                         OR created_by_user_id = ?
+                  );
+                """,
+                (
+                    status,
+                    now,
+                    product_id,
+                    user_id,
+                    user_id,
+                ),
+            )
+
+            await transaction.execute(
+                """
+                INSERT INTO audit_log (
+                    actor_user_id,
+                    action,
+                    entity_type,
+                    entity_id,
+                    details,
+                    created_at
+                )
+                SELECT
+                    ?,
+                    'product_updated',
+                    'product',
+                    p.id,
+                    'stock_status',
+                    ?
+                FROM products p
+                WHERE p.id = ?
+                  AND p.stock_status = ?
+                  AND p.updated_at = ?
+                  AND p.seller_id IN (
+                      SELECT id
+                      FROM sellers
+                      WHERE owner_user_id = ?
+                         OR created_by_user_id = ?
+                  );
+                """,
+                (
+                    user_id,
+                    now,
+                    product_id,
+                    status,
+                    now,
+                    user_id,
+                    user_id,
+                ),
+            )
+
+        results = transaction.results
+
+        if (
+            len(results) != 2
+            or any(
+                getattr(result, "rowcount", 0) != 1
+                for result in results
+            )
+        ):
+            raise RuntimeError(
+                "Product stock update or audit insert failed."
+            )
+
+    except Exception:
+        await _answer(
+            telegram,
+            callback_query,
+            "⚠️ ذخیره وضعیت موجودی انجام نشد. دوباره تلاش کن.",
+            True,
+        )
+        return
 
     await _answer(
         telegram,
@@ -2090,9 +2190,11 @@ async def handle_product_delete_confirmed(
         )
         return
 
+    user_id = int(user["id"])
+
     product = await _owned_product(
         db,
-        int(user["id"]),
+        user_id,
         product_id,
     )
 
@@ -2109,24 +2211,96 @@ async def handle_product_delete_confirmed(
         product["seller_id"]
     )
 
-    await db.execute(
-        """
-        DELETE FROM products
-        WHERE id = ?;
-        """,
-        (product_id,),
-    )
+    now = _now_iso()
 
-    await _audit(
-        db,
-        int(user["id"]),
-        "product_deleted",
-        product_id,
-        str(
-            product.get("name")
-            or ""
-        ),
-    )
+    try:
+        async with db.transaction(immediate=True) as transaction:
+            await transaction.execute(
+                """
+                INSERT INTO audit_log (
+                    actor_user_id,
+                    action,
+                    entity_type,
+                    entity_id,
+                    details,
+                    created_at
+                )
+                SELECT
+                    ?,
+                    'product_deleted',
+                    'product',
+                    p.id,
+                    ?,
+                    ?
+                FROM products p
+                WHERE p.id = ?
+                  AND p.seller_id IN (
+                      SELECT id
+                      FROM sellers
+                      WHERE owner_user_id = ?
+                         OR created_by_user_id = ?
+                  );
+                """,
+                (
+                    user_id,
+                    str(product.get("name") or ""),
+                    now,
+                    product_id,
+                    user_id,
+                    user_id,
+                ),
+            )
+
+            await transaction.execute(
+                """
+                DELETE FROM products
+                WHERE id = ?
+                  AND seller_id IN (
+                      SELECT id
+                      FROM sellers
+                      WHERE owner_user_id = ?
+                         OR created_by_user_id = ?
+                  )
+                  AND EXISTS (
+                      SELECT 1
+                      FROM audit_log
+                      WHERE actor_user_id = ?
+                        AND action = 'product_deleted'
+                        AND entity_type = 'product'
+                        AND entity_id = products.id
+                        AND created_at = ?
+                  );
+                """,
+                (
+                    product_id,
+                    user_id,
+                    user_id,
+                    user_id,
+                    now,
+                ),
+            )
+
+        results = transaction.results
+
+        if (
+            len(results) != 2
+            or any(
+                getattr(result, "rowcount", 0) != 1
+                for result in results
+            )
+        ):
+            raise RuntimeError(
+                "Product deletion or audit insert failed."
+            )
+
+    except Exception:
+        await _answer(
+            telegram,
+            callback_query,
+            "⚠️ حذف محصول انجام نشد. دوباره تلاش کن.",
+            True,
+        )
+        return
 
     await _answer(
         telegram,
@@ -2360,6 +2534,7 @@ async def handle_product_message(
         product_id = _parse_id(
             data.get("product_id")
         )
+
         field = data.get("field")
 
         if (
@@ -2443,27 +2618,98 @@ async def handle_product_message(
         else:
             value = text or None
 
-        await db.execute(
-            f"""
-            UPDATE products
-            SET {field} = ?,
-                updated_at = ?
-            WHERE id = ?;
-            """,
-            (
-                value,
-                _now_iso(),
-                product_id,
-            ),
-        )
+        now = _now_iso()
 
-        await _audit(
-            db,
-            user_id,
-            "product_updated",
-            product_id,
-            field,
-        )
+        try:
+            async with db.transaction(immediate=True) as transaction:
+                await transaction.execute(
+                    f"""
+                    UPDATE products
+                    SET {field} = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                      AND seller_id IN (
+                          SELECT id
+                          FROM sellers
+                          WHERE owner_user_id = ?
+                             OR created_by_user_id = ?
+                      );
+                    """,
+                    (
+                        value,
+                        now,
+                        product_id,
+                        user_id,
+                        user_id,
+                    ),
+                )
+
+                await transaction.execute(
+                    f"""
+                    INSERT INTO audit_log (
+                        actor_user_id,
+                        action,
+                        entity_type,
+                        entity_id,
+                        details,
+                        created_at
+                    )
+                    SELECT
+                        ?,
+                        'product_updated',
+                        'product',
+                        p.id,
+                        ?,
+                        ?
+                    FROM products p
+                    WHERE p.id = ?
+                      AND p.{field} IS ?
+                      AND p.updated_at = ?
+                      AND p.seller_id IN (
+                          SELECT id
+                          FROM sellers
+                          WHERE owner_user_id = ?
+                             OR created_by_user_id = ?
+                      );
+                    """,
+                    (
+                        user_id,
+                        field,
+                        now,
+                        product_id,
+                        value,
+                        now,
+                        user_id,
+                        user_id,
+                    ),
+                )
+
+            results = transaction.results
+
+            if (
+                len(results) != 2
+                or any(
+                    getattr(result, "rowcount", 0) != 1
+                    for result in results
+                )
+            ):
+                raise RuntimeError(
+                    "Product update or audit insert failed."
+                )
+
+        except Exception:
+            await clear_state(
+                db,
+                user_id,
+            )
+
+            await _send(
+                telegram,
+                message,
+                "⚠️ ذخیره تغییرات انجام نشد. دوباره تلاش کن.",
+            )
+
+            return True
 
         await clear_state(
             db,
