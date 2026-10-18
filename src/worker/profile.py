@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 """
 ArzanKadeh AI
@@ -32,12 +33,16 @@ def _parse_int(
     value: Any,
 ) -> Optional[int]:
     try:
+        if isinstance(value, bool):
+            return None
+
         result = int(
             str(value).strip()
         )
     except (
         TypeError,
         ValueError,
+        OverflowError,
     ):
         return None
 
@@ -45,6 +50,26 @@ def _parse_int(
         return None
 
     return result
+
+
+def _parse_chat_id(
+    value: Any,
+) -> Optional[int]:
+    try:
+        if isinstance(value, bool):
+            return None
+
+        result = int(
+            str(value).strip()
+        )
+    except (
+        TypeError,
+        ValueError,
+        OverflowError,
+    ):
+        return None
+
+    return result if result != 0 else None
 
 
 def _button(
@@ -98,7 +123,7 @@ def _callback_context(
     )
 
     return (
-        _parse_int(chat.get("id")),
+        _parse_chat_id(chat.get("id")),
         _parse_int(user.get("id")),
     )
 
@@ -237,7 +262,7 @@ async def _edit_callback(
         or {}
     )
 
-    chat_id = _parse_int(
+    chat_id = _parse_chat_id(
         chat.get("id")
     )
 
@@ -265,11 +290,9 @@ async def handle_my_profile(
     telegram: Any,
     callback_query: dict[str, Any],
 ) -> None:
-    chat_id, telegram_user_id = _callback_context(
+    _, telegram_user_id = _callback_context(
         callback_query
     )
-
-    del chat_id
 
     if telegram_user_id is None:
         await _answer_callback(
