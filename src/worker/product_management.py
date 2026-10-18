@@ -682,16 +682,28 @@ async def _render_product_list(
                 ),
             )
 
+            product_name = str(
+                product.get("name") or ""
+            ).strip()
+
+            button_text = (
+                f"🛍️ {product_name}"
+                " — "
+                f"{_format_price(product.get('price'))}"
+                f" ({stock})"
+            )
+
+            # Telegram inline keyboard button text
+            # must not exceed 64 characters.
+            if len(button_text) > 64:
+                button_text = (
+                    button_text[:63].rstrip() + "…"
+                )
+
             rows.append(
                 [
                     _button(
-                        (
-                            "🛍️ "
-                            f"{_html(product.get('name'))}"
-                            " — "
-                            f"{_format_price(product.get('price'))}"
-                            f" ({_html(stock)})"
-                        ),
+                        button_text,
                         f"product:{product_id}",
                     )
                 ]
