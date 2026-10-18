@@ -435,8 +435,8 @@ async def handle_new_today(
         FROM products p
         JOIN sellers s
           ON s.id = p.seller_id
-        WHERE date(p.created_at) = ?
-          AND COALESCE(s.is_active, 1) = 1
+        WHERE date(p.created_at, '+3 hours', '+30 minutes') = ?
+          AND COALESCE(s.is_active, 1) = 1COALESCE(s.is_active, 1) = 1
         ORDER BY p.created_at DESC
         LIMIT ?;
         """,
