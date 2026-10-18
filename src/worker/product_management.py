@@ -60,6 +60,16 @@ def _parse_id(value: Any) -> int | None:
     return result if result > 0 else None
 
 
+def _parse_chat_id(value: Any) -> int | None:
+    """Parse Telegram chat IDs, including negative group IDs."""
+    try:
+        result = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+    return result if result != 0 else None
+
+
 def _format_price(value: Any) -> str:
     if value is None:
         return "توافقی"
@@ -135,7 +145,7 @@ def _context(
     if not isinstance(chat, dict):
         return None
 
-    chat_id = _parse_id(chat.get("id"))
+    chat_id = _parse_chat_id(chat.get("id"))
     message_id = _parse_id(message.get("message_id"))
 
     if chat_id is None or message_id is None:
@@ -177,7 +187,7 @@ async def _send(
     if not isinstance(chat, dict):
         return
 
-    chat_id = _parse_id(chat.get("id"))
+    chat_id = _parse_chat_id(chat.get("id"))
 
     if chat_id is None:
         return
