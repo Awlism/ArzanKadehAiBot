@@ -1395,7 +1395,7 @@ async def _finish_product_add(
             user_id,
         )
 
-        await _answer(
+        await _answer_or_send(
             telegram,
             callback_query,
             "⚠️ اطلاعات محصول ناقص است.",
@@ -1415,7 +1415,7 @@ async def _finish_product_add(
             user_id,
         )
 
-        await _answer(
+        await _answer_or_send(
             telegram,
             callback_query,
             "⚠️ شما به این فروشگاه دسترسی ندارید.",
@@ -1439,7 +1439,7 @@ async def _finish_product_add(
             user_id,
         )
 
-        await _answer(
+        await _answer_or_send(
             telegram,
             callback_query,
             "⚠️ دسته‌بندی انتخاب‌شده معتبر نیست.",
@@ -1463,7 +1463,7 @@ async def _finish_product_add(
             user_id,
         )
 
-        await _answer(
+        await _answer_or_send(
             telegram,
             callback_query,
             "⚠️ باید یک زیر‌دسته نهایی انتخاب شود.",
@@ -1517,7 +1517,7 @@ async def _finish_product_add(
             user_id,
         )
 
-        await _answer(
+        await _answer_or_send(
             telegram,
             callback_query,
             "⚠️ ثبت محصول انجام نشد.",
