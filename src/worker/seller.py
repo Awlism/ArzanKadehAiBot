@@ -433,8 +433,9 @@ async def _seller_keyboard(
                 [
                     {
                         "text": "📸 اینستاگرام",
-                        "callback_data": (
-                            f"igclick:{seller_id}"
+                        "url": (
+                            "https://arzankadehaibot.a-shahbazpor.workers.dev/"
+                            f"contact?channel=instagram&seller_id={seller_id}"
                         ),
                     }
                 ]
@@ -445,8 +446,9 @@ async def _seller_keyboard(
                 [
                     {
                         "text": "✈️ تلگرام",
-                        "callback_data": (
-                            f"tgclick:{seller_id}"
+                        "url": (
+                            "https://arzankadehaibot.a-shahbazpor.workers.dev/"
+                            f"contact?channel=telegram&seller_id={seller_id}"
                         ),
                     }
                 ]
@@ -457,8 +459,9 @@ async def _seller_keyboard(
                 [
                     {
                         "text": "🟢 واتساپ",
-                        "callback_data": (
-                            f"waclick:{seller_id}"
+                        "url": (
+                            "https://arzankadehaibot.a-shahbazpor.workers.dev/"
+                            f"contact?channel=whatsapp&seller_id={seller_id}"
                         ),
                     }
                 ]
