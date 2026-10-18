@@ -2433,6 +2433,7 @@ async def handle_product_delete_confirmed(
     )
 
 
+
 async def handle_product_message(
     db: Any,
     telegram: Any,
@@ -2454,14 +2455,9 @@ async def handle_product_message(
     except (ValueError, RuntimeError):
         return False
 
-    user_id = int(
-        user["id"]
-    )
+    user_id = int(user["id"])
 
-    state = await get_state(
-        db,
-        user_id,
-    )
+    state = await get_state(db, user_id)
 
     if not state or state.get("state") != STATE_NAME:
         return False
@@ -2469,10 +2465,7 @@ async def handle_product_message(
     data = state.get("data") or {}
 
     if not isinstance(data, dict):
-        await clear_state(
-            db,
-            user_id,
-        )
+        await clear_state(db, user_id)
         await _send(
             telegram,
             message,
@@ -2481,9 +2474,7 @@ async def handle_product_message(
         return True
 
     step = data.get("step")
-    text = str(
-        message.get("text") or ""
-    ).strip()
+    text = str(message.get("text") or "").strip()
 
     if step == "add_category":
         return True
@@ -2511,17 +2502,14 @@ async def handle_product_message(
             message,
             "📝 توضیح کوتاه محصول (اختیاری):",
             _keyboard(
-                [
-                    [
-                        _button(
-                            "⏭ رد کردن",
-                            "prodaddskip:description",
-                        )
-                    ]
-                ]
+                [[
+                    _button(
+                        "⏭ رد کردن",
+                        "prodaddskip:description",
+                    )
+                ]]
             ),
         )
-
         return True
 
     if step == "add_description":
@@ -2539,17 +2527,11 @@ async def handle_product_message(
             message,
             "💰 قیمت محصول رو بفرست (فقط عدد، تومان):",
         )
-
         return True
 
     if step == "add_price":
-        normalized = text.replace(
-            ",",
-            "",
-        )
-
         try:
-            price = int(normalized)
+            price = int(text.replace(",", ""))
         except (TypeError, ValueError):
             price = -1
 
@@ -2575,32 +2557,22 @@ async def handle_product_message(
             message,
             "💸 قیمت قبل از تخفیف (اختیاری):",
             _keyboard(
-                [
-                    [
-                        _button(
-                            "⏭ رد کردن",
-                            "prodaddskip:old_price",
-                        )
-                    ]
-                ]
+                [[
+                    _button(
+                        "⏭ رد کردن",
+                        "prodaddskip:old_price",
+                    )
+                ]]
             ),
         )
-
         return True
 
     if step == "add_old_price":
-        if text in (
-            "",
-            "0",
-            "-",
-            "حذف",
-        ):
+        if text in ("", "0", "-", "حذف"):
             data["old_price"] = None
         else:
             try:
-                old_price = int(
-                    text.replace(",", "")
-                )
+                old_price = int(text.replace(",", ""))
             except (TypeError, ValueError):
                 old_price = -1
 
@@ -2645,17 +2617,14 @@ async def handle_product_message(
             message,
             "🖼️ لینک تصویر محصول رو بفرست، یا رد کن:",
             _keyboard(
-                [
-                    [
-                        _button(
-                            "⏭ رد کردن",
-                            "prodaddskip:image",
-                        )
-                    ]
-                ]
+                [[
+                    _button(
+                        "⏭ رد کردن",
+                        "prodaddskip:image",
+                    )
+                ]]
             ),
         )
-
         return True
 
     if step == "add_image":
@@ -2674,31 +2643,22 @@ async def handle_product_message(
             user_id,
             data,
         )
-
         return True
 
     if step == "edit_value":
-        product_id = _parse_id(
-            data.get("product_id")
-        )
-
+        product_id = _parse_id(data.get("product_id"))
         field = data.get("field")
 
         if (
             product_id is None
             or field not in EDITABLE_FIELDS
         ):
-            await clear_state(
-                db,
-                user_id,
-            )
-
+            await clear_state(db, user_id)
             await _send(
                 telegram,
                 message,
                 "⚠️ فرآیند ویرایش منقضی شده. دوباره تلاش کن.",
             )
-
             return True
 
         product = await _owned_product(
@@ -2708,17 +2668,12 @@ async def handle_product_message(
         )
 
         if product is None:
-            await clear_state(
-                db,
-                user_id,
-            )
-
+            await clear_state(db, user_id)
             await _send(
                 telegram,
                 message,
                 "⚠️ شما به این محصول دسترسی ندارید.",
             )
-
             return True
 
         if field == "name":
@@ -2732,25 +2687,15 @@ async def handle_product_message(
 
             value: Any = text
 
-        elif field in (
-            "price",
-            "old_price",
-        ):
+        elif field in ("price", "old_price"):
             if (
                 field == "old_price"
-                and text in (
-                    "",
-                    "0",
-                    "-",
-                    "حذف",
-                )
+                and text in ("", "0", "-", "حذف")
             ):
                 value = None
             else:
                 try:
-                    value = int(
-                        text.replace(",", "")
-                    )
+                    value = int(text.replace(",", ""))
                 except (TypeError, ValueError):
                     value = -1
 
@@ -2764,6 +2709,43 @@ async def handle_product_message(
 
         else:
             value = text or None
+
+        # Validate the resulting price pair before saving.
+        if field in ("price", "old_price"):
+            try:
+                current_price = int(product.get("price") or 0)
+
+                raw_old_price = product.get("old_price")
+                current_old_price = (
+                    None
+                    if raw_old_price is None
+                    else int(raw_old_price)
+                )
+            except (TypeError, ValueError):
+                await _send(
+                    telegram,
+                    message,
+                    "⚠️ قیمت‌های فعلی محصول معتبر نیستند. ابتدا اطلاعات محصول را بررسی کن.",
+                )
+                return True
+
+            resulting_price = (
+                value if field == "price" else current_price
+            )
+            resulting_old_price = (
+                value if field == "old_price" else current_old_price
+            )
+
+            if (
+                resulting_old_price is not None
+                and resulting_old_price <= resulting_price
+            ):
+                await _send(
+                    telegram,
+                    message,
+                    "⚠️ قیمت قبل از تخفیف باید بیشتر از قیمت فعلی باشد. تغییرات ذخیره نشد؛ ابتدا قیمت‌ها را با هم سازگار کن.",
+                )
+                return True
 
         now = _now_iso()
 
@@ -2845,23 +2827,15 @@ async def handle_product_message(
                 )
 
         except Exception:
-            await clear_state(
-                db,
-                user_id,
-            )
-
+            await clear_state(db, user_id)
             await _send(
                 telegram,
                 message,
                 "⚠️ ذخیره تغییرات انجام نشد. دوباره تلاش کن.",
             )
-
             return True
 
-        await clear_state(
-            db,
-            user_id,
-        )
+        await clear_state(db, user_id)
 
         await _send(
             telegram,
@@ -2885,7 +2859,6 @@ async def handle_product_message(
                 ]
             ),
         )
-
         return True
 
     return False
