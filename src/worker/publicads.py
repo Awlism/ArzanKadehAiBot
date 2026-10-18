@@ -980,7 +980,7 @@ async def _finish_public_ad(
                         ad_image_url,
                         ad_link
                     )
-                    VALUES (
+                    SELECT
                         ?,
                         'general_ad',
                         ?,
@@ -992,6 +992,12 @@ async def _finish_public_ad(
                         ?,
                         ?,
                         ?
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM requests
+                        WHERE user_id = ?
+                          AND request_type = 'general_ad'
+                          AND status = 'PENDING'
                     );
                     """,
                     (
@@ -1004,6 +1010,7 @@ async def _finish_public_ad(
                         title.strip(),
                         data.get("image_url"),
                         data.get("link"),
+                        user_id,
                     ),
                 )
 
