@@ -756,16 +756,6 @@ async def _toggle_store_active(
         user_id,
     )
 
-    await _answer_callback(
-        telegram,
-        callback_query,
-        (
-            "🟢 فروشگاهت فعال شد."
-            if new_active
-            else "🔴 فروشگاهت غیرفعال شد."
-        ),
-        True,
-    )
 
 
 async def handle_store_toggle_active(
