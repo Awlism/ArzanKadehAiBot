@@ -2178,8 +2178,7 @@ async def handle_product_stock_set(
                     ?
                 FROM products p
                 WHERE p.id = ?
-                  AND p.stock_status = ?
-                  AND p.updated_at = ?
+                  AND changes() = 1
                   AND p.seller_id IN (
                       SELECT id
                       FROM sellers
@@ -2191,12 +2190,9 @@ async def handle_product_stock_set(
                     user_id,
                     now,
                     product_id,
-                    status,
-                    now,
                     user_id,
                     user_id,
                 ),
-            )
 
         results = transaction.results
 
@@ -2870,8 +2866,7 @@ async def handle_product_message(
                         ?
                     FROM products p
                     WHERE p.id = ?
-                      AND p.{field} IS ?
-                      AND p.updated_at = ?
+                      AND changes() = 1
                       AND p.seller_id IN (
                           SELECT id
                           FROM sellers
@@ -2884,12 +2879,9 @@ async def handle_product_message(
                         field,
                         now,
                         product_id,
-                        value,
-                        now,
                         user_id,
                         user_id,
                     ),
-                )
 
             results = transaction.results
 
