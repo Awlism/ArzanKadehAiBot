@@ -1711,7 +1711,6 @@ async def _finish_product_add(
         if (
             len(results) != 2
             or getattr(results[0], "rowcount", 0) != 1
-            or getattr(results[0], "lastrowid", None) is None
             or getattr(results[1], "rowcount", 0) != 1
         ):
             raise RuntimeError(
