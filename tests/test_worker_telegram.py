@@ -178,12 +178,12 @@ class TelegramClientTests(
         )
 
         self.assertEqual(
-            client._token,
+            client._read_token(client._env),
             "987654:ABC123",
         )
 
         self.assertEqual(
-            client._base_url,
+            client._get_base_url(),
             "https://api.telegram.org/bot987654:ABC123",
         )
 
@@ -195,7 +195,7 @@ class TelegramClientTests(
         )
 
         self.assertEqual(
-            client._token,
+            client._read_token(client._env),
             "987654:ABC123",
         )
 
@@ -203,11 +203,15 @@ class TelegramClientTests(
         class MissingEnv:
             pass
 
+        client = self.telegram.TelegramClient(
+            MissingEnv()
+        )
+
         with self.assertRaises(
             self.telegram.TelegramAPIError
         ) as context:
-            self.telegram.TelegramClient(
-                MissingEnv()
+            run(
+                client.call("getMe")
             )
 
         self.assertEqual(
@@ -215,21 +219,54 @@ class TelegramClientTests(
             "BOT_TOKEN is not configured.",
         )
 
+        self.assertEqual(
+            self.fetch.calls,
+            [],
+        )
+
     def test_none_bot_token_raises(self):
+        client = self.telegram.TelegramClient(
+            FakeEnv(None)
+        )
+
         with self.assertRaises(
             self.telegram.TelegramAPIError
-        ):
-            self.telegram.TelegramClient(
-                FakeEnv(None)
+        ) as context:
+            run(
+                client.call("getMe")
             )
 
+        self.assertEqual(
+            str(context.exception),
+            "BOT_TOKEN is not configured.",
+        )
+
+        self.assertEqual(
+            self.fetch.calls,
+            [],
+        )
+
     def test_empty_bot_token_raises(self):
+        client = self.telegram.TelegramClient(
+            FakeEnv("   ")
+        )
+
         with self.assertRaises(
             self.telegram.TelegramAPIError
-        ):
-            self.telegram.TelegramClient(
-                FakeEnv("   ")
+        ) as context:
+            run(
+                client.call("getMe")
             )
+
+        self.assertEqual(
+            str(context.exception),
+            "BOT_TOKEN is not configured.",
+        )
+
+        self.assertEqual(
+            self.fetch.calls,
+            [],
+        )
 
     def test_call_rejects_empty_method(self):
         client = self.telegram.TelegramClient(
