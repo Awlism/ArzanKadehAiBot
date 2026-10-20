@@ -378,9 +378,21 @@ class FakeTelegram:
 class MessagesStateDispatchTests(
     unittest.TestCase
 ):
-    def setUp(self):
-        HANDLER_CALLS.clear()
 
+    def setUp(self):
+        self._previous_worker_modules = {
+            name: module
+            for name, module in sys.modules.items()
+            if (
+                name == "workers"
+                or name == "worker"
+                or name.startswith("worker.")
+                or name == "worker_backend"
+                or name.startswith("worker_backend.")
+            )
+        }
+
+        HANDLER_CALLS.clear()
         self.backend = FakeBackend()
 
         self.messages = _load_messages_module(
@@ -388,6 +400,26 @@ class MessagesStateDispatchTests(
         )
 
         self.telegram = FakeTelegram()
+
+    def tearDown(self):
+        module_names = [
+            name
+            for name in sys.modules
+            if (
+                name == "workers"
+                or name == "worker"
+                or name.startswith("worker.")
+                or name == "worker_backend"
+                or name.startswith("worker_backend.")
+            )
+        ]
+
+        for name in module_names:
+            sys.modules.pop(name, None)
+
+        sys.modules.update(
+            self._previous_worker_modules
+        )
 
     def _message(
         self,
