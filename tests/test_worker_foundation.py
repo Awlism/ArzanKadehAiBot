@@ -362,21 +362,20 @@ class WebhookFoundationTests(
             "unknown",
         )
 
-    def test_missing_secret_does_not_block_request(self):
+    def test_missing_secret_is_rejected(self):
         request = FakeRequest(
             {},
         )
 
         env = FakeEnv()
 
-        result = webhook.verify_webhook_secret(
-            request,
-            env,
-        )
-
-        self.assertIsNone(
-            result
-        )
+        with self.assertRaises(
+            webhook.UnauthorizedWebhookError
+        ):
+            webhook.verify_webhook_secret(
+                request,
+                env,
+            )
 
     def test_matching_secret_is_accepted(self):
         request = FakeRequest(
