@@ -1529,12 +1529,13 @@ async def handle_product_add_skip(
             user_id,
             state_data,
         )
+        return
 
     await _answer(
         telegram,
         callback_query,
     )
-
+    
 
 async def _finish_product_add(
     db: Any,
