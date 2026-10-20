@@ -77,7 +77,10 @@ def _load_database_modules():
         SRC_ROOT / "worker_backend" / "d1_backend.py",
     )
 
-    if d1_spec is None or d1_spec.loader is None:
+    if (
+        d1_spec is None
+        or d1_spec.loader is None
+    ):
         raise RuntimeError(
             "Unable to load d1_backend.py"
         )
@@ -220,11 +223,16 @@ class FakeD1Database:
                 "UNIQUE constraint failed"
             )
 
+        # D1 run() returns an object with a results field for SELECTs.
         return FakeJSObject(
             {
+                "results": [
+                    dict(row)
+                    for row in self.rows
+                ],
                 "meta": dict(
                     self.run_meta
-                )
+                ),
             }
         )
 
@@ -266,13 +274,13 @@ class FakeD1Database:
                 )
             )
 
+        # Each statement receives a result using the configured metadata.
         return FakeJSObject(
             [
                 {
-                    "meta": {
-                        "changes": 1,
-                        "last_row_id": 10,
-                    }
+                    "meta": dict(
+                        self.run_meta
+                    )
                 }
                 for _ in statements
             ]
@@ -331,12 +339,17 @@ class D1BackendExecutionTests(
         )
 
         self.assertEqual(
+            result.lastrowid,
+            42,
+        )
+
+        self.assertEqual(
             self.database.prepared[0].params,
             ("کفش",),
         )
 
     def test_execute_normalizes_integrity_errors(self):
-        self.database.raise_integrity_on_run = True
+        self.database.raise_integrity_on_batch = True
 
         with self.assertRaises(
             database_backend.DatabaseIntegrityError
