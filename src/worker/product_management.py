@@ -1664,7 +1664,10 @@ async def _finish_product_add(
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'AVAILABLE', 0, 0, 0, ?, ?);
+                VALUES (
+                    ?, ?, ?, ?, ?, ?, ?,
+                    'AVAILABLE', 0, 0, 0, ?, ?
+                );
                 """,
                 (
                     seller_id,
@@ -1689,16 +1692,14 @@ async def _finish_product_add(
                     details,
                     created_at
                 )
-                SELECT
+                VALUES (
                     ?,
                     'product_created',
                     'product',
-                    id,
+                    last_insert_rowid(),
                     ?,
                     ?
-                FROM products
-                WHERE id = last_insert_rowid()
-                  AND changes() = 1;
+                );
                 """,
                 (
                     user_id,
