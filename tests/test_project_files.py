@@ -1,14 +1,16 @@
+
 # -*- coding: utf-8 -*-
 """
 ArzanKadeh AI
 Cloudflare Worker project structure tests.
 
-These tests validate the current Cloudflare/D1 migration layout and
-must not enforce the retired aiogram/SQLite runtime structure.
+These tests validate the current Cloudflare/D1 migration layout
+and must not enforce the retired aiogram/SQLite runtime structure.
 """
 
 from __future__ import annotations
 
+import ast
 import unittest
 from pathlib import Path
 
@@ -24,60 +26,64 @@ class ProjectFilesTests(unittest.TestCase):
         path = SRC / "entry.py"
 
         self.assertTrue(
-            path.exists(),
+            path.is_file(),
             "Missing Cloudflare Worker entry: src/entry.py",
         )
 
-        content = path.read_text(
-            encoding="utf-8"
-        )
+        content = path.read_text(encoding="utf-8")
+        tree = ast.parse(content, filename=str(path))
+
+        entrypoint_classes = {
+            node.name
+            for node in tree.body
+            if isinstance(node, ast.ClassDef)
+        }
 
         self.assertIn(
-            "class ArzanKadehWorker",
-            content,
+            "Default",
+            entrypoint_classes,
+            "src/entry.py must define the current Workers entrypoint class Default.",
         )
 
-        self.assertIn(
-            "fetch",
-            content,
+        self.assertTrue(
+            any(
+                isinstance(node, ast.FunctionDef)
+                and node.name == "fetch"
+                for class_node in tree.body
+                if isinstance(class_node, ast.ClassDef)
+                and class_node.name == "Default"
+                for node in class_node.body
+            )
+            or any(
+                isinstance(node, ast.AsyncFunctionDef)
+                and node.name == "fetch"
+                for class_node in tree.body
+                if isinstance(class_node, ast.ClassDef)
+                and class_node.name == "Default"
+                for node in class_node.body
+            ),
+            "Default must define a fetch handler.",
         )
 
     def test_cloudflare_configuration_exists(self):
         path = ROOT / "wrangler.jsonc"
 
         self.assertTrue(
-            path.exists(),
+            path.is_file(),
             "Missing Cloudflare configuration: wrangler.jsonc",
         )
 
-        content = path.read_text(
-            encoding="utf-8"
-        )
+        content = path.read_text(encoding="utf-8")
 
-        self.assertIn(
+        for expected in (
             '"name": "arzankadehaibot"',
-            content,
-        )
-
-        self.assertIn(
             '"main": "src/entry.py"',
-            content,
-        )
-
-        self.assertIn(
             '"python_workers"',
-            content,
-        )
-
-        self.assertIn(
             '"binding": "DB"',
-            content,
-        )
-
-        self.assertIn(
             '"database_name": "arzankadeh-db"',
-            content,
-        )
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, content)
 
     def test_worker_backend_modules_exist(self):
         self.assertTrue(
@@ -93,10 +99,11 @@ class ProjectFilesTests(unittest.TestCase):
         )
 
         for filename in required_files:
-            self.assertTrue(
-                (BACKEND / filename).exists(),
-                f"Missing Worker backend module: src/worker_backend/{filename}",
-            )
+            with self.subTest(filename=filename):
+                self.assertTrue(
+                    (BACKEND / filename).is_file(),
+                    f"Missing Worker backend module: src/worker_backend/{filename}",
+                )
 
     def test_worker_modules_exist(self):
         self.assertTrue(
@@ -137,131 +144,74 @@ class ProjectFilesTests(unittest.TestCase):
         )
 
         for filename in required_modules:
-            self.assertTrue(
-                (WORKER / filename).exists(),
-                f"Missing Worker module: src/worker/{filename}",
-            )
+            with self.subTest(filename=filename):
+                self.assertTrue(
+                    (WORKER / filename).is_file(),
+                    f"Missing Worker module: src/worker/{filename}",
+                )
 
     def test_pyproject_is_worker_oriented(self):
         path = ROOT / "pyproject.toml"
 
         self.assertTrue(
-            path.exists(),
+            path.is_file(),
             "Missing pyproject.toml",
         )
 
-        content = path.read_text(
-            encoding="utf-8"
-        )
+        content = path.read_text(encoding="utf-8")
 
-        self.assertIn(
-            'name = "arzankadehaibot"',
-            content,
-        )
-
-        self.assertIn(
-            "workers-py",
-            content,
-        )
-
-        self.assertNotIn(
-            "aiogram>=",
-            content,
-        )
-
-        self.assertNotIn(
-            "aiosqlite>=",
-            content,
-        )
+        self.assertIn('name = "arzankadehaibot"', content)
+        self.assertIn("workers-py", content)
+        self.assertNotIn("aiogram>=", content)
+        self.assertNotIn("aiosqlite>=", content)
 
     def test_env_example_does_not_contain_real_secrets(self):
         path = ROOT / ".env.example"
 
         self.assertTrue(
-            path.exists(),
+            path.is_file(),
             "Missing .env.example",
         )
 
-        content = path.read_text(
-            encoding="utf-8"
-        )
+        content = path.read_text(encoding="utf-8")
 
-        self.assertIn(
-            "BOT_TOKEN=",
-            content,
-        )
-
-        self.assertIn(
-            "ADMIN_CHAT_ID=",
-            content,
-        )
-
-        self.assertIn(
-            "ADMIN_USERNAME=",
-            content,
-        )
-
-        self.assertIn(
-            "your_telegram_bot_token_here",
-            content,
-        )
+        self.assertIn("BOT_TOKEN=", content)
+        self.assertIn("ADMIN_CHAT_ID=", content)
+        self.assertIn("ADMIN_USERNAME=", content)
+        self.assertIn("your_telegram_bot_token_here", content)
 
     def test_gitignore_protects_local_secrets_and_databases(self):
         path = ROOT / ".gitignore"
 
         self.assertTrue(
-            path.exists(),
+            path.is_file(),
             "Missing .gitignore",
         )
 
-        content = path.read_text(
-            encoding="utf-8"
-        )
+        content = path.read_text(encoding="utf-8")
 
-        self.assertIn(
-            ".env",
-            content,
-        )
-
-        self.assertIn(
-            "*.db",
-            content,
-        )
-
-        self.assertIn(
-            "__pycache__",
-            content,
-        )
+        self.assertIn(".env", content)
+        self.assertIn("*.db", content)
+        self.assertIn("__pycache__", content)
 
     def test_miniapp_placeholder_exists(self):
         path = ROOT / "miniapp" / "index.html"
 
         self.assertTrue(
-            path.exists(),
+            path.is_file(),
             "Missing Mini App placeholder: miniapp/index.html",
         )
 
-        content = path.read_text(
-            encoding="utf-8"
-        )
+        content = path.read_text(encoding="utf-8")
 
-        self.assertIn(
-            "<!DOCTYPE html>",
-            content,
-        )
-
-        self.assertIn(
-            "telegram-web-app.js",
-            content,
-        )
+        self.assertIn("<!DOCTYPE html>", content)
+        self.assertIn("telegram-web-app.js", content)
 
     def test_legacy_runtime_files_are_not_required_by_worker_tests(self):
         """
-        The migration may retain legacy bot/ files for historical reference,
-        but the current Worker test suite must not require the retired runtime
-        dependency files.
+        Legacy bot files may remain for historical reference.
+        The current Worker runtime must not require requirements.txt.
         """
-
         self.assertFalse(
             (ROOT / "requirements.txt").exists(),
             "requirements.txt should not be required by the current Worker runtime.",
