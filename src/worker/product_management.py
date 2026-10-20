@@ -2064,6 +2064,7 @@ async def handle_product_stock_menu(
     )
 
 
+
 async def handle_product_stock_set(
     db: Any,
     telegram: Any,
@@ -2223,10 +2224,16 @@ async def handle_product_stock_set(
         True,
     )
 
+    # Reopen the edit menu with the correct callback data.
+    # The original callback has already been answered.
+    menu_callback = dict(callback_query)
+    menu_callback["data"] = f"prodedit:{product_id}"
+    menu_callback["id"] = None
+
     await handle_product_edit_menu(
         db,
         telegram,
-        callback_query,
+        menu_callback,
     )
 
 
