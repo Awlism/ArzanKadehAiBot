@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 """
 ArzanKadeh AI
@@ -98,6 +99,19 @@ def _install_backend_stubs() -> None:
                 params,
             )
 
+        async def fetchone(
+            self,
+            query,
+            params=None,
+        ):
+            if self.backend is None:
+                return None
+
+            return await self.backend.fetchone(
+                query,
+                params,
+            )
+
     backend_module.backend = FakeBackendProxy()
 
     _install_module(
@@ -119,6 +133,7 @@ def _install_backend_stubs() -> None:
             self.database = database
             self.connected = False
             self.fetchall_calls = []
+            self.fetchone_calls = []
 
             self.__class__.instances.append(
                 self
@@ -147,6 +162,25 @@ def _install_backend_stubs() -> None:
                     "name": "products",
                 },
             ]
+
+        async def fetchone(
+            self,
+            query,
+            params=None,
+        ):
+            self.fetchone_calls.append(
+                (
+                    query,
+                    params,
+                )
+            )
+
+            if "SELECT 1 AS healthy" in query:
+                return {
+                    "healthy": 1,
+                }
+
+            return None
 
     d1_module.D1Backend = FakeD1Backend
 
@@ -627,13 +661,13 @@ class WorkerEntryIntegrationTests(
             200,
         )
 
-        self.assertIn(
-            "ArzanKadeh Worker + D1Backend OK",
+        self.assertEqual(
             response.body,
+            "ArzanKadeh Worker OK",
         )
 
-        self.assertIn(
-            "Tables: 2",
+        self.assertNotIn(
+            "Tables:",
             response.body,
         )
 
@@ -648,8 +682,15 @@ class WorkerEntryIntegrationTests(
             1,
         )
 
+        d1 = entry.D1Backend.instances[0]
+
         self.assertTrue(
-            entry.D1Backend.instances[0].connected
+            d1.connected
+        )
+
+        self.assertEqual(
+            d1.fetchone_calls[0][0].strip(),
+            "SELECT 1 AS healthy;",
         )
 
     def test_post_message_initializes_state_table_and_dispatches_message(self):
