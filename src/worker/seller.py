@@ -187,6 +187,8 @@ def _website_url(
 def _whatsapp_url(
     value: Any,
 ) -> str | None:
+    from urllib.parse import parse_qs, urlsplit
+
     if value is None:
         return None
 
@@ -195,24 +197,71 @@ def _whatsapp_url(
     if not value:
         return None
 
-    if value.startswith(
-        ("http://", "https://")
-    ):
-        return value
+    # لینک آماده فقط از دامنه‌های رسمی واتساپ پذیرفته می‌شود.
+    if "://" in value:
+        try:
+            parsed = urlsplit(value)
 
-    digits = re.sub(
-        r"[^0-9+]",
-        "",
+            if (
+                parsed.scheme.lower() != "https"
+                or parsed.hostname is None
+                or parsed.hostname.lower()
+                not in {
+                    "wa.me",
+                    "api.whatsapp.com",
+                }
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.port is not None
+            ):
+                return None
+
+            if parsed.hostname.lower() == "wa.me":
+                if not re.fullmatch(
+                    r"/[0-9]{7,15}/?",
+                    parsed.path,
+                ):
+                    return None
+
+            elif (
+                parsed.path.rstrip("/") != "/send"
+            ):
+                return None
+
+            else:
+                query = parse_qs(
+                    parsed.query,
+                    keep_blank_values=True,
+                )
+                phones = query.get("phone", [])
+
+                if (
+                    len(phones) != 1
+                    or not re.fullmatch(
+                        r"[0-9]{7,15}",
+                        phones[0],
+                    )
+                ):
+                    return None
+
+            return value
+
+        except (ValueError, TypeError):
+            return None
+
+    # ورودی شماره باید فقط از نویسه‌های متعارف شماره تشکیل شده باشد.
+    if not re.fullmatch(
+        r"[0-9+\s().-]+",
         value,
-    )
-
-    if not digits:
+    ):
         return None
 
-    return (
-        "https://wa.me/"
-        + digits.lstrip("+")
-    )
+    digits = re.sub(r"\D", "", value)
+
+    if not re.fullmatch(r"[0-9]{7,15}", digits):
+        return None
+
+    return f"https://wa.me/{digits}"
 
 
 def _back_keyboard() -> dict[str, Any]:
