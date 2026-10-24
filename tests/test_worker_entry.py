@@ -104,6 +104,21 @@ def _install_backend_stubs() -> None:
             if self.backend is not None:
                 await self.backend.connect()
 
+        async def execute(
+            self,
+            query,
+            params=None,
+        ):
+            if self.backend is None:
+                raise RuntimeError(
+                    "Backend is not initialized"
+                )
+
+            return await self.backend.execute(
+                query,
+                params,
+            )
+
         async def fetchall(
             self,
             query,
