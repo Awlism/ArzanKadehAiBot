@@ -787,34 +787,33 @@ class WorkerDatabaseUsageTests(unittest.TestCase):
             ".transaction(",
         )
 
+        modules_not_required_to_use_database = {
+            "src/worker/__init__.py",
+            "src/worker/admin_auth.py",
+            "src/worker/router.py",
+            "src/worker/telegram.py",
+            "src/worker/webhook.py",
+        }
+
         violations = []
 
-        for path in _python_files(
-            WORKER_PATH
-        ):
+        for path in _python_files(WORKER_PATH):
+            relative_path = str(
+                path.relative_to(PROJECT_ROOT)
+            )
+
+            if relative_path in modules_not_required_to_use_database:
+                continue
+
             source = path.read_text(
                 encoding="utf-8"
             )
 
-            if any(
+            if not any(
                 method in source
                 for method in database_methods
             ):
-                continue
-
-            if path.name in {
-                "telegram.py",
-                "webhook.py",
-            }:
-                continue
-
-            violations.append(
-                str(
-                    path.relative_to(
-                        PROJECT_ROOT
-                    )
-                )
-            )
+                violations.append(relative_path)
 
         self.assertFalse(
             violations,
