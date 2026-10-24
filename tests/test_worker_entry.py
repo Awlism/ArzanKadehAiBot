@@ -175,6 +175,23 @@ def _install_backend_stubs() -> None:
         async def connect(self):
             self.connected = True
 
+        async def execute(
+            self,
+            query,
+            params=None,
+        ):
+            self.execute_calls.append(
+                (
+                    query,
+                    params,
+                )
+            )
+
+            return types.SimpleNamespace(
+                rowcount=1,
+                lastrowid=None,
+            )
+
         async def fetchall(
             self,
             query,
