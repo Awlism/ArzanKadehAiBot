@@ -4,6 +4,9 @@
   "main": "src/entry.py",
   "compatibility_date": "2026-09-29",
   "compatibility_flags": ["python_workers"],
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
 
   "d1_databases": [
     {
