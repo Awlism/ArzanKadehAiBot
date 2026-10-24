@@ -481,7 +481,7 @@ def _install_worker_module_stubs() -> list:
             "kwargs": {"lease_seconds": lease_seconds},
         })
 
-        if update_id in processed_update_ids:
+        if update_id in PROCESSED_UPDATE_IDS:
             return False
 
         processed_update_ids.add(update_id)
