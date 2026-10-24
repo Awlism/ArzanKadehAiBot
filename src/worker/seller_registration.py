@@ -1036,8 +1036,11 @@ async def handle_register_seller_message(
 
         return True
 
+
     if step == "instagram":
-        if _instagram_url(text) is None:
+        instagram_url = _instagram_url(text)
+
+        if instagram_url is None:
             await _send(
                 telegram,
                 message,
@@ -1045,7 +1048,8 @@ async def handle_register_seller_message(
             )
             return True
 
-        data["register_instagram"] = text
+        data["register_instagram"] = instagram_url
+
 
         await _set_registration_state(
             db,
@@ -1065,8 +1069,11 @@ async def handle_register_seller_message(
 
         return True
 
+
     if step == "telegram":
-        if _telegram_url(text) is None:
+        telegram_url = _telegram_url(text)
+
+        if telegram_url is None:
             await _send(
                 telegram,
                 message,
@@ -1074,7 +1081,8 @@ async def handle_register_seller_message(
             )
             return True
 
-        data["register_telegram"] = text
+        data["register_telegram"] = telegram_url
+
 
         await _set_registration_state(
             db,
