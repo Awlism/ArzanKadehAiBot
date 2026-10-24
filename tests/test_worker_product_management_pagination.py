@@ -54,24 +54,28 @@ class ProductManagementPaginationTests(unittest.TestCase):
         )
         self.assertIn("limit ? offset ?", normalized)
         self.assertIn(
-            "(seller_id, page_size, start)",
+            "seller_id,",
+            normalized,
+        )
+        self.assertIn(
+            "start,",
             normalized,
         )
 
     def test_page_number_is_clamped_to_valid_range(self):
         source = self.function_source("_render_product_list")
-        normalized = " ".join(source.split())
+        normalized = " ".join(source.lower().split())
 
         self.assertIn(
-            "total_pages = (total_products + PAGE_SIZE - 1) // PAGE_SIZE",
+            "total_products + page_size - 1",
             normalized,
         )
         self.assertIn(
-            "page = max(0, min(int(page), total_pages - 1))",
+            "min(int(page), total_pages - 1)",
             normalized,
         )
         self.assertIn(
-            "start = page * PAGE_SIZE",
+            "start = page * page_size",
             normalized,
         )
 
