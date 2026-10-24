@@ -769,8 +769,8 @@ async def handle_support_text(
                 ),
             )
 
-            # Then create the audit record only for the request inserted
-            # immediately before this statement.
+            # Create the audit record only for the request inserted
+            # by the immediately preceding statement.
             await tx.execute(
                 """
                 INSERT INTO audit_log (
@@ -785,18 +785,17 @@ async def handle_support_text(
                     ?,
                     'support_request_created',
                     'request',
-                    id,
+                    r.id,
                     ?,
                     ?
-                FROM requests
-                WHERE id = last_insert_rowid()
-                  AND changes() = 1
-                  AND user_id = ?
-                  AND request_type = 'support'
-                  AND topic = ?
-                  AND message = ?
-                  AND status = 'PENDING'
-                  AND created_at = ?;
+                FROM requests AS r
+                WHERE changes() = 1
+                  AND r.user_id = ?
+                  AND r.request_type = 'support'
+                  AND r.topic = ?
+                  AND r.message = ?
+                  AND r.status = 'PENDING'
+                  AND r.created_at = ?;
                 """,
                 (
                     user_id,
