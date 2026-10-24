@@ -4,8 +4,7 @@
 ArzanKadeh AI
 Cloudflare Worker profile handlers.
 
-This module intentionally does not import aiogram, sqlite,
-aiosqlite, or any legacy bot module.
+This module uses the Worker-native database and Telegram client.
 """
 
 from __future__ import annotations
