@@ -2843,6 +2843,36 @@ async def handle_product_message(
 
         now = _now_iso()
 
+        price_guard = ""
+        update_params = [
+            value,
+            now,
+            product_id,
+            user_id,
+            user_id,
+        ]
+
+        if field == "price":
+            price_guard = """
+                AND (
+                    old_price IS NULL
+                    OR old_price > ?
+                )
+            """
+            update_params.append(value)
+
+        elif field == "old_price":
+            price_guard = """
+                AND (
+                    ? IS NULL
+                    OR ? > price
+                )
+            """
+            update_params.extend([
+                value,
+                value,
+            ])
+
         try:
             async with db.transaction(immediate=True) as transaction:
                 await transaction.execute(
@@ -2856,15 +2886,10 @@ async def handle_product_message(
                           FROM sellers
                           WHERE owner_user_id = ?
                              OR created_by_user_id = ?
-                      );
+                      )
+                      {price_guard};
                     """,
-                    (
-                        value,
-                        now,
-                        product_id,
-                        user_id,
-                        user_id,
-                    ),
+                    tuple(update_params),
                 )
 
                 await transaction.execute(
