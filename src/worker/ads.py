@@ -373,6 +373,7 @@ async def _create_ad_request(
     user_id: int,
     topic: str,
     seller_id: Optional[int],
+    code: str,
 ) -> Optional[int]:
     now = datetime.now(
         timezone.utc
@@ -380,63 +381,149 @@ async def _create_ad_request(
         timespec="microseconds"
     )
 
-    result = await db.execute(
-        """
-        INSERT INTO requests (
-            user_id,
-            request_type,
-            topic,
-            seller_id,
-            status,
-            created_at,
-            updated_at
+    async with db.transaction(
+        immediate=True
+    ) as tx:
+        await tx.execute(
+            """
+            INSERT INTO requests (
+                user_id,
+                request_type,
+                topic,
+                seller_id,
+                status,
+                created_at,
+                updated_at
+            )
+            SELECT
+                ?,
+                'ad',
+                ?,
+                ?,
+                'PENDING',
+                ?,
+                ?
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM requests
+                WHERE user_id = ?
+                  AND request_type = 'ad'
+                  AND topic = ?
+                  AND status IN (
+                      'PENDING',
+                      'APPROVED',
+                      'ACTIVE'
+                  )
+            );
+            """,
+            (
+                user_id,
+                topic,
+                seller_id,
+                now,
+                now,
+                user_id,
+                topic,
+            ),
         )
-        VALUES (?, 'ad', ?, ?, 'PENDING', ?, ?);
-        """,
-        (
-            user_id,
-            topic,
-            seller_id,
-            now,
-            now,
-        ),
+
+        await tx.execute(
+            """
+            INSERT INTO audit_log (
+                actor_user_id,
+                action,
+                entity_type,
+                entity_id,
+                details,
+                created_at
+            )
+            SELECT
+                ?,
+                'ad_request_created',
+                'request',
+                id,
+                ?,
+                ?
+            FROM requests
+            WHERE id = last_insert_rowid()
+              AND changes() = 1
+              AND user_id = ?
+              AND request_type = 'ad'
+              AND topic = ?
+              AND created_at = ?;
+            """,
+            (
+                user_id,
+                code,
+                now,
+                user_id,
+                topic,
+                now,
+            ),
+        )
+
+    results = tx.results
+
+    insert_result = (
+        results[0]
+        if results
+        else None
     )
 
-    lastrowid = getattr(
-        result,
-        "lastrowid",
-        None,
-    )
-
-    if lastrowid is not None:
-        return int(lastrowid)
-
-    row = await db.fetchone(
-        """
-        SELECT id
-        FROM requests
-        WHERE user_id = ?
-          AND request_type = 'ad'
-          AND topic = ?
-          AND created_at = ?
-          AND updated_at = ?
-        ORDER BY id DESC
-        LIMIT 1;
-        """,
-        (
-            user_id,
-            topic,
-            now,
-            now,
-        ),
-    )
-
-    if row is None:
+    if (
+        insert_result is None
+        or insert_result.rowcount != 1
+    ):
         return None
 
-    return int(row["id"])
+    audit_result = (
+        results[1]
+        if len(results) > 1
+        else None
+    )
 
+    if (
+        audit_result is None
+        or audit_result.rowcount != 1
+    ):
+        raise RuntimeError(
+            "Advertisement request audit insert failed."
+        )
 
+    request_id = insert_result.lastrowid
+
+    if request_id is None:
+        row = await db.fetchone(
+            """
+            SELECT id
+            FROM requests
+            WHERE user_id = ?
+              AND request_type = 'ad'
+              AND topic = ?
+              AND seller_id IS ?
+              AND status = 'PENDING'
+              AND created_at = ?
+              AND updated_at = ?
+            ORDER BY id DESC
+            LIMIT 1;
+            """,
+            (
+                user_id,
+                topic,
+                seller_id,
+                now,
+                now,
+            ),
+        )
+
+        if row is None:
+            return None
+
+        request_id = row["id"]
+
+    return int(request_id)
+    
+    
 async def _audit(
     db: Any,
     user_id: int,
