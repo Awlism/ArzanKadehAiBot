@@ -508,19 +508,14 @@ class EntryPointTests(unittest.TestCase):
     def test_entry_defines_worker_class(self):
         class_names = {
             node.name
-            for node in ast.walk(
-                self.tree
-            )
-            if isinstance(
-                node,
-                ast.ClassDef,
-            )
+            for node in ast.walk(self.tree)
+            if isinstance(node, ast.ClassDef)
         }
 
         self.assertIn(
-            "ArzanKadehWorker",
+            "Default",
             class_names,
-            "ArzanKadehWorker is missing from entry.py.",
+            "Cloudflare Worker entry class Default is missing from entry.py.",
         )
 
     def test_entry_imports_worker_modules(self):
