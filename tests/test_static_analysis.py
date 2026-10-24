@@ -562,9 +562,31 @@ class EntryPointTests(unittest.TestCase):
         )
 
     def test_entry_contains_no_aiogram(self):
-        self.assertNotIn(
-            "aiogram",
+        tree = ast.parse(
             self.source,
+            filename=str(ENTRY_PATH),
+        )
+
+        forbidden_imports = []
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.split(".", 1)[0] == "aiogram":
+                        forbidden_imports.append(alias.name)
+
+            elif isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+
+                if module.split(".", 1)[0] == "aiogram":
+                    forbidden_imports.append(module)
+
+        self.assertFalse(
+            forbidden_imports,
+            (
+                "Legacy aiogram imports found in entry.py: "
+                f"{forbidden_imports}"
+            ),
         )
 
     def test_entry_contains_no_sqlite_runtime_import(self):
