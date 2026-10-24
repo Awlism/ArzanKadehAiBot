@@ -3,8 +3,8 @@
 ArzanKadeh AI
 Shared advertisement lookup and rendering helpers for Cloudflare Workers.
 
-This module reads existing advertisement requests from D1.
-It does not create tables, change request statuses, or send Telegram messages.
+Reads active advertisements from the existing D1 requests table.
+Does not create tables, change request statuses, or send Telegram messages.
 """
 
 from __future__ import annotations
@@ -50,10 +50,6 @@ def _now_iso() -> str:
 
 
 def _normalize_text(value: Any) -> str:
-    """
-    Normalize Persian/Arabic letter variants and whitespace.
-    """
-
     if value is None:
         return ""
 
@@ -72,16 +68,13 @@ def _normalize_text(value: Any) -> str:
 def _positive_limit(value: Any) -> int:
     try:
         limit = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return DEFAULT_AD_LIMIT
 
     if limit < 1:
         return 1
 
-    return min(
-        limit,
-        MAX_AD_LIMIT,
-    )
+    return min(limit, MAX_AD_LIMIT)
 
 
 def _placement_matches(
@@ -89,47 +82,35 @@ def _placement_matches(
     requested_placement: str,
 ) -> bool:
     """
-    Match a saved placement against a supported placement.
-
-    Unknown or blank placements are deliberately not displayed.
+    Match a stored placement against a supported placement.
+    Unknown or blank placements are not displayed.
     """
 
-    placement = _normalize_text(
-        stored_placement
-    )
+    if requested_placement not in PLACEMENT_ALIASES:
+        return False
 
-    requested = _normalize_text(
-        requested_placement
-    )
-
-    aliases = PLACEMENT_ALIASES.get(
-        requested_placement,
-        (),
-    )
+    placement = _normalize_text(stored_placement)
 
     if not placement:
         return False
 
-    normalized_aliases = {
+    aliases = {
         _normalize_text(alias)
-        for alias in aliases
+        for alias in PLACEMENT_ALIASES[requested_placement]
     }
 
-    normalized_aliases.add(
-        requested
+    aliases.add(
+        _normalize_text(requested_placement)
     )
 
-    for alias in normalized_aliases:
+    for alias in aliases:
         if not alias:
             continue
 
         if placement == alias:
             return True
 
-        if (
-            len(alias) >= 5
-            and alias in placement
-        ):
+        if len(alias) >= 5 and alias in placement:
             return True
 
     return False
@@ -138,9 +119,7 @@ def _placement_matches(
 def _safe_http_url(
     value: Any,
 ) -> Optional[str]:
-    """
-    Accept only absolute HTTP(S) URLs.
-    """
+    """Accept only absolute HTTP(S) URLs without embedded credentials."""
 
     if value is None:
         return None
@@ -182,17 +161,14 @@ async def get_active_ads(
     """
     Return active, unexpired advertisements for a supported placement.
 
-    Reads the existing requests table only.
-    Does not mutate records or activate approved requests.
+    Only reads existing rows from requests.
+    Does not activate approved ads or mutate records.
     """
 
     if placement not in PLACEMENT_ALIASES:
         return []
 
-    safe_limit = _positive_limit(
-        limit
-    )
-
+    safe_limit = _positive_limit(limit)
     now = _now_iso()
 
     rows = await db.fetchall(
@@ -229,9 +205,7 @@ async def get_active_ads(
         ):
             continue
 
-        matched.append(
-            dict(row)
-        )
+        matched.append(dict(row))
 
         if len(matched) >= safe_limit:
             break
@@ -242,9 +216,7 @@ async def get_active_ads(
 def get_ad_image_url(
     ad: dict[str, Any],
 ) -> Optional[str]:
-    """
-    Return a validated image URL, if one was saved.
-    """
+    """Return a validated image URL, if one was saved."""
 
     return _safe_http_url(
         ad.get("ad_image_url")
@@ -254,36 +226,34 @@ def get_ad_image_url(
 def get_ad_link_url(
     ad: dict[str, Any],
 ) -> Optional[str]:
-    """
-    Return a validated destination URL, if one was saved.
-    """
+    """Return a validated destination URL, if one was saved."""
 
     return _safe_http_url(
-        ad.get("ad_link")
+        ad.get("ad_link") or ad.get("link")
     )
 
 
 def render_ad_text(
     ad: dict[str, Any],
 ) -> str:
-    """
-    Build an HTML-safe advertisement message.
+    """Build an HTML-safe Telegram advertisement message."""
 
-    Telegram delivery is intentionally handled elsewhere.
-    """
+    title = (
+        ad.get("ad_title")
+        or ad.get("title")
+        or ad.get("topic")
+        or ""
+    )
 
-    title = str(
-        ad.get("ad_title") or ""
-    ).strip()
+    description = (
+        ad.get("message")
+        or ad.get("description")
+        or ad.get("ad_description")
+        or ""
+    )
 
-    description = str(
-        ad.get("description") or ""
-    ).strip()
-
-    if not description:
-        description = str(
-            ad.get("ad_description") or ""
-        ).strip()
+    title = str(title).strip()
+    description = str(description).strip()
 
     lines = [
         "📢 <b>تبلیغ</b>",
