@@ -62,6 +62,9 @@ def _make_handler(
 
 def _install_worker_dependencies() -> None:
     module_specs = {
+        "worker.start": [
+            "_send_main_menu",
+        ],
         "worker.admin": [
             "handle_admin_user_search_message",
         ],
@@ -269,12 +272,51 @@ def _install_state_module(
             ),
         }
 
+    async def clear_state(
+        db,
+        user_id,
+    ):
+        HANDLER_CALLS.append(
+            {
+                "name": "clear_state",
+                "args": (
+                    db,
+                    user_id,
+                ),
+                "kwargs": {},
+            }
+        )
+
+        await db.execute(
+            """
+            DELETE FROM worker_states
+            WHERE user_id = ?;
+            """,
+            (user_id,),
+        )
+
+        target_backend = getattr(
+            db,
+            "backend",
+            db,
+        )
+
+        if hasattr(
+            target_backend,
+            "state_row",
+        ):
+            target_backend.state_row = None
+
     state_module.ensure_state_table = (
         ensure_state_table
     )
 
     state_module.get_state = (
         get_state
+    )
+
+    state_module.clear_state = (
+        clear_state
     )
 
     _install_module(
@@ -839,6 +881,20 @@ class MessagesStateDispatchTests(
         self.assertNotIn(
             "handle_search_message",
             names,
+        )
+
+        self.assertIn(
+            "clear_state",
+            names,
+        )
+
+        self.assertIn(
+            "_send_main_menu",
+            names,
+        )
+
+        self.assertIsNone(
+            self.backend.state_row
         )
 
 
