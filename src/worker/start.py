@@ -651,31 +651,6 @@ async def _handle_start_parameter(
     if not recorded:
         return
 
-    await backend.execute(
-        """
-        INSERT INTO notifications (
-            user_id,
-            title,
-            message,
-            notification_type,
-            is_read,
-            created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?);
-        """,
-        (
-            owner_user_id,
-            "🎉 معرفی جدید",
-            (
-                "یک کاربر جدید از طریق لینک اختصاصی "
-                "فروشگاه شما وارد ارزانکده شد!"
-            ),
-            "referral",
-            0,
-            _now_iso(),
-        ),
-    )
-
 
 async def handle_role_pick(
     callback_query: dict[str, Any],
