@@ -705,7 +705,7 @@ class WorkerEntryIntegrationTests(
 
         self.worker = entry.Default()
 
-        self.worker.env = FakeEnv()
+        self.worker.env = FakeEnv(secret="test-secret")
 
     def test_get_returns_d1_health_response(self):
         response = run(
