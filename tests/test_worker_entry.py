@@ -666,9 +666,14 @@ class FakeRequest:
     ):
         self.method = method
         self.payload = payload
-        self.headers = FakeHeaders(
-            headers
-        )
+        self.url = "https://example.test/"
+
+        if headers is None:
+            headers = {
+                "X-Telegram-Bot-Api-Secret-Token": "test-secret",
+            }
+
+        self.headers = FakeHeaders(headers)
 
     async def json(self):
         return self.payload
