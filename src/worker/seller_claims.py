@@ -735,6 +735,7 @@ async def handle_seller_claim_detail(
 async def _approve_claim(
     db: Any,
     claim_id: int,
+    admin_user_id: int,
 ) -> bool:
     """
     Approve a seller claim safely.
@@ -745,7 +746,7 @@ async def _approve_claim(
     expected current state. After the batch commits, the resulting claim
     and seller ownership are read back and verified.
     """
-    now = _now_iso()
+    now = datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
     async with db.transaction() as transaction:
         claim = await transaction.fetchone(
@@ -890,11 +891,65 @@ async def _approve_claim(
             ),
         )
 
+        # Keep the audit entry and in-app notification in this atomic D1 batch.
+        await transaction.execute(
+            """
+            INSERT INTO audit_log (
+                actor_user_id, action, entity_type, entity_id, details, created_at
+            )
+            SELECT ?, 'seller_claim_approved', 'seller_claim', ?, NULL, ?
+            WHERE EXISTS (
+                SELECT 1 FROM seller_claims
+                WHERE id = ? AND status = 'APPROVED' AND updated_at = ?
+            )
+              AND EXISTS (
+                SELECT 1 FROM sellers
+                WHERE id = ? AND status = 'CLAIMED' AND owner_user_id = ?
+            );
+            """,
+            (
+                admin_user_id,
+                claim_id,
+                now,
+                claim_id,
+                now,
+                seller_id,
+                claimant_user_id,
+            ),
+        )
+
+        await transaction.execute(
+            """
+            INSERT INTO notifications (
+                user_id, title, message, notification_type, is_read, created_at
+            )
+            SELECT ?, ?, ?, 'info', 0, ?
+            WHERE EXISTS (
+                SELECT 1 FROM seller_claims
+                WHERE id = ? AND status = 'APPROVED' AND updated_at = ?
+            )
+              AND EXISTS (
+                SELECT 1 FROM sellers
+                WHERE id = ? AND status = 'CLAIMED' AND owner_user_id = ?
+            );
+            """,
+            (
+                claimant_user_id,
+                "مالکیت فروشگاه",
+                "✅ درخواست مالکیت فروشگاهت تأیید شد. از این به بعد می‌تونی فروشگاه رو مدیریت کنی.",
+                now,
+                claim_id,
+                now,
+                seller_id,
+                claimant_user_id,
+            ),
+        )
+
     # The transaction has now committed. Verify persisted state instead
     # of assuming that queued UPDATE statements changed rows.
     final_claim = await db.fetchone(
         """
-        SELECT status, seller_id, user_id
+        SELECT status, seller_id, user_id, updated_at
         FROM seller_claims
         WHERE id = ?
         LIMIT 1;
@@ -906,6 +961,9 @@ async def _approve_claim(
         return False
 
     if str(final_claim["status"] or "").upper() != "APPROVED":
+        return False
+
+    if final_claim.get("updated_at") != now:
         return False
 
     if (
@@ -941,23 +999,80 @@ async def _approve_claim(
 async def _reject_claim(
     db: Any,
     claim_id: int,
+    admin_user_id: int,
 ) -> bool:
-    result = await db.execute(
-        """
-        UPDATE seller_claims
-        SET
-            status = 'REJECTED',
-            updated_at = ?
-        WHERE id = ?
-          AND status = 'PENDING';
-        """,
-        (
-            _now_iso(),
-            claim_id,
-        ),
-    )
+    """Reject a pending claim with audit and notification in one D1 batch."""
+    now = datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
-    return result.rowcount == 1
+    async with db.transaction() as transaction:
+        claim = await transaction.fetchone(
+            """
+            SELECT user_id, status
+            FROM seller_claims
+            WHERE id = ?
+            LIMIT 1;
+            """,
+            (claim_id,),
+        )
+
+        if claim is None or str(claim.get("status") or "").upper() != "PENDING":
+            return False
+
+        claimant_user_id = int(claim["user_id"])
+
+        await transaction.execute(
+            """
+            UPDATE seller_claims
+            SET status = 'REJECTED', updated_at = ?
+            WHERE id = ? AND status = 'PENDING';
+            """,
+            (now, claim_id),
+        )
+
+        await transaction.execute(
+            """
+            INSERT INTO audit_log (
+                actor_user_id, action, entity_type, entity_id, details, created_at
+            )
+            SELECT ?, 'seller_claim_rejected', 'seller_claim', ?, NULL, ?
+            WHERE EXISTS (
+                SELECT 1 FROM seller_claims
+                WHERE id = ? AND status = 'REJECTED' AND updated_at = ?
+            );
+            """,
+            (admin_user_id, claim_id, now, claim_id, now),
+        )
+
+        await transaction.execute(
+            """
+            INSERT INTO notifications (
+                user_id, title, message, notification_type, is_read, created_at
+            )
+            SELECT ?, ?, ?, 'info', 0, ?
+            WHERE EXISTS (
+                SELECT 1 FROM seller_claims
+                WHERE id = ? AND status = 'REJECTED' AND updated_at = ?
+            );
+            """,
+            (
+                claimant_user_id,
+                "مالکیت فروشگاه",
+                "❌ درخواست مالکیت فروشگاهت رد شد. اگر مدرک یا توضیح بیشتری داری، می‌تونی دوباره درخواست ثبت کنی.",
+                now,
+                claim_id,
+                now,
+            ),
+        )
+
+    final_claim = await db.fetchone(
+        "SELECT status, updated_at FROM seller_claims WHERE id = ? LIMIT 1;",
+        (claim_id,),
+    )
+    return bool(
+        final_claim
+        and str(final_claim.get("status") or "").upper() == "REJECTED"
+        and final_claim.get("updated_at") == now
+    )
 
 
 async def handle_seller_claim_decision(
@@ -1048,9 +1163,9 @@ async def handle_seller_claim_decision(
     )
 
     if action == "approve":
-        updated = await _approve_claim(db, claim_id)
+        updated = await _approve_claim(db, claim_id, admin_user_id)
     else:
-        updated = await _reject_claim(db, claim_id)
+        updated = await _reject_claim(db, claim_id, admin_user_id)
 
     if not updated:
         await _answer_callback(
@@ -1064,35 +1179,9 @@ async def handle_seller_claim_decision(
         )
         return
 
-    await _audit(
-        db,
-        admin_user_id,
-        f"seller_claim_{action}d",
-        claim_id,
-    )
-
     if action == "approve":
-        await _notify_user(
-            db,
-            claim["user_id"],
-            "مالکیت فروشگاه",
-            (
-                "✅ درخواست مالکیت فروشگاهت تأیید شد. "
-                "از این به بعد می‌تونی فروشگاه رو مدیریت کنی."
-            ),
-        )
         answer_text = "✅ مالکیت فروشگاه با موفقیت تأیید شد."
     else:
-        await _notify_user(
-            db,
-            claim["user_id"],
-            "مالکیت فروشگاه",
-            (
-                "❌ درخواست مالکیت فروشگاهت رد شد. "
-                "اگر مدرک یا توضیح بیشتری داری، "
-                "می‌تونی دوباره درخواست ثبت کنی."
-            ),
-        )
         answer_text = "❌ درخواست مالکیت رد شد."
 
     await _answer_callback(
