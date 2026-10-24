@@ -1,10 +1,11 @@
+
 # -*- coding: utf-8 -*-
 """
 ArzanKadeh AI
-Shared advertisement lookup and rendering helpers for Cloudflare Workers.
+Advertisement lookup and delivery helpers for Cloudflare Workers.
 
-Reads active advertisements from the existing D1 requests table.
-Does not create tables, change request statuses, or send Telegram messages.
+Only reads existing D1 advertisement requests.
+Never activates, approves, or modifies advertisements.
 """
 
 from __future__ import annotations
@@ -54,7 +55,6 @@ def _normalize_text(value: Any) -> str:
         return ""
 
     text = str(value).strip().lower()
-
     text = (
         text
         .replace("ي", "ی")
@@ -71,21 +71,13 @@ def _positive_limit(value: Any) -> int:
     except (TypeError, ValueError, OverflowError):
         return DEFAULT_AD_LIMIT
 
-    if limit < 1:
-        return 1
-
-    return min(limit, MAX_AD_LIMIT)
+    return max(1, min(limit, MAX_AD_LIMIT))
 
 
 def _placement_matches(
     stored_placement: Any,
     requested_placement: str,
 ) -> bool:
-    """
-    Match a stored placement against a supported placement.
-    Unknown or blank placements are not displayed.
-    """
-
     if requested_placement not in PLACEMENT_ALIASES:
         return False
 
@@ -99,28 +91,12 @@ def _placement_matches(
         for alias in PLACEMENT_ALIASES[requested_placement]
     }
 
-    aliases.add(
-        _normalize_text(requested_placement)
-    )
+    aliases.add(_normalize_text(requested_placement))
 
-    for alias in aliases:
-        if not alias:
-            continue
-
-        if placement == alias:
-            return True
-
-        if len(alias) >= 5 and alias in placement:
-            return True
-
-    return False
+    return placement in aliases
 
 
-def _safe_http_url(
-    value: Any,
-) -> Optional[str]:
-    """Accept only absolute HTTP(S) URLs without embedded credentials."""
-
+def _safe_http_url(value: Any) -> Optional[str]:
     if value is None:
         return None
 
@@ -134,19 +110,13 @@ def _safe_http_url(
     except ValueError:
         return None
 
-    if parsed.scheme.lower() not in {
-        "http",
-        "https",
-    }:
+    if parsed.scheme.lower() not in {"http", "https"}:
         return None
 
-    if not parsed.netloc:
+    if not parsed.hostname or parsed.username is not None:
         return None
 
-    if (
-        parsed.username is not None
-        or parsed.password is not None
-    ):
+    if parsed.password is not None:
         return None
 
     return url
@@ -159,10 +129,10 @@ async def get_active_ads(
     limit: int = DEFAULT_AD_LIMIT,
 ) -> list[dict[str, Any]]:
     """
-    Return active, unexpired advertisements for a supported placement.
+    Return active, unexpired ads for a supported placement.
 
-    Only reads existing rows from requests.
-    Does not activate approved ads or mutate records.
+    Uses SQLite's date parser instead of lexical timestamp comparison.
+    Does not change request statuses or create database records.
     """
 
     if placement not in PLACEMENT_ALIASES:
@@ -179,17 +149,15 @@ async def get_active_ads(
           AND status = 'ACTIVE'
           AND ad_expires_at IS NOT NULL
           AND TRIM(ad_expires_at) <> ''
-          AND ad_expires_at > ?
+          AND julianday(ad_expires_at) > julianday(?)
           AND ad_placement IS NOT NULL
           AND TRIM(ad_placement) <> ''
-        ORDER BY ad_expires_at ASC, id ASC
-        LIMIT ?;
+        ORDER BY julianday(ad_expires_at) ASC, id ASC;
         """,
         (
             ACTIVE_AD_REQUEST_TYPES[0],
             ACTIVE_AD_REQUEST_TYPES[1],
             now,
-            MAX_AD_LIMIT * 10,
         ),
     )
 
@@ -216,8 +184,6 @@ async def get_active_ads(
 def get_ad_image_url(
     ad: dict[str, Any],
 ) -> Optional[str]:
-    """Return a validated image URL, if one was saved."""
-
     return _safe_http_url(
         ad.get("ad_image_url")
     )
@@ -226,8 +192,6 @@ def get_ad_image_url(
 def get_ad_link_url(
     ad: dict[str, Any],
 ) -> Optional[str]:
-    """Return a validated destination URL, if one was saved."""
-
     return _safe_http_url(
         ad.get("ad_link") or ad.get("link")
     )
@@ -238,50 +202,118 @@ def render_ad_text(
 ) -> str:
     """Build an HTML-safe Telegram advertisement message."""
 
-    title = (
+    title = str(
         ad.get("ad_title")
         or ad.get("title")
         or ad.get("topic")
         or ""
-    )
+    ).strip()
 
-    description = (
+    description = str(
         ad.get("message")
         or ad.get("description")
         or ad.get("ad_description")
         or ""
-    )
+    ).strip()
 
-    title = str(title).strip()
-    description = str(description).strip()
-
-    lines = [
-        "📢 <b>تبلیغ</b>",
-    ]
+    lines = ["📢 <b>تبلیغ</b>"]
 
     if title:
-        lines.append(
-            f"\n<b>{escape(title)}</b>"
-        )
+        lines.append(f"\n<b>{escape(title)}</b>")
 
     if description:
-        lines.append(
-            f"\n{escape(description)}"
-        )
+        lines.append(f"\n{escape(description)}")
 
     link = get_ad_link_url(ad)
 
     if link:
-        safe_link = escape(
-            link,
-            quote=True,
-        )
-
+        safe_link = escape(link, quote=True)
         lines.append(
             f'\n\n<a href="{safe_link}">مشاهده تبلیغ</a>'
         )
 
     return "\n".join(lines)
+
+
+async def send_placement_ads(
+    db: Any,
+    telegram: Any,
+    chat_id: int,
+    placement: str,
+    *,
+    limit: int = 1,
+) -> int:
+    """
+    Send active ads to a Telegram chat.
+
+    An ad delivery failure must not interrupt the caller's main flow.
+    Returns the number of ads successfully sent.
+    """
+
+    try:
+        ads = await get_active_ads(
+            db,
+            placement,
+            limit=limit,
+        )
+    except Exception:
+        return 0
+
+    sent = 0
+
+    for ad in ads:
+        text = render_ad_text(ad)
+        image_url = get_ad_image_url(ad)
+
+        try:
+            if image_url:
+                caption = text
+
+                # Telegram photo captions have a smaller size limit
+                # than ordinary messages.
+                if len(caption) > 1024:
+                    caption = "📢 <b>تبلیغ</b>"
+
+                await telegram.call(
+                    "sendPhoto",
+                    {
+                        "chat_id": int(chat_id),
+                        "photo": image_url,
+                        "caption": caption,
+                        "parse_mode": "HTML",
+                    },
+                )
+
+                if len(text) > 1024:
+                    await telegram.send_message(
+                        int(chat_id),
+                        text,
+                        parse_mode="HTML",
+                    )
+            else:
+                await telegram.send_message(
+                    int(chat_id),
+                    text,
+                    parse_mode="HTML",
+                )
+
+            sent += 1
+
+        except Exception:
+            # A broken image URL or Telegram API error must not
+            # break the menu or search flow.
+            if image_url:
+                try:
+                    await telegram.send_message(
+                        int(chat_id),
+                        text,
+                        parse_mode="HTML",
+                    )
+                    sent += 1
+                except Exception:
+                    pass
+
+    return sent
 
 
 __all__ = [
@@ -292,4 +324,5 @@ __all__ = [
     "get_ad_image_url",
     "get_ad_link_url",
     "render_ad_text",
+    "send_placement_ads",
 ]
