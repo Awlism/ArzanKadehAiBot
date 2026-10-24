@@ -6,7 +6,7 @@ Cloudflare Worker Telegram webhook foundation.
 This module:
 - requires a configured Telegram webhook secret
 - validates the Telegram webhook secret
-- parses Telegram JSON updates
+- parses and validates Telegram JSON updates
 - identifies the update type
 
 It intentionally does not import aiogram.
@@ -43,7 +43,7 @@ class UnauthorizedWebhookError(WebhookError):
 
 
 class InvalidWebhookPayloadError(WebhookError):
-    """Raised when the webhook body is not a valid JSON object."""
+    """Raised when the webhook body is not a valid Telegram update."""
 
 
 def get_webhook_secret(
@@ -100,6 +100,19 @@ async def parse_webhook_update(
     if not isinstance(update, dict):
         raise InvalidWebhookPayloadError(
             "Telegram webhook update must be a JSON object."
+        )
+
+    update_id = update.get("update_id")
+
+    # Telegram update_id is an integer. Reject booleans explicitly because
+    # bool is a subclass of int in Python.
+    if (
+        isinstance(update_id, bool)
+        or not isinstance(update_id, int)
+        or update_id < 0
+    ):
+        raise InvalidWebhookPayloadError(
+            "Telegram webhook update must contain a valid update_id."
         )
 
     return update
