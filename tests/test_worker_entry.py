@@ -484,7 +484,7 @@ def _install_worker_module_stubs() -> list:
         if update_id in PROCESSED_UPDATE_IDS:
             return False
 
-        processed_update_ids.add(update_id)
+        PROCESSED_UPDATE_IDS.add(update_id)
         return True
 
     async def mark_update_processed(backend, update_id):
