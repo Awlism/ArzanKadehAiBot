@@ -32,6 +32,24 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SRC_ROOT = PROJECT_ROOT / "src"
 
+# Preserve modules that were loaded before this test file installs stubs.
+# This prevents the entry integration tests from leaking fake modules into
+# unrelated tests that need to import the real Worker implementation.
+_WORKER_MODULE_PREFIXES = (
+    "worker",
+    "worker_backend",
+    "workers",
+)
+
+_PREEXISTING_WORKER_MODULES = {
+    name: module
+    for name, module in sys.modules.items()
+    if any(
+        name == prefix or name.startswith(prefix + ".")
+        for prefix in _WORKER_MODULE_PREFIXES
+    )
+}
+
 
 def _install_module(
     name: str,
@@ -585,6 +603,24 @@ sys.modules["entry"] = entry
 
 entry_spec.loader.exec_module(
     entry
+)
+
+# entry.py now holds its own references to the stubs it imported.
+# Remove the temporary stub modules from the global import registry and
+# restore any real modules that existed before this test file ran.
+for _module_name in tuple(sys.modules):
+    if any(
+        _module_name == _prefix
+        or _module_name.startswith(_prefix + ".")
+        for _prefix in _WORKER_MODULE_PREFIXES
+    ):
+        sys.modules.pop(
+            _module_name,
+            None,
+        )
+
+sys.modules.update(
+    _PREEXISTING_WORKER_MODULES
 )
 
 
