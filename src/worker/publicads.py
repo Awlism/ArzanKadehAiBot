@@ -1150,6 +1150,27 @@ async def _finish_public_ad(
         ),
     )
 
+    await db.execute(
+        """
+        INSERT INTO notifications (
+            user_id,
+            title,
+            message,
+            notification_type,
+            is_read,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, 0, ?);
+        """,
+        (
+            user_id,
+            "درخواست تبلیغ ثبت شد",
+            "درخواست تبلیغ شما با موفقیت ثبت شد و در انتظار بررسی است.",
+            "info",
+            now,
+        ),
+    )
+
     if chat_id is not None:
         await _send(
             telegram,
