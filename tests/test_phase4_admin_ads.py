@@ -89,7 +89,17 @@ class AdminAdsWorkerTests(unittest.TestCase):
 
     def test_admin_authorization_exists(self):
         self.assertIn(
-            "ADMIN",
+            "def _is_admin(",
+            self.source,
+        )
+
+        self.assertIn(
+            "worker.admin_auth",
+            self.source,
+        )
+
+        self.assertIn(
+            "is_admin_user",
             self.source,
         )
 
