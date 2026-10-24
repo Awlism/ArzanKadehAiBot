@@ -916,41 +916,45 @@ async def handle_seller_favorite_add(
         )
         return
 
-    await db.execute(
-        """
-        INSERT OR IGNORE INTO seller_favorites (
-            user_id,
-            seller_id,
-            created_at
-        )
-        VALUES (?, ?, ?);
-        """,
-        (
-            int(user["id"]),
-            seller_id,
-            _now_iso(),
-        ),
-    )
+    favorite_created_at = _now_iso()
 
-    await db.execute(
-        """
-        INSERT INTO events (
-            user_id,
-            event_type,
-            entity_type,
-            entity_id,
-            created_at
+    async with db.transaction(immediate=True) as tx:
+        await tx.execute(
+            """
+            INSERT OR IGNORE INTO seller_favorites (
+                user_id,
+                seller_id,
+                created_at
+            )
+            VALUES (?, ?, ?);
+            """,
+            (
+                int(user["id"]),
+                seller_id,
+                favorite_created_at,
+            ),
         )
-        VALUES (?, ?, ?, ?, ?);
-        """,
-        (
-            int(user["id"]),
-            "favorite_add",
-            "seller",
-            seller_id,
-            _now_iso(),
-        ),
-    )
+
+        await tx.execute(
+            """
+            INSERT INTO events (
+                user_id,
+                event_type,
+                entity_type,
+                entity_id,
+                created_at
+            )
+            SELECT ?, ?, ?, ?, ?
+            WHERE changes() = 1;
+            """,
+            (
+                int(user["id"]),
+                "favorite_add",
+                "seller",
+                seller_id,
+                favorite_created_at,
+            ),
+        )
 
     await _render_seller_detail(
         db,
