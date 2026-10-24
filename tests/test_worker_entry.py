@@ -412,45 +412,72 @@ def _install_worker_module_stubs() -> list:
             module,
         )
 
-    state_module = types.ModuleType(
-        "worker.state"
-    )
+    state_module = types.ModuleType("worker.state")
 
-    async def ensure_state_table(
+    processed_update_ids = set()
+
+    async def ensure_state_table(backend):
+        handler_calls.append({
+            "name": "ensure_state_table",
+            "args": (backend,),
+            "kwargs": {},
+        })
+
+    async def clear_state(backend, user_id):
+        handler_calls.append({
+            "name": "clear_state",
+            "args": (backend, user_id),
+            "kwargs": {},
+        })
+
+    async def ensure_processed_updates_table(backend):
+        handler_calls.append({
+            "name": "ensure_processed_updates_table",
+            "args": (backend,),
+            "kwargs": {},
+        })
+
+    async def claim_update(
         backend,
+        update_id,
+        lease_seconds=300,
     ):
-        handler_calls.append(
-            {
-                "name": "ensure_state_table",
-                "args": (
-                    backend,
-                ),
-                "kwargs": {},
-            }
-        )
+        handler_calls.append({
+            "name": "claim_update",
+            "args": (backend, update_id),
+            "kwargs": {"lease_seconds": lease_seconds},
+        })
 
-    async def clear_state(
-        backend,
-        user_id,
-    ):
-        handler_calls.append(
-            {
-                "name": "clear_state",
-                "args": (
-                    backend,
-                    user_id,
-                ),
-                "kwargs": {},
-            }
-        )
+        if update_id in processed_update_ids:
+            return False
 
-    state_module.ensure_state_table = (
-        ensure_state_table
+        processed_update_ids.add(update_id)
+        return True
+
+    async def mark_update_processed(backend, update_id):
+        handler_calls.append({
+            "name": "mark_update_processed",
+            "args": (backend, update_id),
+            "kwargs": {},
+        })
+
+    async def release_update_claim(backend, update_id):
+        processed_update_ids.discard(update_id)
+        handler_calls.append({
+            "name": "release_update_claim",
+            "args": (backend, update_id),
+            "kwargs": {},
+        })
+
+    state_module.ensure_state_table = ensure_state_table
+    state_module.clear_state = clear_state
+    state_module.ensure_processed_updates_table = (
+        ensure_processed_updates_table
     )
-
-    state_module.clear_state = (
-        clear_state
-    )
+    state_module.claim_update = claim_update
+    state_module.mark_update_processed = mark_update_processed
+    state_module.release_update_claim = release_update_claim
+    state_module.processed_update_ids = processed_update_ids
 
     _install_module(
         "worker.state",
