@@ -2442,8 +2442,7 @@ async def handle_search_message(
             0,
         ),
     )
-    
-    await _send(
+
     chat = message.get("chat") or {}
     chat_id = chat.get("id")
 
