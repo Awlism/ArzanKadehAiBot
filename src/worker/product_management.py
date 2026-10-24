@@ -1692,18 +1692,31 @@ async def _finish_product_add(
                     details,
                     created_at
                 )
-                VALUES (
+                SELECT
                     ?,
                     'product_created',
                     'product',
-                    last_insert_rowid(),
+                    p.id,
                     ?,
                     ?
-                );
+                FROM products AS p
+                WHERE changes() = 1
+                  AND p.seller_id = ?
+                  AND p.category_id IS ?
+                  AND p.name = ?
+                  AND p.created_at = ?
+                  AND p.updated_at = ?
+                ORDER BY p.id DESC
+                LIMIT 1;
                 """,
                 (
                     user_id,
                     name,
+                    now,
+                    seller_id,
+                    category_id,
+                    name,
+                    now,
                     now,
                 ),
             )
