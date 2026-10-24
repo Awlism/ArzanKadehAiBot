@@ -4,7 +4,7 @@
 ArzanKadeh AI
 Advertisement lookup and delivery helpers for Cloudflare Workers.
 
-Only reads existing D1 advertisement requests.
+Only displays active, unexpired public advertisements.
 Never activates, approves, or modifies advertisements.
 """
 
@@ -16,10 +16,7 @@ from typing import Any, Optional
 from urllib.parse import urlsplit
 
 
-ACTIVE_AD_REQUEST_TYPES = (
-    "ad",
-    "general_ad",
-)
+ACTIVE_AD_REQUEST_TYPES = ("general_ad",)
 
 DEFAULT_AD_LIMIT = 3
 MAX_AD_LIMIT = 10
@@ -45,9 +42,7 @@ PLACEMENT_ALIASES = {
 def _now_iso() -> str:
     return datetime.now(
         timezone.utc
-    ).isoformat(
-        timespec="seconds"
-    )
+    ).isoformat(timespec="seconds")
 
 
 def _normalize_text(value: Any) -> str:
@@ -90,7 +85,6 @@ def _placement_matches(
         _normalize_text(alias)
         for alias in PLACEMENT_ALIASES[requested_placement]
     }
-
     aliases.add(_normalize_text(requested_placement))
 
     return placement in aliases
@@ -113,10 +107,10 @@ def _safe_http_url(value: Any) -> Optional[str]:
     if parsed.scheme.lower() not in {"http", "https"}:
         return None
 
-    if not parsed.hostname or parsed.username is not None:
+    if not parsed.hostname:
         return None
 
-    if parsed.password is not None:
+    if parsed.username is not None or parsed.password is not None:
         return None
 
     return url
@@ -129,10 +123,9 @@ async def get_active_ads(
     limit: int = DEFAULT_AD_LIMIT,
 ) -> list[dict[str, Any]]:
     """
-    Return active, unexpired ads for a supported placement.
+    Return active, unexpired public ads for a supported placement.
 
-    Uses SQLite's date parser instead of lexical timestamp comparison.
-    Does not change request statuses or create database records.
+    Does not change statuses or create database records.
     """
 
     if placement not in PLACEMENT_ALIASES:
@@ -145,7 +138,7 @@ async def get_active_ads(
         """
         SELECT *
         FROM requests
-        WHERE request_type IN (?, ?)
+        WHERE request_type = ?
           AND status = 'ACTIVE'
           AND ad_expires_at IS NOT NULL
           AND TRIM(ad_expires_at) <> ''
@@ -156,7 +149,6 @@ async def get_active_ads(
         """,
         (
             ACTIVE_AD_REQUEST_TYPES[0],
-            ACTIVE_AD_REQUEST_TYPES[1],
             now,
         ),
     )
@@ -184,9 +176,7 @@ async def get_active_ads(
 def get_ad_image_url(
     ad: dict[str, Any],
 ) -> Optional[str]:
-    return _safe_http_url(
-        ad.get("ad_image_url")
-    )
+    return _safe_http_url(ad.get("ad_image_url"))
 
 
 def get_ad_link_url(
@@ -244,9 +234,9 @@ async def send_placement_ads(
     limit: int = 1,
 ) -> int:
     """
-    Send active ads to a Telegram chat.
+    Send active public ads to a Telegram chat.
 
-    An ad delivery failure must not interrupt the caller's main flow.
+    Delivery failures must not interrupt the main flow.
     Returns the number of ads successfully sent.
     """
 
@@ -269,8 +259,6 @@ async def send_placement_ads(
             if image_url:
                 caption = text
 
-                # Telegram photo captions have a smaller size limit
-                # than ordinary messages.
                 if len(caption) > 1024:
                     caption = "📢 <b>تبلیغ</b>"
 
@@ -300,8 +288,6 @@ async def send_placement_ads(
             sent += 1
 
         except Exception:
-            # A broken image URL or Telegram API error must not
-            # break the menu or search flow.
             if image_url:
                 try:
                     await telegram.send_message(
