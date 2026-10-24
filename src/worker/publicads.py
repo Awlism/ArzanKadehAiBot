@@ -967,50 +967,60 @@ async def _finish_public_ad(
 
                 await tx.execute(
                     """
-                    INSERT INTO requests (
-                        user_id,
-                        request_type,
-                        topic,
-                        message,
-                        status,
-                        created_at,
-                        updated_at,
-                        ad_kind,
-                        ad_title,
-                        ad_image_url,
-                        ad_link
+                    INSERT INTO audit_log (
+                        actor_user_id,
+                        action,
+                        entity_type,
+                        entity_id,
+                        details,
+                        created_at
                     )
                     SELECT
                         ?,
-                        'general_ad',
-                        ?,
-                        ?,
-                        'PENDING',
-                        ?,
-                        ?,
-                        ?,
-                        ?,
+                        'general_ad_request_created',
+                        'request',
+                        id,
                         ?,
                         ?
-                    WHERE NOT EXISTS (
-                        SELECT 1
-                        FROM requests
-                        WHERE user_id = ?
-                          AND request_type = 'general_ad'
-                          AND status = 'PENDING'
-                    );
+                    FROM requests
+                    WHERE id = last_insert_rowid()
+                      AND changes() = 1
+                      AND user_id = ?
+                      AND request_type = 'general_ad'
+                      AND status = 'PENDING'
+                      AND created_at = ?;
                     """,
                     (
                         user_id,
                         title.strip(),
-                        data.get("description"),
                         now,
-                        now,
-                        kind,
-                        title.strip(),
-                        data.get("image_url"),
-                        data.get("link"),
                         user_id,
+                        now,
+                    ),
+                )
+
+                await tx.execute(
+                    """
+                    INSERT INTO notifications (
+                        user_id,
+                        title,
+                        message,
+                        notification_type,
+                        is_read,
+                        created_at
+                    )
+                    SELECT
+                        ?,
+                        'درخواست تبلیغ ثبت شد',
+                        'درخواست تبلیغ شما با موفقیت ثبت شد و در انتظار بررسی است.',
+                        'info',
+                        0,
+                        ?
+                    WHERE changes() = 1;
+                    """,
+                    (
+                        user_id,
+                        now,
                     ),
                 )
 
