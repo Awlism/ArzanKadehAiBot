@@ -639,55 +639,36 @@ async def _finish_registration(
 
             await tx.execute(
                 """
-                INSERT INTO sellers (
-                    name,
-                    description,
-                    city_id,
-                    instagram,
-                    telegram,
-                    website,
-                    owner_user_id,
-                    created_by_user_id,
-                    status,
-                    is_active,
-                    rating,
-                    review_count,
-                    views,
-                    created_at,
-                    updated_at
+                INSERT INTO audit_log (
+                    actor_user_id,
+                    action,
+                    entity_type,
+                    entity_id,
+                    details,
+                    created_at
                 )
                 SELECT
-                    ?, ?, ?, ?, ?, ?, ?, ?,
-                    'UNCLAIMED',
-                    1,
-                    0,
-                    0,
-                    0,
                     ?,
+                    'seller_created',
+                    'seller',
+                    id,
+                    NULL,
                     ?
-                WHERE NOT EXISTS (
-                    SELECT 1
-                    FROM sellers
-                    WHERE (
-                        owner_user_id = ?
-                        OR created_by_user_id = ?
-                    )
-                    AND status != 'REJECTED'
-                );
+                FROM sellers
+                WHERE id = last_insert_rowid()
+                  AND changes() > 0
+                  AND created_by_user_id = ?
+                  AND created_at = ?
+                  AND name = ?
+                  AND city_id = ?;
                 """,
                 (
+                    user_id,
+                    now,
+                    user_id,
+                    now,
                     name,
-                    description,
                     city_id,
-                    instagram,
-                    telegram_username,
-                    website,
-                    user_id,
-                    user_id,
-                    now,
-                    now,
-                    user_id,
-                    user_id,
                 ),
             )
 
@@ -715,6 +696,20 @@ async def _finish_registration(
                 "⚠️ شما قبلاً یک فروشگاه ثبت کرده‌اید.",
             )
             return
+            
+        audit_result = (
+            results[1]
+            if len(results) > 1
+            else None
+        )
+
+        if (
+            audit_result is None
+            or audit_result.rowcount != 1
+        ):
+            raise RuntimeError(
+                "Seller registration audit result is missing."
+            )
 
         seller_id = (
             insert_result.lastrowid
@@ -770,27 +765,6 @@ async def _finish_registration(
         user_id,
     )
 
-    await db.execute(
-        """
-        INSERT INTO audit_log (
-            actor_user_id,
-            action,
-            entity_type,
-            entity_id,
-            details,
-            created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?);
-        """,
-        (
-            user_id,
-            "seller_created",
-            "seller",
-            seller_id,
-            None,
-            now,
-        ),
-    )
 
     await _send(
         telegram,
