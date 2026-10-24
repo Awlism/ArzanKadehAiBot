@@ -364,6 +364,7 @@ async def record_referral_if_new(
     owner_user_id = _parse_id(
         seller.get("owner_user_id")
     )
+
     created_by_user_id = _parse_id(
         seller.get("created_by_user_id")
     )
@@ -374,37 +375,100 @@ async def record_referral_if_new(
     ):
         return False
 
-    existing = await db.fetchone(
-        """
-        SELECT id
-        FROM referrals
-        WHERE referred_user_id = ?
-        LIMIT 1;
-        """,
-        (referred_user_id,),
-    )
-
-    if existing is not None:
-        return False
+    now = _now_iso()
 
     try:
-        await db.execute(
-            """
-            INSERT INTO referrals (
-                seller_id,
-                referred_user_id,
-                source,
-                created_at
+        async with db.transaction(
+            immediate=True
+        ) as tx:
+            existing = await tx.fetchone(
+                """
+                SELECT id
+                FROM referrals
+                WHERE referred_user_id = ?
+                LIMIT 1;
+                """,
+                (referred_user_id,),
             )
-            VALUES (?, ?, ?, ?);
-            """,
-            (
-                seller_id,
-                referred_user_id,
-                REFERRAL_SOURCE,
-                _now_iso(),
-            ),
+
+            if existing is not None:
+                return False
+
+            await tx.execute(
+                """
+                INSERT INTO referrals (
+                    seller_id,
+                    referred_user_id,
+                    source,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?);
+                """,
+                (
+                    seller_id,
+                    referred_user_id,
+                    REFERRAL_SOURCE,
+                    now,
+                ),
+            )
+
+            if owner_user_id is not None:
+                await tx.execute(
+                    """
+                    INSERT INTO notifications (
+                        user_id,
+                        title,
+                        message,
+                        notification_type,
+                        is_read,
+                        created_at
+                    )
+                    SELECT
+                        ?,
+                        '🎉 معرفی جدید',
+                        'یک کاربر جدید از طریق لینک اختصاصی فروشگاه شما وارد ارزانکده شد!',
+                        'referral',
+                        0,
+                        ?
+                    WHERE changes() = 1;
+                    """,
+                    (
+                        owner_user_id,
+                        now,
+                    ),
+                )
+
+        results = tx.results
+
+        referral_result = (
+            results[0]
+            if results
+            else None
         )
+
+        if (
+            referral_result is None
+            or referral_result.rowcount != 1
+        ):
+            return False
+
+        if owner_user_id is not None:
+            notification_result = (
+                results[1]
+                if len(results) > 1
+                else None
+            )
+
+            if (
+                notification_result is None
+                or notification_result.rowcount != 1
+            ):
+                raise RuntimeError(
+                    "Referral notification insert failed."
+                )
+
+        return True
+
     except Exception as exc:
         message = str(exc).lower()
 
@@ -415,8 +479,6 @@ async def record_referral_if_new(
             return False
 
         raise
-
-    return True
 
 
 async def handle_referral_list(
