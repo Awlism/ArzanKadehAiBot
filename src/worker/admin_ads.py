@@ -1263,8 +1263,7 @@ async def handle_admin_ad_placement_start(
         callback_query,
         env,
         "ad_placement",
-        "📍 محل نمایش رو بنویس؛ مثلاً «صفحه اصلی» یا «نتایج جستجو»:",
-    )
+        "📍 جایگاه را انتخاب کن و دقیقاً یکی از این دو عبارت را بفرست:\n۱) صفحه اصلی\n۲) نتایج جستجو",
 
 
 async def handle_admin_ad_message(
@@ -1400,24 +1399,44 @@ async def handle_admin_ad_message(
 
         audit_action = "ad_duration_set"
 
+
     else:
-        if not value_text:
+        normalized_placement = (
+            value_text
+            .replace("ي", "ی")
+            .replace("ك", "ک")
+            .replace("\u200c", " ")
+        )
+        normalized_placement = " ".join(
+            normalized_placement.lower().split()
+        )
+
+        placement_choices = {
+            "صفحه اصلی": "صفحه اصلی",
+            "صفحه‌اصلی": "صفحه اصلی",
+            "خانه": "صفحه اصلی",
+            "home": "صفحه اصلی",
+            "main": "صفحه اصلی",
+            "نتایج جستجو": "نتایج جستجو",
+            "نتایج جست‌وجو": "نتایج جستجو",
+            "جستجو": "نتایج جستجو",
+            "جست‌وجو": "نتایج جستجو",
+            "search": "نتایج جستجو",
+        }
+
+        value = placement_choices.get(normalized_placement)
+
+        if value is None:
             await _send(
                 telegram,
                 chat_id,
-                "⚠️ لطفاً محل نمایش رو وارد کن.",
+                (
+                    "⚠️ جایگاه معتبر نیست. فقط یکی از این دو عبارت را بفرست:\n"
+                    "• صفحه اصلی\n"
+                    "• نتایج جستجو"
+                ),
             )
             return True
-
-        if len(value_text) > 200:
-            await _send(
-                telegram,
-                chat_id,
-                "⚠️ محل نمایش خیلی طولانیه؛ حداکثر ۲۰۰ کاراکتر.",
-            )
-            return True
-
-        value = value_text
 
         success_text = (
             f"✅ محل نمایش درخواست #{request_id} ثبت شد: "
@@ -1425,6 +1444,7 @@ async def handle_admin_ad_message(
         )
 
         audit_action = "ad_placement_set"
+
 
     await clear_state(
         db,
