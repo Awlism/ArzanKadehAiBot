@@ -639,6 +639,46 @@ async def _finish_registration(
 
             await tx.execute(
                 """
+                INSERT INTO sellers (
+                    name,
+                    description,
+                    city_id,
+                    instagram,
+                    telegram,
+                    website,
+                    created_by_user_id,
+                    created_at,
+                    updated_at
+                )
+                SELECT
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM sellers
+                    WHERE (
+                        owner_user_id = ?
+                        OR created_by_user_id = ?
+                    )
+                    AND status != 'REJECTED'
+                );
+                """,
+                (
+                    name,
+                    description or None,
+                    city_id,
+                    _instagram_url(instagram),
+                    _telegram_url(telegram_username),
+                    _website_url(website),
+                    user_id,
+                    now,
+                    now,
+                    user_id,
+                    user_id,
+                ),
+            )
+
+            await tx.execute(
+                """
                 INSERT INTO audit_log (
                     actor_user_id,
                     action,
@@ -655,12 +695,13 @@ async def _finish_registration(
                     NULL,
                     ?
                 FROM sellers
-                WHERE id = last_insert_rowid()
-                  AND changes() > 0
+                WHERE changes() = 1
                   AND created_by_user_id = ?
                   AND created_at = ?
                   AND name = ?
-                  AND city_id = ?;
+                  AND city_id = ?
+                ORDER BY id DESC
+                LIMIT 1;
                 """,
                 (
                     user_id,
