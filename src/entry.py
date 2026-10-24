@@ -36,7 +36,14 @@ from worker.start import (
 )
 from worker.messages import handle_message
 from worker.telegram import TelegramClient
-from worker.state import clear_state, ensure_state_table
+from worker.state import (
+    clear_state,
+    ensure_state_table,
+    ensure_processed_updates_table,
+    claim_update,
+    mark_update_processed,
+    release_update_claim,
+)
 
 from worker.categories import handle_category
 
@@ -536,6 +543,9 @@ class Default(WorkerEntrypoint):
                 status=400,
             )
 
+        # The parser validates that update_id is a non-negative integer.
+        update_id = update["update_id"]
+
         d1_backend = D1Backend(self.env.DB)
 
         backend.set_backend(d1_backend)
@@ -545,6 +555,29 @@ class Default(WorkerEntrypoint):
         await ensure_state_table(
             backend
         )
+
+        # Ensure the persistent deduplication table exists before claiming
+        # this update. The claim operation is atomic in D1.
+        await ensure_processed_updates_table(
+            backend
+        )
+
+        claimed = await claim_update(
+            backend,
+            update_id,
+        )
+
+        # Telegram can retry the same update when it doesn't receive a
+        # successful response. If this update is already processed, or
+        # another request currently owns its claim, acknowledge it without
+        # dispatching the handlers again.
+        if not claimed:
+            return Response(
+                build_webhook_response_body(
+                    detect_update_type(update)
+                ),
+                status=200,
+            )
 
         update_type = detect_update_type(update)
 
@@ -589,7 +622,22 @@ class Default(WorkerEntrypoint):
                 callback_handler
             )
 
-        await router.dispatch(update)
+        try:
+            await router.dispatch(update)
+        except Exception:
+            # If dispatch fails, release the claim so a Telegram retry can
+            # attempt the update again instead of being treated as complete.
+            await release_update_claim(
+                backend,
+                update_id,
+            )
+            raise
+
+        # Mark the update as complete only after dispatch succeeds.
+        await mark_update_processed(
+            backend,
+            update_id,
+        )
 
         body = build_webhook_response_body(
             update_type
