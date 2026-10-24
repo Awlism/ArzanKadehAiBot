@@ -869,11 +869,8 @@ class IdentityOwnershipTests(
                 "telegram_id": 10,
             },
             {
-                "id": 20,
-                "seller_id": 30,
-                "seller_name": "Test",
-                "seller_status": "ACTIVE",
-                "city_name": "Tehran",
+                "id": 10,
+                "telegram_id": 10,
             },
         ]
 
