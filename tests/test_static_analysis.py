@@ -698,32 +698,77 @@ class WorkerDatabaseUsageTests(unittest.TestCase):
     def test_worker_modules_do_not_call_sqlite_apis(self):
         violations = []
 
-        for path in _python_files(
-            WORKER_PATH
-        ):
-            source = path.read_text(
-                encoding="utf-8"
-            )
+        forbidden_modules = {
+            "sqlite3",
+            "aiosqlite",
+            "sqlite_backend",
+        }
 
-            forbidden = (
-                "sqlite3.",
-                "aiosqlite.",
-                "sqlite_backend",
-                "bot.database",
-            )
-
-            for token in forbidden:
-                if token in source:
-                    violations.append(
-                        (
-                            str(
-                                path.relative_to(
-                                    PROJECT_ROOT
-                                )
-                            ),
-                            token,
-                        )
+        for path in _python_files(WORKER_PATH):
+            try:
+                tree = ast.parse(
+                    path.read_text(encoding="utf-8"),
+                    filename=str(path),
+                )
+            except SyntaxError as exc:
+                violations.append(
+                    (
+                        str(path.relative_to(PROJECT_ROOT)),
+                        str(exc),
                     )
+                )
+                continue
+
+            relative_path = str(
+                path.relative_to(PROJECT_ROOT)
+            )
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        root_module = alias.name.split(".", 1)[0]
+
+                        if root_module in forbidden_modules:
+                            violations.append(
+                                (relative_path, alias.name)
+                            )
+
+                elif isinstance(node, ast.ImportFrom):
+                    module = node.module or ""
+                    root_module = module.split(".", 1)[0]
+
+                    if root_module in forbidden_modules:
+                        violations.append(
+                            (relative_path, module)
+                        )
+
+                    if module == "bot.database":
+                        violations.append(
+                            (relative_path, module)
+                        )
+
+                elif isinstance(node, ast.Call):
+                    current = node.func
+                    parts = []
+
+                    while isinstance(current, ast.Attribute):
+                        parts.append(current.attr)
+                        current = current.value
+
+                    if isinstance(current, ast.Name):
+                        parts.append(current.id)
+
+                    call_name = ".".join(reversed(parts))
+
+                    if (
+                        call_name.startswith("sqlite3.")
+                        or call_name.startswith("aiosqlite.")
+                        or call_name.startswith("sqlite_backend.")
+                        or call_name.startswith("bot.database.")
+                    ):
+                        violations.append(
+                            (relative_path, call_name)
+                        )
 
         self.assertFalse(
             violations,
