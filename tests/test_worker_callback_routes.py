@@ -164,76 +164,47 @@ class CallbackRouteContractTests(
     def _route_contracts(cls):
         contracts = []
 
-        for node in ast.walk(
-            cls.callback_function
-        ):
-            if not isinstance(
-                node,
-                ast.If,
+        def extract_routes(test):
+            if isinstance(test, ast.BoolOp) and isinstance(
+                test.op, ast.Or
             ):
-                continue
-
-            test = node.test
-
-            route = None
-            route_kind = None
+                routes = []
+                for value in test.values:
+                    routes.extend(extract_routes(value))
+                return routes
 
             if (
-                isinstance(
-                    test,
-                    ast.Call,
-                )
-                and isinstance(
-                    test.func,
-                    ast.Attribute,
-                )
-                and test.func.attr
-                == "startswith"
+                isinstance(test, ast.Call)
+                and isinstance(test.func, ast.Attribute)
+                and isinstance(test.func.value, ast.Name)
+                and test.func.value.id == "data"
+                and test.func.attr == "startswith"
                 and len(test.args) == 1
-                and isinstance(
-                    test.args[0],
-                    ast.Constant,
-                )
-                and isinstance(
-                    test.args[0].value,
-                    str,
-                )
+                and isinstance(test.args[0], ast.Constant)
+                and isinstance(test.args[0].value, str)
             ):
-                route = test.args[0].value
-                route_kind = "startswith"
+                return [(test.args[0].value, "startswith")]
 
-            elif (
-                isinstance(
-                    test,
-                    ast.Compare,
-                )
+            if (
+                isinstance(test, ast.Compare)
+                and isinstance(test.left, ast.Name)
+                and test.left.id == "data"
                 and len(test.ops) == 1
-                and isinstance(
-                    test.ops[0],
-                    ast.Eq,
-                )
+                and isinstance(test.ops[0], ast.Eq)
                 and len(test.comparators) == 1
-                and isinstance(
-                    test.comparators[0],
-                    ast.Constant,
-                )
-                and isinstance(
-                    test.comparators[0].value,
-                    str,
-                )
+                and isinstance(test.comparators[0], ast.Constant)
+                and isinstance(test.comparators[0].value, str)
             ):
-                left = test.left
+                return [(test.comparators[0].value, "equals")]
 
-                if isinstance(
-                    left,
-                    ast.Name,
-                ) and left.id == "data":
-                    route = (
-                        test.comparators[0].value
-                    )
-                    route_kind = "equals"
+            return []
 
-            if route is None:
+        for node in ast.walk(cls.callback_function):
+            if not isinstance(node, ast.If):
+                continue
+
+            routes = extract_routes(node.test)
+            if not routes:
                 continue
 
             handler_names = []
@@ -244,40 +215,27 @@ class CallbackRouteContractTests(
                     type_ignores=[],
                 )
             ):
-                if not isinstance(
-                    child,
-                    ast.Await,
-                ):
+                if not isinstance(child, ast.Await):
                     continue
 
                 call = child.value
-
-                if not isinstance(
-                    call,
-                    ast.Call,
-                ):
+                if not isinstance(call, ast.Call):
                     continue
 
-                if not isinstance(
-                    call.func,
-                    ast.Name,
-                ):
+                if not isinstance(call.func, ast.Name):
                     continue
 
-                handler_names.append(
-                    call.func.id
-                )
+                handler_names.append(call.func.id)
 
-            contracts.append(
-                (
-                    route,
-                    route_kind,
-                    tuple(
-                        handler_names
-                    ),
-                    node.lineno,
+            for route, route_kind in routes:
+                contracts.append(
+                    (
+                        route,
+                        route_kind,
+                        tuple(handler_names),
+                        node.lineno,
+                    )
                 )
-            )
 
         return contracts
 
