@@ -742,16 +742,35 @@ class MessagesStateDispatchTests(
             "updated_at": "2026-10-06T20:00:00+00:00",
         }
 
+        env = object()
+
         result = run(
             self.messages.handle_message(
                 self._message(),
                 self.telegram,
+                env=env,
             )
         )
 
         self.assertEqual(
             result,
             "handle_support_text",
+        )
+
+        support_calls = [
+            call
+            for call in HANDLER_CALLS
+            if call["name"] == "handle_support_text"
+        ]
+
+        self.assertEqual(
+            len(support_calls),
+            1,
+        )
+
+        self.assertIs(
+            support_calls[0]["kwargs"].get("env"),
+            env,
         )
 
     def test_public_ad_state_dispatches(self):
