@@ -25,39 +25,18 @@ class SellerClaimsModuleTests(unittest.TestCase):
         )
 
     def test_module_has_no_legacy_runtime_dependencies(self):
-        source = inspect.getsource(
-            seller_claims
-        )
+        source = inspect.getsource(seller_claims)
 
-        self.assertNotIn(
+        for forbidden in (
             "from aiogram",
-            source,
-        )
-
-        self.assertNotIn(
             "import aiogram",
-            source,
-        )
-
-        self.assertNotIn(
             "import aiosqlite",
-            source,
-        )
-
-        self.assertNotIn(
             "from bot",
-            source,
-        )
-
-        self.assertNotIn(
             "import bot",
-            source,
-        )
-
-        self.assertNotIn(
             "sqlite3",
-            source,
-        )
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, source)
 
 
 class SellerClaimsPublicApiTests(unittest.TestCase):
@@ -70,23 +49,9 @@ class SellerClaimsPublicApiTests(unittest.TestCase):
         )
 
         for name in expected:
-            self.assertTrue(
-                hasattr(
-                    seller_claims,
-                    name,
-                ),
-                f"Missing Worker handler: {name}",
-            )
-
-            self.assertTrue(
-                callable(
-                    getattr(
-                        seller_claims,
-                        name,
-                    )
-                ),
-                f"Worker handler is not callable: {name}",
-            )
+            with self.subTest(handler=name):
+                self.assertTrue(hasattr(seller_claims, name))
+                self.assertTrue(callable(getattr(seller_claims, name)))
 
     def test_public_api_matches_all(self):
         self.assertEqual(
@@ -102,300 +67,165 @@ class SellerClaimsPublicApiTests(unittest.TestCase):
 
 class SellerClaimsConfigurationTests(unittest.TestCase):
     def test_page_size_is_positive(self):
-        self.assertGreater(
-            seller_claims.PAGE_SIZE,
-            0,
-        )
+        self.assertGreater(seller_claims.PAGE_SIZE, 0)
 
     def test_page_size_is_integer(self):
-        self.assertIsInstance(
-            seller_claims.PAGE_SIZE,
-            int,
-        )
+        self.assertIsInstance(seller_claims.PAGE_SIZE, int)
 
 
 class SellerClaimsCallbackContractTests(unittest.TestCase):
     def test_claim_handler_accepts_worker_dependencies(self):
-        signature = inspect.signature(
-            seller_claims.handle_claim
-        )
-
-        parameters = list(
-            signature.parameters
-        )
-
         self.assertEqual(
-            parameters,
-            [
-                "db",
-                "telegram",
-                "callback_query",
-                "env",
-            ],
+            list(inspect.signature(seller_claims.handle_claim).parameters),
+            ["db", "telegram", "callback_query", "env"],
         )
 
     def test_admin_list_handler_accepts_worker_dependencies(self):
-        signature = inspect.signature(
-            seller_claims.handle_seller_claims_admin
-        )
-
-        parameters = list(
-            signature.parameters
-        )
-
         self.assertEqual(
-            parameters,
-            [
-                "db",
-                "telegram",
-                "callback_query",
-                "env",
-            ],
+            list(
+                inspect.signature(
+                    seller_claims.handle_seller_claims_admin
+                ).parameters
+            ),
+            ["db", "telegram", "callback_query", "env"],
         )
 
     def test_detail_handler_accepts_worker_dependencies(self):
-        signature = inspect.signature(
-            seller_claims.handle_seller_claim_detail
-        )
-
-        parameters = list(
-            signature.parameters
-        )
-
         self.assertEqual(
-            parameters,
-            [
-                "db",
-                "telegram",
-                "callback_query",
-                "env",
-            ],
+            list(
+                inspect.signature(
+                    seller_claims.handle_seller_claim_detail
+                ).parameters
+            ),
+            ["db", "telegram", "callback_query", "env"],
         )
 
     def test_decision_handler_accepts_worker_dependencies(self):
-        signature = inspect.signature(
-            seller_claims.handle_seller_claim_decision
-        )
-
-        parameters = list(
-            signature.parameters
-        )
-
         self.assertEqual(
-            parameters,
-            [
-                "db",
-                "telegram",
-                "callback_query",
-                "env",
-            ],
+            list(
+                inspect.signature(
+                    seller_claims.handle_seller_claim_decision
+                ).parameters
+            ),
+            ["db", "telegram", "callback_query", "env"],
         )
 
     def test_seller_claim_callbacks_are_present(self):
-        source = inspect.getsource(
-            seller_claims
-        )
+        source = inspect.getsource(seller_claims)
 
-        self.assertIn(
+        for callback in (
             "sellerclaimdetail:",
-            source,
-        )
-
-        self.assertIn(
             "sellerclaim:approve:",
-            source,
-        )
-
-        self.assertIn(
             "sellerclaim:reject:",
-            source,
-        )
-
-        self.assertIn(
             "sellerclaimsadmin",
-            source,
-        )
+        ):
+            with self.subTest(callback=callback):
+                self.assertIn(callback, source)
 
 
 class SellerClaimsSecurityContractTests(unittest.TestCase):
     def test_admin_guard_exists(self):
-        source = inspect.getsource(
-            seller_claims.handle_seller_claims_admin
-        )
-
         self.assertIn(
             "_is_admin",
-            source,
+            inspect.getsource(
+                seller_claims.handle_seller_claims_admin
+            ),
         )
 
     def test_admin_decision_guard_exists(self):
-        source = inspect.getsource(
-            seller_claims.handle_seller_claim_decision
-        )
-
         self.assertIn(
             "_is_admin",
-            source,
+            inspect.getsource(
+                seller_claims.handle_seller_claim_decision
+            ),
         )
 
     def test_claim_requires_unclaimed_status(self):
-        source = inspect.getsource(
-            seller_claims
-        )
-
-        self.assertIn(
-            "UNCLAIMED",
-            source,
-        )
+        self.assertIn("UNCLAIMED", inspect.getsource(seller_claims))
 
     def test_claim_uses_owner_user_id(self):
-        source = inspect.getsource(
-            seller_claims
-        )
-
-        self.assertIn(
-            "owner_user_id",
-            source,
-        )
+        self.assertIn("owner_user_id", inspect.getsource(seller_claims))
 
     def test_claim_uses_created_by_user_id(self):
-        source = inspect.getsource(
-            seller_claims
-        )
-
         self.assertIn(
             "created_by_user_id",
-            source,
+            inspect.getsource(seller_claims),
         )
 
     def test_claim_decision_checks_pending_status(self):
-        source = inspect.getsource(
-            seller_claims
-        )
-
-        self.assertIn(
-            "PENDING",
-            source,
-        )
+        self.assertIn("PENDING", inspect.getsource(seller_claims))
 
 
 class SellerClaimsPersistenceTests(unittest.TestCase):
     def test_claim_creation_writes_seller_claims(self):
-        source = inspect.getsource(
-            seller_claims._create_claim
-        )
-
         self.assertIn(
             "INSERT INTO seller_claims",
-            source,
+            inspect.getsource(seller_claims._create_claim),
         )
 
     def test_claim_creation_is_user_scoped(self):
-        source = inspect.getsource(
-            seller_claims._create_claim
-        )
-
-        self.assertIn(
-            "user_id",
-            source,
-        )
-
-        self.assertIn(
-            "seller_id",
-            source,
-        )
+        source = inspect.getsource(seller_claims._create_claim)
+        self.assertIn("user_id", source)
+        self.assertIn("seller_id", source)
 
     def test_claim_approval_updates_claim(self):
-        source = inspect.getsource(
-            seller_claims._approve_claim
-        )
-
-        self.assertIn(
-            "UPDATE seller_claims",
-            source,
-        )
-
-        self.assertIn(
-            "APPROVED",
-            source,
-        )
+        source = inspect.getsource(seller_claims._approve_claim)
+        self.assertIn("UPDATE seller_claims", source)
+        self.assertIn("APPROVED", source)
 
     def test_claim_approval_claims_seller(self):
-        source = inspect.getsource(
-            seller_claims._approve_claim
-        )
-
-        self.assertIn(
-            "UPDATE sellers",
-            source,
-        )
-
-        self.assertIn(
-            "CLAIMED",
-            source,
-        )
+        source = inspect.getsource(seller_claims._approve_claim)
+        self.assertIn("UPDATE sellers", source)
+        self.assertIn("CLAIMED", source)
 
     def test_claim_rejection_updates_pending_claim(self):
-        source = inspect.getsource(
-            seller_claims._reject_claim
-        )
-
-        self.assertIn(
-            "UPDATE seller_claims",
-            source,
-        )
-
-        self.assertIn(
-            "REJECTED",
-            source,
-        )
+        source = inspect.getsource(seller_claims._reject_claim)
+        self.assertIn("UPDATE seller_claims", source)
+        self.assertIn("REJECTED", source)
 
 
 class SellerClaimsAuditAndNotificationTests(unittest.TestCase):
     def test_claim_creation_writes_audit(self):
-        source = inspect.getsource(
-            seller_claims.handle_claim
-        )
+        source = inspect.getsource(seller_claims.handle_claim)
+        self.assertIn("_audit", source)
+        self.assertIn("seller_claim_requested", source)
 
-        self.assertIn(
-            "_audit",
-            source,
-        )
+    def test_approval_writes_audit_inside_transaction(self):
+        source = inspect.getsource(seller_claims._approve_claim)
+        self.assertIn("async with db.transaction()", source)
+        self.assertIn("INSERT INTO audit_log", source)
+        self.assertIn("transaction.execute(", source)
+        self.assertIn("seller_claim_approved", source)
 
-        self.assertIn(
-            "seller_claim_requested",
-            source,
-        )
+    def test_rejection_writes_audit_inside_transaction(self):
+        source = inspect.getsource(seller_claims._reject_claim)
+        self.assertIn("async with db.transaction()", source)
+        self.assertIn("INSERT INTO audit_log", source)
+        self.assertIn("transaction.execute(", source)
+        self.assertIn("seller_claim_rejected", source)
 
-    def test_admin_decision_writes_audit(self):
+    def test_approval_notification_is_inside_transaction(self):
+        source = inspect.getsource(seller_claims._approve_claim)
+        self.assertIn("async with db.transaction()", source)
+        self.assertIn("INSERT INTO notifications", source)
+        self.assertIn("updated_at = ?", source)
+
+    def test_rejection_notification_is_inside_transaction(self):
+        source = inspect.getsource(seller_claims._reject_claim)
+        self.assertIn("async with db.transaction()", source)
+        self.assertIn("INSERT INTO notifications", source)
+        self.assertIn("updated_at = ?", source)
+
+    def test_decision_handler_does_not_repeat_post_transaction_writes(self):
         source = inspect.getsource(
             seller_claims.handle_seller_claim_decision
         )
+        self.assertNotIn("_audit(", source)
+        self.assertNotIn("_notify_user(", source)
 
-        self.assertIn(
-            "_audit",
-            source,
-        )
-
-    def test_admin_decision_notifies_user(self):
-        source = inspect.getsource(
-            seller_claims.handle_seller_claim_decision
-        )
-
-        self.assertIn(
-            "_notify_user",
-            source,
-        )
-
-    def test_notification_uses_notifications_table(self):
-        source = inspect.getsource(
-            seller_claims._notify_user
-        )
-
-        self.assertIn(
-            "INSERT INTO notifications",
-            source,
-        )
+    def test_notification_helper_uses_notifications_table(self):
+        source = inspect.getsource(seller_claims._notify_user)
+        self.assertIn("INSERT INTO notifications", source)
 
 
 if __name__ == "__main__":
