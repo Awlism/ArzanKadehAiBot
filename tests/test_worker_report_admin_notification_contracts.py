@@ -208,7 +208,7 @@ class WorkerReportAdminNotificationContractTests(
         )
 
         self.assertIn(
-            "env: optional[Any] = none",
+            "env: optional[any] = none",
             source,
         )
 
@@ -248,7 +248,7 @@ class WorkerReportAdminNotificationContractTests(
         )
 
         self.assertIn(
-            "env: optional[Any] = none",
+            "env: optional[any] = none",
             source,
         )
 
