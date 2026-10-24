@@ -301,6 +301,43 @@ async def _handle_main_menu(
 
 
 class Default(WorkerEntrypoint):
+    async def scheduled(
+        self,
+        controller,
+        env,
+        ctx,
+    ):
+        from datetime import datetime, timezone
+
+        d1_backend = D1Backend(self.env.DB)
+
+        backend.set_backend(d1_backend)
+
+        await backend.connect()
+
+        now = datetime.now(
+            timezone.utc
+        ).isoformat(
+            timespec="seconds"
+        )
+
+        await backend.execute(
+            """
+            UPDATE requests
+            SET
+                status = 'EXPIRED',
+                updated_at = ?
+            WHERE request_type IN ('ad', 'general_ad')
+              AND status = 'ACTIVE'
+              AND ad_expires_at IS NOT NULL
+              AND ad_expires_at <= ?;
+            """,
+            (
+                now,
+                now,
+            ),
+        )
+        
     async def fetch(
         self,
         request,
