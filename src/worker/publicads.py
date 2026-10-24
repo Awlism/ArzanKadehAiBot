@@ -719,6 +719,7 @@ async def _finish_public_ad(
             else:
                 request_already_exists = False
 
+
                 await tx.execute(
                     """
                     INSERT INTO requests (
@@ -728,7 +729,11 @@ async def _finish_public_ad(
                         message,
                         status,
                         created_at,
-                        updated_at
+                        updated_at,
+                        ad_kind,
+                        ad_title,
+                        ad_image_url,
+                        ad_link
                     )
                     SELECT
                         ?,
@@ -736,6 +741,10 @@ async def _finish_public_ad(
                         ?,
                         ?,
                         'PENDING',
+                        ?,
+                        ?,
+                        ?,
+                        ?,
                         ?,
                         ?
                     WHERE NOT EXISTS (
@@ -752,9 +761,14 @@ async def _finish_public_ad(
                         description,
                         now,
                         now,
+                        AD_KIND_LABELS[kind],
+                        title,
+                        data.get("image_url"),
+                        data.get("link"),
                         user_id,
                     ),
                 )
+
 
                 # Create the audit entry only for the request inserted
                 # by the immediately preceding statement.
