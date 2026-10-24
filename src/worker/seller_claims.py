@@ -3,8 +3,7 @@
 ArzanKadeh AI
 Cloudflare Worker seller-ownership claim handlers.
 
-This module intentionally does not import aiogram, sqlite,
-aiosqlite, or any legacy bot module.
+This module uses the Worker-native database and Telegram client.
 """
 
 from __future__ import annotations
