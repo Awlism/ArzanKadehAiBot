@@ -1171,28 +1171,34 @@ class SourceQualityTests(unittest.TestCase):
         )
 
     def test_telegram_client_is_worker_specific(self):
-        path = (
-            WORKER_PATH
-            / "telegram.py"
-        )
+        path = WORKER_PATH / "telegram.py"
 
-        source = path.read_text(
-            encoding="utf-8"
-        )
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(path))
 
-        self.assertIn(
-            "BOT_TOKEN",
-            source,
-        )
+        self.assertIn("BOT_TOKEN", source)
+        self.assertIn("api.telegram.org", source)
 
-        self.assertIn(
-            "api.telegram.org",
-            source,
-        )
+        forbidden_imports = []
 
-        self.assertNotIn(
-            "aiogram",
-            source,
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.split(".", 1)[0] == "aiogram":
+                        forbidden_imports.append(alias.name)
+
+            elif isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+
+                if module.split(".", 1)[0] == "aiogram":
+                    forbidden_imports.append(module)
+
+        self.assertFalse(
+            forbidden_imports,
+            (
+                "Legacy aiogram imports found in worker/telegram.py: "
+                f"{forbidden_imports}"
+            ),
         )
 
 
