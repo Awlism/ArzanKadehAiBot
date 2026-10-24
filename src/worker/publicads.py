@@ -795,8 +795,8 @@ async def _finish_public_ad(
                     ),
                 )
 
-                # The notification is inserted only if the audit INSERT
-                # above succeeded and the matching request exists.
+                # Insert the notification only when the matching request
+                # and its audit record both exist.
                 await tx.execute(
                     """
                     INSERT INTO notifications (
@@ -808,27 +808,35 @@ async def _finish_public_ad(
                         created_at
                     )
                     SELECT
-                        ?,
+                        r.user_id,
                         'درخواست تبلیغ ثبت شد',
                         'درخواست تبلیغ شما با موفقیت ثبت شد و در انتظار بررسی است.',
                         'info',
                         0,
                         ?
-                    WHERE changes() = 1
+                    FROM requests AS r
+                    WHERE r.user_id = ?
+                      AND r.request_type = 'general_ad'
+                      AND r.topic = ?
+                      AND r.message IS ?
+                      AND r.status = 'PENDING'
+                      AND r.created_at = ?
                       AND EXISTS (
                           SELECT 1
-                          FROM requests
-                          WHERE id = last_insert_rowid()
-                            AND user_id = ?
-                            AND request_type = 'general_ad'
-                            AND status = 'PENDING'
-                            AND created_at = ?
+                          FROM audit_log AS a
+                          WHERE a.entity_type = 'request'
+                            AND a.entity_id = r.id
+                            AND a.actor_user_id = r.user_id
+                            AND a.action = 'general_ad_request_created'
+                            AND a.created_at = ?
                       );
                     """,
                     (
-                        user_id,
                         now,
                         user_id,
+                        title,
+                        description,
+                        now,
                         now,
                     ),
                 )
