@@ -1294,6 +1294,73 @@ class WorkerEntryIntegrationTests(
             names,
         )
 
+    def test_duplicate_webhook_update_is_not_dispatched_twice(self):
+        request_payload = {
+            "update_id": 70,
+            "callback_query": {
+                "id": "callback-duplicate-70",
+                "from": {
+                    "id": 123,
+                },
+                "data": "hot",
+            },
+        }
+
+        headers = {
+            "X-Telegram-Bot-Api-Secret-Token":
+                "test-secret",
+        }
+
+        first_response = run(
+            self.worker.fetch(
+                FakeRequest(
+                    "POST",
+                    request_payload,
+                    headers=headers,
+                )
+            )
+        )
+
+        second_response = run(
+            self.worker.fetch(
+                FakeRequest(
+                    "POST",
+                    request_payload,
+                    headers=headers,
+                )
+            )
+        )
+
+        self.assertEqual(
+            first_response.status,
+            200,
+        )
+
+        self.assertEqual(
+            second_response.status,
+            200,
+        )
+
+        names = [
+            item["name"]
+            for item in HANDLER_CALLS
+        ]
+
+        self.assertEqual(
+            names.count("handle_hot"),
+            1,
+        )
+
+        self.assertEqual(
+            names.count("claim_update"),
+            2,
+        )
+
+        self.assertEqual(
+            names.count("mark_update_processed"),
+            1,
+        )
+        
     def test_invalid_json_returns_400(self):
         request = FakeRequest(
             "POST",
