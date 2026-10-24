@@ -825,6 +825,7 @@ async def handle_admin_ad_view(
         else "تعیین‌نشده"
     )
 
+
     lines = [
         "📢 <b>جزئیات تبلیغ</b>",
         "",
@@ -836,7 +837,8 @@ async def handle_admin_ad_view(
         "<b>توضیحات:</b>",
         _html(_request_description(request)),
         "",
-        f"🔗 لینک: {_html(_request_link(request))}",
+        f"🖼️ لینک تصویر: {_html(request.get('ad_image_url') or 'ثبت نشده')}",
+        f"🔗 لینک صفحه: {_html(_request_link(request))}",
         "",
         (
             "وضعیت: "
@@ -846,6 +848,7 @@ async def handle_admin_ad_view(
         f"⏱ مدت: {_html(duration_text)}",
         f"📍 جایگاه: {_html(placement_text)}",
     ]
+
 
     if expires_at:
         lines.append(
