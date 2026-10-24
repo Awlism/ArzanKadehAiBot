@@ -268,8 +268,25 @@ async def claim_update(
 async def mark_update_processed(
     db: Any,
     update_id: int,
-) -> None:
-    """Mark a successfully dispatched Telegram update as processed."""
+) -> bool:
+    """
+    Confirm that a Telegram update has been marked processed.
+
+    Returns True when the update is processed, including when another
+    request already marked it processed.
+
+    Raises RuntimeError if the database cannot confirm that state.
+    Database errors are allowed to propagate to the caller.
+    """
+    if (
+        isinstance(update_id, bool)
+        or not isinstance(update_id, int)
+        or update_id < 0
+    ):
+        raise ValueError(
+            "A valid Telegram update_id is required."
+        )
+
     await db.execute(
         """
         UPDATE processed_updates
@@ -281,6 +298,23 @@ async def mark_update_processed(
             AND status = 'processing';
         """,
         (update_id,),
+    )
+
+    row = await db.fetchone(
+        """
+        SELECT status
+        FROM processed_updates
+        WHERE update_id = ?
+        LIMIT 1;
+        """,
+        (update_id,),
+    )
+
+    if row is not None and row.get("status") == "processed":
+        return True
+
+    raise RuntimeError(
+        "Telegram update processing status could not be confirmed."
     )
 
 
