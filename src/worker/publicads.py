@@ -13,11 +13,7 @@ from datetime import datetime, timezone
 from html import escape
 from typing import Any, Optional
 
-from worker.state import (
-    clear_state,
-    get_state,
-    set_state,
-)
+from worker.state import clear_state, get_state, set_state
 
 
 STATE_NAME = "public_ad"
@@ -25,7 +21,6 @@ STATE_NAME = "public_ad"
 MAX_TITLE_LENGTH = 200
 MAX_DESCRIPTION_LENGTH = 1000
 MAX_URL_LENGTH = 2048
-
 
 AD_KIND_LABELS = {
     "business": "🏪 کسب‌وکار",
@@ -35,7 +30,6 @@ AD_KIND_LABELS = {
     "brand": "✨ برند",
     "other": "➕ چیز دیگه",
 }
-
 
 PUBLIC_AD_MODELS_TEXT = (
     "💡 <b>مدل‌های تبلیغ</b>\n\n"
@@ -48,50 +42,27 @@ PUBLIC_AD_MODELS_TEXT = (
 
 
 def _now_iso() -> str:
-    return datetime.now(
-        timezone.utc
-    ).isoformat(
-        timespec="seconds"
-    )
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _html(value: Any) -> str:
     if value is None:
         return ""
-
-    return escape(
-        str(value),
-        quote=False,
-    )
+    return escape(str(value), quote=False)
 
 
 def _keyboard(
     rows: list[list[dict[str, Any]]],
 ) -> dict[str, Any]:
-    return {
-        "inline_keyboard": rows,
-    }
+    return {"inline_keyboard": rows}
 
 
-def _button(
-    text: str,
-    callback_data: str,
-) -> dict[str, Any]:
-    return {
-        "text": text,
-        "callback_data": callback_data,
-    }
+def _button(text: str, callback_data: str) -> dict[str, Any]:
+    return {"text": text, "callback_data": callback_data}
 
 
-def _back_button(
-    callback_data: str = "main",
-) -> list[dict[str, Any]]:
-    return [
-        _button(
-            "🔙 برگردیم",
-            callback_data,
-        )
-    ]
+def _back_button(callback_data: str = "main") -> list[dict[str, Any]]:
+    return [_button("🔙 برگردیم", callback_data)]
 
 
 def _message_context(
@@ -102,22 +73,17 @@ def _message_context(
 
     chat_id = chat.get("id")
     user_tg_id = user.get("id")
-    text = message.get("text")
 
     return (
         int(chat_id) if chat_id is not None else None,
         int(user_tg_id) if user_tg_id is not None else None,
-        text,
+        message.get("text"),
     )
 
 
 def _callback_context(
     callback_query: dict[str, Any],
-) -> tuple[
-    Optional[int],
-    Optional[int],
-    Optional[int],
-]:
+) -> tuple[Optional[int], Optional[int], Optional[int]]:
     message = callback_query.get("message") or {}
     chat = message.get("chat") or {}
     user = callback_query.get("from") or {}
@@ -182,9 +148,7 @@ async def _ensure_user(
     )
 
     if row is None:
-        raise RuntimeError(
-            "Failed to resolve internal user id."
-        )
+        raise RuntimeError("Failed to resolve internal user id.")
 
     return int(row["id"])
 
@@ -215,8 +179,8 @@ async def _edit_callback(
     keyboard: Optional[dict[str, Any]] = None,
 ) -> None:
     message = callback_query.get("message") or {}
-
     chat = message.get("chat") or {}
+
     chat_id = chat.get("id")
     message_id = message.get("message_id")
 
@@ -246,15 +210,10 @@ async def _send(
     )
 
 
-def _valid_url(
-    value: str,
-) -> Optional[str]:
+def _valid_url(value: str) -> Optional[str]:
     value = (value or "").strip()
 
-    if not value:
-        return None
-
-    if len(value) > MAX_URL_LENGTH:
+    if not value or len(value) > MAX_URL_LENGTH:
         return None
 
     lowered = value.lower()
@@ -273,13 +232,9 @@ async def handle_public_ads(
     telegram: Any,
     callback_query: dict[str, Any],
 ) -> None:
-    """
-    Main public-advertising landing page.
-    """
+    """Main public-advertising landing page."""
 
-    _, telegram_user_id, _ = _callback_context(
-        callback_query
-    )
+    _, telegram_user_id, _ = _callback_context(callback_query)
 
     if telegram_user_id is not None:
         user = callback_query.get("from") or {}
@@ -304,33 +259,15 @@ async def handle_public_ads(
         ),
         _keyboard(
             [
-                [
-                    _button(
-                        "📢 ثبت تبلیغ",
-                        "pubadstart",
-                    )
-                ],
-                [
-                    _button(
-                        "💡 مدل‌های تبلیغ",
-                        "pubadmodels",
-                    )
-                ],
-                [
-                    _button(
-                        "🛟 سوالی دارم",
-                        "supportstart:buyer",
-                    )
-                ],
+                [_button("📢 ثبت تبلیغ", "pubadstart")],
+                [_button("💡 مدل‌های تبلیغ", "pubadmodels")],
+                [_button("🛟 سوالی دارم", "supportstart:buyer")],
                 _back_button("main"),
             ]
         ),
     )
 
-    await _answer_callback(
-        telegram,
-        callback_query,
-    )
+    await _answer_callback(telegram, callback_query)
 
 
 async def handle_public_ad_models(
@@ -342,17 +279,10 @@ async def handle_public_ad_models(
         telegram,
         callback_query,
         PUBLIC_AD_MODELS_TEXT,
-        _keyboard(
-            [
-                _back_button("publicads"),
-            ]
-        ),
+        _keyboard([_back_button("publicads")]),
     )
 
-    await _answer_callback(
-        telegram,
-        callback_query,
-    )
+    await _answer_callback(telegram, callback_query)
 
 
 async def handle_public_ad_start(
@@ -360,9 +290,7 @@ async def handle_public_ad_start(
     telegram: Any,
     callback_query: dict[str, Any],
 ) -> None:
-    chat_id, telegram_user_id, _ = _callback_context(
-        callback_query
-    )
+    chat_id, telegram_user_id, _ = _callback_context(callback_query)
 
     if telegram_user_id is None:
         await _answer_callback(
@@ -387,29 +315,19 @@ async def handle_public_ad_start(
         db,
         user_id,
         STATE_NAME,
-        {
-            "step": "kind",
-        },
+        {"step": "kind"},
     )
 
-    rows: list[list[dict[str, Any]]] = []
-
     buttons = [
-        _button(
-            label,
-            f"pubadkind:{code}",
-        )
+        _button(label, f"pubadkind:{code}")
         for code, label in AD_KIND_LABELS.items()
     ]
 
-    for index in range(0, len(buttons), 2):
-        rows.append(
-            buttons[index:index + 2]
-        )
-
-    rows.append(
-        _back_button("publicads")
-    )
+    rows = [
+        buttons[index:index + 2]
+        for index in range(0, len(buttons), 2)
+    ]
+    rows.append(_back_button("publicads"))
 
     await _edit_callback(
         telegram,
@@ -418,10 +336,7 @@ async def handle_public_ad_start(
         _keyboard(rows),
     )
 
-    await _answer_callback(
-        telegram,
-        callback_query,
-    )
+    await _answer_callback(telegram, callback_query)
 
 
 async def handle_public_ad_kind(
@@ -429,14 +344,8 @@ async def handle_public_ad_kind(
     telegram: Any,
     callback_query: dict[str, Any],
 ) -> None:
-    data = str(
-        callback_query.get("data") or ""
-    )
-
-    kind = data.split(
-        ":",
-        1,
-    )[1] if ":" in data else ""
+    callback_data = str(callback_query.get("data") or "")
+    kind = callback_data.split(":", 1)[1] if ":" in callback_data else ""
 
     if kind not in AD_KIND_LABELS:
         await _answer_callback(
@@ -447,9 +356,7 @@ async def handle_public_ad_kind(
         )
         return
 
-    _, telegram_user_id, _ = _callback_context(
-        callback_query
-    )
+    _, telegram_user_id, _ = _callback_context(callback_query)
 
     if telegram_user_id is None:
         await _answer_callback(
@@ -474,10 +381,7 @@ async def handle_public_ad_kind(
         db,
         user_id,
         STATE_NAME,
-        {
-            "step": "title",
-            "kind": kind,
-        },
+        {"step": "title", "kind": kind},
     )
 
     await _edit_callback(
@@ -487,13 +391,9 @@ async def handle_public_ad_kind(
             "📝 <b>عنوان تبلیغت چیه؟</b>\n\n"
             "مثلاً اسم کسب‌وکار، پیج یا کانال."
         ),
-        None,
     )
 
-    await _answer_callback(
-        telegram,
-        callback_query,
-    )
+    await _answer_callback(telegram, callback_query)
 
 
 async def handle_public_ad_message(
@@ -507,14 +407,9 @@ async def handle_public_ad_message(
     Returns True when the message belongs to this flow.
     """
 
-    chat_id, telegram_user_id, text = _message_context(
-        message
-    )
+    chat_id, telegram_user_id, text = _message_context(message)
 
-    if (
-        chat_id is None
-        or telegram_user_id is None
-    ):
+    if chat_id is None or telegram_user_id is None:
         return False
 
     user = message.get("from") or {}
@@ -527,21 +422,12 @@ async def handle_public_ad_message(
         last_name=user.get("last_name"),
     )
 
-    current = await get_state(
-        db,
-        user_id,
-    )
+    current = await get_state(db, user_id)
 
-    if (
-        current is None
-        or current.get("state") != STATE_NAME
-    ):
+    if current is None or current.get("state") != STATE_NAME:
         return False
 
-    data = dict(
-        current.get("data") or {}
-    )
-
+    data = dict(current.get("data") or {})
     step = data.get("step")
     value = (text or "").strip()
 
@@ -558,39 +444,23 @@ async def handle_public_ad_message(
             await _send(
                 telegram,
                 chat_id,
-                (
-                    "⚠️ عنوان تبلیغ خیلی طولانیه.\n"
-                    "حداکثر ۲۰۰ کاراکتر بفرست:"
-                ),
+                "⚠️ عنوان تبلیغ خیلی طولانیه.\nحداکثر ۲۰۰ کاراکتر بفرست:",
             )
             return True
 
         data["title"] = value
         data["step"] = "description"
 
-        await set_state(
-            db,
-            user_id,
-            STATE_NAME,
-            data,
-        )
+        await set_state(db, user_id, STATE_NAME, data)
 
         await _send(
             telegram,
             chat_id,
             "✏️ یه توضیح کوتاه بنویس که مردم بفهمن چی هستی:",
             _keyboard(
-                [
-                    [
-                        _button(
-                            "رد کردن",
-                            "pubadskip:description",
-                        )
-                    ]
-                ]
+                [[_button("رد کردن", "pubadskip:description")]]
             ),
         )
-
         return True
 
     if step == "description":
@@ -598,39 +468,23 @@ async def handle_public_ad_message(
             await _send(
                 telegram,
                 chat_id,
-                (
-                    "⚠️ توضیحات خیلی طولانیه.\n"
-                    "حداکثر ۱۰۰۰ کاراکتر بفرست:"
-                ),
+                "⚠️ توضیحات خیلی طولانیه.\nحداکثر ۱۰۰۰ کاراکتر بفرست:",
             )
             return True
 
         data["description"] = value or None
         data["step"] = "image_url"
 
-        await set_state(
-            db,
-            user_id,
-            STATE_NAME,
-            data,
-        )
+        await set_state(db, user_id, STATE_NAME, data)
 
         await _send(
             telegram,
             chat_id,
             "🖼️ لینک تصویر رو بفرست (اختیاری):",
             _keyboard(
-                [
-                    [
-                        _button(
-                            "رد کردن",
-                            "pubadskip:image_url",
-                        )
-                    ]
-                ]
+                [[_button("رد کردن", "pubadskip:image_url")]]
             ),
         )
-
         return True
 
     if step == "image_url":
@@ -651,29 +505,16 @@ async def handle_public_ad_message(
         data["image_url"] = image_url
         data["step"] = "link"
 
-        await set_state(
-            db,
-            user_id,
-            STATE_NAME,
-            data,
-        )
+        await set_state(db, user_id, STATE_NAME, data)
 
         await _send(
             telegram,
             chat_id,
             "🔗 لینک صفحه/پیج/کانالت رو بفرست (اختیاری):",
             _keyboard(
-                [
-                    [
-                        _button(
-                            "رد کردن",
-                            "pubadskip:link",
-                        )
-                    ]
-                ]
+                [[_button("رد کردن", "pubadskip:link")]]
             ),
         )
-
         return True
 
     if step == "link":
@@ -700,7 +541,6 @@ async def handle_public_ad_message(
             user_id,
             data,
         )
-
         return True
 
     return True
@@ -711,25 +551,14 @@ async def handle_public_ad_skip(
     telegram: Any,
     callback_query: dict[str, Any],
 ) -> None:
-    data_value = str(
-        callback_query.get("data") or ""
-    )
+    callback_data = str(callback_query.get("data") or "")
 
-    if ":" not in data_value:
-        await _answer_callback(
-            telegram,
-            callback_query,
-        )
+    if ":" not in callback_data:
+        await _answer_callback(telegram, callback_query)
         return
 
-    step = data_value.split(
-        ":",
-        1,
-    )[1]
-
-    _, telegram_user_id, _ = _callback_context(
-        callback_query
-    )
+    step = callback_data.split(":", 1)[1]
+    _, telegram_user_id, _ = _callback_context(callback_query)
 
     if telegram_user_id is None:
         await _answer_callback(
@@ -750,15 +579,9 @@ async def handle_public_ad_skip(
         last_name=user.get("last_name"),
     )
 
-    current = await get_state(
-        db,
-        user_id,
-    )
+    current = await get_state(db, user_id)
 
-    if (
-        current is None
-        or current.get("state") != STATE_NAME
-    ):
+    if current is None or current.get("state") != STATE_NAME:
         await _answer_callback(
             telegram,
             callback_query,
@@ -767,13 +590,9 @@ async def handle_public_ad_skip(
         )
         return
 
-    state_data = dict(
-        current.get("data") or {}
-    )
+    state_data = dict(current.get("data") or {})
 
-    current_step = state_data.get("step")
-
-    if step != current_step:
+    if step != state_data.get("step"):
         await _answer_callback(
             telegram,
             callback_query,
@@ -786,26 +605,14 @@ async def handle_public_ad_skip(
         state_data["description"] = None
         state_data["step"] = "image_url"
 
-        await set_state(
-            db,
-            user_id,
-            STATE_NAME,
-            state_data,
-        )
+        await set_state(db, user_id, STATE_NAME, state_data)
 
         await _edit_callback(
             telegram,
             callback_query,
             "🖼️ لینک تصویر رو بفرست (اختیاری):",
             _keyboard(
-                [
-                    [
-                        _button(
-                            "رد کردن",
-                            "pubadskip:image_url",
-                        )
-                    ]
-                ]
+                [[_button("رد کردن", "pubadskip:image_url")]]
             ),
         )
 
@@ -813,26 +620,14 @@ async def handle_public_ad_skip(
         state_data["image_url"] = None
         state_data["step"] = "link"
 
-        await set_state(
-            db,
-            user_id,
-            STATE_NAME,
-            state_data,
-        )
+        await set_state(db, user_id, STATE_NAME, state_data)
 
         await _edit_callback(
             telegram,
             callback_query,
             "🔗 لینک صفحه/پیج/کانالت رو بفرست (اختیاری):",
             _keyboard(
-                [
-                    [
-                        _button(
-                            "رد کردن",
-                            "pubadskip:link",
-                        )
-                    ]
-                ]
+                [[_button("رد کردن", "pubadskip:link")]]
             ),
         )
 
@@ -847,10 +642,7 @@ async def handle_public_ad_skip(
             state_data,
         )
 
-        await _answer_callback(
-            telegram,
-            callback_query,
-        )
+        await _answer_callback(telegram, callback_query)
         return
 
     else:
@@ -862,10 +654,7 @@ async def handle_public_ad_skip(
         )
         return
 
-    await _answer_callback(
-        telegram,
-        callback_query,
-    )
+    await _answer_callback(telegram, callback_query)
 
 
 async def _finish_public_ad(
@@ -875,6 +664,13 @@ async def _finish_public_ad(
     user_id: int,
     data: dict[str, Any],
 ) -> None:
+    """
+    Save a public-ad request and its audit/notification records.
+
+    The three writes are submitted as one D1 batch so that they
+    succeed or fail together.
+    """
+
     kind = data.get("kind")
     title = data.get("title")
 
@@ -883,10 +679,7 @@ async def _finish_public_ad(
         or not isinstance(title, str)
         or not title.strip()
     ):
-        await clear_state(
-            db,
-            user_id,
-        )
+        await clear_state(db, user_id)
 
         if chat_id is not None:
             await _send(
@@ -896,61 +689,22 @@ async def _finish_public_ad(
                     "⚠️ اطلاعات تبلیغ ناقصه.\n"
                     "لطفاً دوباره از «📢 تبلیغ در ارزانکده» شروع کن."
                 ),
-                _keyboard(
-                    [
-                        _back_button("main"),
-                    ]
-                ),
+                _keyboard([_back_button("main")]),
             )
-
         return
 
-    open_request = await db.fetchone(
-        """
-        SELECT 1
-        FROM requests
-        WHERE user_id = ?
-          AND request_type = 'general_ad'
-          AND status = 'PENDING'
-        LIMIT 1;
-        """,
-        (user_id,),
-    )
-
-    if open_request is not None:
-        await clear_state(
-            db,
-            user_id,
-        )
-
-        if chat_id is not None:
-            await _send(
-                telegram,
-                chat_id,
-                (
-                    "⏳ یه درخواست تبلیغ قبلی‌ات هنوز "
-                    "در حال بررسیه.\n\n"
-                    "تا اون تعیین‌تکلیف نشده، درخواست جدید "
-                    "ثبت نمی‌شه."
-                ),
-                _keyboard(
-                    [
-                        _back_button("main"),
-                    ]
-                ),
-            )
-
-        return
-
+    title = title.strip()
+    description = data.get("description")
     now = _now_iso()
 
     try:
-        async with db.transaction(
-            immediate=True
-        ) as tx:
+        # D1Transaction queues writes. Its reads execute immediately.
+        # The conditional INSERT is also checked when the batch runs,
+        # preventing a second pending general-ad request from being added.
+        async with db.transaction(immediate=True) as tx:
             existing = await tx.fetchone(
                 """
-                SELECT 1
+                SELECT id
                 FROM requests
                 WHERE user_id = ?
                   AND request_type = 'general_ad'
@@ -994,14 +748,16 @@ async def _finish_public_ad(
                     """,
                     (
                         user_id,
-                        title.strip(),
-                        data.get("description"),
+                        title,
+                        description,
                         now,
                         now,
                         user_id,
                     ),
                 )
 
+                # This audit entry is created only if the immediately
+                # preceding request INSERT inserted a row.
                 await tx.execute(
                     """
                     INSERT INTO audit_log (
@@ -1016,26 +772,31 @@ async def _finish_public_ad(
                         ?,
                         'general_ad_request_created',
                         'request',
-                        id,
+                        last_insert_rowid(),
                         ?,
                         ?
-                    FROM requests
-                    WHERE id = last_insert_rowid()
-                      AND changes() = 1
-                      AND user_id = ?
-                      AND request_type = 'general_ad'
-                      AND status = 'PENDING'
-                      AND created_at = ?;
+                    WHERE changes() = 1
+                      AND EXISTS (
+                          SELECT 1
+                          FROM requests
+                          WHERE id = last_insert_rowid()
+                            AND user_id = ?
+                            AND request_type = 'general_ad'
+                            AND status = 'PENDING'
+                            AND created_at = ?
+                      );
                     """,
                     (
                         user_id,
-                        title.strip(),
+                        title,
                         now,
                         user_id,
                         now,
                     ),
                 )
 
+                # The notification is inserted only if the audit INSERT
+                # above succeeded and the matching request exists.
                 await tx.execute(
                     """
                     INSERT INTO notifications (
@@ -1053,35 +814,59 @@ async def _finish_public_ad(
                         'info',
                         0,
                         ?
-                    WHERE changes() = 1;
+                    WHERE changes() = 1
+                      AND EXISTS (
+                          SELECT 1
+                          FROM requests
+                          WHERE id = last_insert_rowid()
+                            AND user_id = ?
+                            AND request_type = 'general_ad'
+                            AND status = 'PENDING'
+                            AND created_at = ?
+                      );
                     """,
                     (
+                        user_id,
+                        now,
                         user_id,
                         now,
                     ),
                 )
 
-        if not request_already_exists:
-            results = tx.results
-            insert_result = (
-                results[0]
-                if results
-                else None
-            )
-
-            if insert_result is None:
-                raise RuntimeError(
-                    "Public ad request INSERT result is missing."
-                )
-
-            if insert_result.rowcount == 0:
-                request_already_exists = True
-
+        # Transaction results are available only after the transaction
+        # exits successfully.
         if request_already_exists:
-            await clear_state(
-                db,
-                user_id,
+            await clear_state(db, user_id)
+
+            if chat_id is not None:
+                await _send(
+                    telegram,
+                    chat_id,
+                    (
+                        "⏳ یه درخواست تبلیغ قبلی‌ات هنوز "
+                        "در حال بررسیه.\n\n"
+                        "تا اون تعیین‌تکلیف نشده، درخواست جدید "
+                        "ثبت نمی‌شه."
+                    ),
+                    _keyboard([_back_button("main")]),
+                )
+            return
+
+        results = tx.results
+
+        insert_result = results[0] if len(results) > 0 else None
+        audit_result = results[1] if len(results) > 1 else None
+        notification_result = results[2] if len(results) > 2 else None
+
+        if insert_result is None:
+            raise RuntimeError(
+                "Public ad request INSERT result is missing."
             )
+
+        # The conditional INSERT may have inserted zero rows if another
+        # request became pending between the read and the batch.
+        if insert_result.rowcount != 1:
+            await clear_state(db, user_id)
 
             if chat_id is not None:
                 await _send(
@@ -1091,33 +876,11 @@ async def _finish_public_ad(
                         "⏳ یه درخواست تبلیغ قبلی‌ات هنوز "
                         "در حال بررسیه."
                     ),
-                    _keyboard(
-                        [
-                            _back_button("main"),
-                        ]
-                    ),
+                    _keyboard([_back_button("main")]),
                 )
-
             return
-            
-        results = tx.results
 
-        audit_result = (
-            results[1]
-            if len(results) > 1
-            else None
-        )
-
-        notification_result = (
-            results[2]
-            if len(results) > 2
-            else None
-        )
-
-        if (
-            audit_result is None
-            or audit_result.rowcount != 1
-        ):
+        if audit_result is None or audit_result.rowcount != 1:
             raise RuntimeError(
                 "Public ad audit insert failed."
             )
@@ -1130,21 +893,10 @@ async def _finish_public_ad(
                 "Public ad notification insert failed."
             )
 
-        # Read the INSERT result after the D1 transaction commits.
-        results = tx.results
-        insert_result = (
-            results[0]
-            if results
-            else None
-        )
+        # Use the ID returned by D1 when available.
+        request_id = insert_result.lastrowid
 
-        request_id = (
-            insert_result.lastrowid
-            if insert_result is not None
-            else None
-        )
-
-        # Fallback only if D1 did not return the inserted row ID.
+        # Some D1 adapter responses do not expose lastrowid.
         if request_id is None:
             request_row = await db.fetchone(
                 """
@@ -1161,8 +913,8 @@ async def _finish_public_ad(
                 """,
                 (
                     user_id,
-                    title.strip(),
-                    data.get("description"),
+                    title,
+                    description,
                     now,
                 ),
             )
@@ -1178,10 +930,7 @@ async def _finish_public_ad(
         request_id = int(request_id)
 
     except Exception:
-        await clear_state(
-            db,
-            user_id,
-        )
+        await clear_state(db, user_id)
 
         if chat_id is not None:
             await _send(
@@ -1191,62 +940,11 @@ async def _finish_public_ad(
                     "⚠️ ثبت درخواست تبلیغ با مشکل روبه‌رو شد. "
                     "لطفاً دوباره تلاش کن."
                 ),
-                _keyboard(
-                    [
-                        _back_button("main"),
-                    ]
-                ),
+                _keyboard([_back_button("main")]),
             )
-
         return
 
-    await clear_state(
-        db,
-        user_id,
-    )
-
-    await db.execute(
-        """
-        INSERT INTO audit_log (
-            actor_user_id,
-            action,
-            entity_type,
-            entity_id,
-            details,
-            created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?);
-        """,
-        (
-            user_id,
-            "general_ad_request_created",
-            "request",
-            request_id,
-            title.strip(),
-            now,
-        ),
-    )
-
-    await db.execute(
-        """
-        INSERT INTO notifications (
-            user_id,
-            title,
-            message,
-            notification_type,
-            is_read,
-            created_at
-        )
-        VALUES (?, ?, ?, ?, 0, ?);
-        """,
-        (
-            user_id,
-            "درخواست تبلیغ ثبت شد",
-            "درخواست تبلیغ شما با موفقیت ثبت شد و در انتظار بررسی است.",
-            "info",
-            now,
-        ),
-    )
+    await clear_state(db, user_id)
 
     if chat_id is not None:
         await _send(
@@ -1258,11 +956,7 @@ async def _finish_public_ad(
                 "هزینه باهات هماهنگ می‌کنیم.\n\n"
                 "💳 قبل از هر پرداختی، مبلغ و شرایط بهت گفته می‌شه."
             ),
-            _keyboard(
-                [
-                    _back_button("main"),
-                ]
-            ),
+            _keyboard([_back_button("main")]),
         )
 
 
