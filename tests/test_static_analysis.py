@@ -335,23 +335,51 @@ class WorkerForbiddenDependencyTests(unittest.TestCase):
     def test_worker_has_no_legacy_runtime_imports(self):
         violations = []
 
-        for path in self._worker_source_files():
-            source = path.read_text(
-                encoding="utf-8"
-            )
+        forbidden_modules = {
+            "aiogram",
+            "aiosqlite",
+            "sqlite3",
+        }
 
-            for forbidden in FORBIDDEN_WORKER_TEXT:
-                if forbidden in source:
-                    violations.append(
-                        (
-                            str(
-                                path.relative_to(
-                                    PROJECT_ROOT
-                                )
-                            ),
-                            forbidden,
-                        )
+        for path in self._worker_source_files():
+            try:
+                tree = ast.parse(
+                    path.read_text(encoding="utf-8"),
+                    filename=str(path),
+                )
+            except SyntaxError as exc:
+                violations.append(
+                    (
+                        str(path.relative_to(PROJECT_ROOT)),
+                        str(exc),
                     )
+                )
+                continue
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        module = alias.name.split(".", 1)[0]
+
+                        if module in forbidden_modules:
+                            violations.append(
+                                (
+                                    str(path.relative_to(PROJECT_ROOT)),
+                                    alias.name,
+                                )
+                            )
+
+                elif isinstance(node, ast.ImportFrom):
+                    module = node.module or ""
+                    root_module = module.split(".", 1)[0]
+
+                    if root_module in forbidden_modules:
+                        violations.append(
+                            (
+                                str(path.relative_to(PROJECT_ROOT)),
+                                module,
+                            )
+                        )
 
         self.assertFalse(
             violations,
