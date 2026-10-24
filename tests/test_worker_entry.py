@@ -449,8 +449,6 @@ def _install_worker_module_stubs() -> list:
 
     state_module = types.ModuleType("worker.state")
 
-    processed_update_ids = set()
-
     async def ensure_state_table(backend):
         handler_calls.append({
             "name": "ensure_state_table",
