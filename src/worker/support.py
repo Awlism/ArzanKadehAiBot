@@ -726,40 +726,36 @@ async def handle_support_text(
         async with db.transaction(immediate=True) as tx:
             await tx.execute(
                 """
-                INSERT INTO requests (
-                    user_id,
-                    request_type,
-                    topic,
-                    message,
-                    status,
-                    created_at,
-                    updated_at
+                INSERT INTO audit_log (
+                    actor_user_id,
+                    action,
+                    entity_type,
+                    entity_id,
+                    details,
+                    created_at
                 )
-                SELECT ?, ?, ?, ?, ?, ?, ?
-                WHERE NOT EXISTS (
-                    SELECT 1
-                    FROM requests
-                    WHERE user_id = ?
-                      AND request_type = 'support'
-                      AND topic = ?
-                      AND status IN (
-                          'PENDING',
-                          'OPEN',
-                          'IN_PROGRESS',
-                          'APPROVED'
-                      )
-                );
+                SELECT
+                    ?,
+                    'support_request_created',
+                    'request',
+                    id,
+                    ?,
+                    ?
+                FROM requests
+                WHERE id = last_insert_rowid()
+                  AND changes() = 1
+                  AND user_id = ?
+                  AND request_type = 'support'
+                  AND topic = ?
+                  AND created_at = ?;
                 """,
                 (
                     user_id,
-                    "support",
                     topic,
-                    text,
-                    "PENDING",
-                    now,
                     now,
                     user_id,
                     topic,
+                    now,
                 ),
             )
 
