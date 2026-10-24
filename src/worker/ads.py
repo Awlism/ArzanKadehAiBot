@@ -522,35 +522,6 @@ async def _create_ad_request(
         request_id = row["id"]
 
     return int(request_id)
-    
-    
-async def _audit(
-    db: Any,
-    user_id: int,
-    request_id: int,
-    code: str,
-) -> None:
-    await db.execute(
-        """
-        INSERT INTO audit_log (
-            actor_user_id,
-            action,
-            entity_type,
-            entity_id,
-            details,
-            created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?);
-        """,
-        (
-            user_id,
-            "ad_request_created",
-            "request",
-            request_id,
-            code,
-            _now_iso(),
-        ),
-    )
 
 
 async def _notify_admin(
