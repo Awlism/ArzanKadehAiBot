@@ -1,3 +1,4 @@
+
 name: ArzanKadeh Tests
 
 on:
@@ -54,4 +55,5 @@ jobs:
             tests.test_store_active_toggle \
             tests.test_phase4_admin_ads \
             tests.test_phase4_admin_requests \
-            tests.test_phase4_admin_users
+            tests.test_phase4_admin_users \
+            tests.test_worker_messages_state
