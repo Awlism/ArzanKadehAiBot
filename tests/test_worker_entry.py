@@ -32,6 +32,8 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SRC_ROOT = PROJECT_ROOT / "src"
 
+PROCESSED_UPDATE_IDS = set()
+
 # Preserve modules that were loaded before this test file installs stubs.
 # This prevents the entry integration tests from leaking fake modules into
 # unrelated tests that need to import the real Worker implementation.
