@@ -99,6 +99,11 @@ class TelegramClient:
 
         body = payload or {}
 
+        if fetch is None:
+            raise RuntimeError(
+                "TelegramClient.call requires the Cloudflare Workers runtime."
+            )
+
         response = await fetch(
             url,
             {
