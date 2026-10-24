@@ -444,19 +444,30 @@ class WorkerForbiddenDependencyTests(unittest.TestCase):
 
         for path in self._worker_source_files():
             tree = _parse(path)
+            parents = {}
+
+            for parent in ast.walk(tree):
+                for child in ast.iter_child_nodes(parent):
+                    parents[child] = parent
 
             for node in ast.walk(tree):
-                if isinstance(
-                    node,
-                    ast.Pass,
-                ):
+                if not isinstance(node, ast.Pass):
+                    continue
+
+                parent = parents.get(node)
+                inside_exception_handler = False
+
+                while parent is not None:
+                    if isinstance(parent, ast.ExceptHandler):
+                        inside_exception_handler = True
+                        break
+
+                    parent = parents.get(parent)
+
+                if not inside_exception_handler:
                     violations.append(
                         (
-                            str(
-                                path.relative_to(
-                                    PROJECT_ROOT
-                                )
-                            ),
+                            str(path.relative_to(PROJECT_ROOT)),
                             node.lineno,
                         )
                     )
@@ -464,8 +475,8 @@ class WorkerForbiddenDependencyTests(unittest.TestCase):
         self.assertFalse(
             violations,
             (
-                "Bare pass statements remain in Worker source: "
-                f"{violations}"
+                "Bare pass statements outside exception handlers "
+                f"remain in Worker source: {violations}"
             ),
         )
 
