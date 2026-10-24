@@ -1,928 +1,637 @@
-# ArzanKadeh AI (ارزانکده AI)
 
-یک محل کشف قابل‌اعتماد، زیبا و ساده برای کسب‌وکارهای ایرانی — فروشگاه‌های اینستاگرامی، تلگرامی، کسب‌وکارهای خانگی، محلی، سالن‌های زیبایی، صنایع دستی، غذا، خدمات و محصولات.
+# ArzanKadeh AI — ارزانکده AI
 
-ArzanKadeh AI یک ربات تلگرام MVP با هستهٔ قدیمی Python/aiogram و مسیر مهاجرت Cloudflare Worker/Python/D1 است. این مخزن هر دو مسیر را نگه می‌دارد: اجرای محلی قدیمی و مسیر Worker مستقرشده.
+پلتفرمی فارسی برای کشف، جست‌وجو، مقایسه و معرفی محصولات، فروشگاه‌ها، فروشندگان و خدمات در ایران؛ با تمرکز بر تجربهٔ کاربری ساده و قابل‌اعتماد در تلگرام.
 
-Worker روی Cloudflare مستقر شده و بررسی سلامت پایه، اتصال آن به D1 را تأیید کرده است. بااین‌حال، فعال‌سازی Webhook تلگرام و آزمون واقعی ارسال و دریافت پیام هنوز تکمیل نشده است. بنابراین استقرار Worker به‌تنهایی به معنی تکمیل عملیاتی ربات نیست.
+## وضعیت پروژه
 
-معماری دیتابیس پروژه از طریق یک Backend abstraction طراحی شده تا منطق برنامه به پیاده‌سازی مستقیم SQLite وابسته نباشد و در مراحل بعدی بتوان Backendهای دیگری مانند Cloudflare D1 را اضافه کرد.
+شاخهٔ توسعه:
 
----
+`cloudflare-webhook-migration`
 
-## وضعیت فعلی پروژه
+مخزن:
 
-Branch اصلی توسعه فعلی:
+`Awlism/ArzanKadehAiBot`
 
-    cloudflare-webhook-migration
+ربات تلگرام:
 
-وضعیت فعلی:
+`@ArzanKadehAiBot`
 
-- Telegram Bot فعال در قالب MVP
-- aiogram 3.x
-- جستجوی محلی و رایگان
-- معماری ماژولار
-- Repository layer
-- Service layer
-- Database Backend abstraction
-- SQLite Backend فعلی
-- D1 database برای زیرساخت Cloudflare آماده‌سازی شده است
-- مسیر Cloudflare Webhook در حال توسعه است
-- Telegram Webhook هنوز به‌عنوان مسیر نهایی Production فعال نشده است
-- Telegram Mini App فعلاً placeholder است
-- AI Search خارجی و APIهای پولی فعلاً استفاده نمی‌شوند
+وضعیت زیرساخت:
 
-هدف اصلی این مرحله، تثبیت هسته پروژه و آماده‌سازی صحیح آن برای استقرار Cloudflare/Webhook است.
+- [x] ایجاد Cloudflare Worker
+- [x] ایجاد دیتابیس Cloudflare D1
+- [x] تنظیم اتصال D1 با Binding به نام `DB`
+- [x] استقرار Worker روی Cloudflare
+- [x] بررسی سلامت پایهٔ Worker و اتصال به D1
+- [x] پیاده‌سازی مسیر دریافت و پردازش Webhook در کد Worker
+- [x] بررسی اولیهٔ ساختار Backend مربوط به D1
+- [ ] تنظیم امن Secrets موردنیاز برای ارتباط واقعی با تلگرام
+- [ ] تنظیم و تأیید Webhook واقعی تلگرام
+- [ ] آزمایش واقعی دریافت پیام و ارسال پاسخ
+- [ ] بررسی کامل جریان‌های اصلی ربات در محیط Production
+- [ ] تکمیل ممیزی نهایی مهاجرت و رفع ایرادهای باقی‌مانده
 
----
-
-# ویژگی‌های پیاده‌سازی‌شده
-
-- دسته‌بندی چندسطحی محصولات
-- ناوبری مبتنی بر دیتابیس با `parent_id`
-- جستجوی محلی و رایگان با `LocalQueryParser`
-- جستجوی ساختاریافته بر اساس قیمت، شهر، دسته‌بندی، رنگ و جنسیت
-- Ranking نتایج بر اساس داده واقعی دیتابیس
-- سیستم Referral برای فروشندگان
-- صفحه فروشگاه و محصول
-- وضعیت تأیید فروشگاه‌ها
-- علاقه‌مندی محصولات
-- علاقه‌مندی فروشندگان
-- امتیازدهی و نظرات
-- گزارش تخلف
-- درخواست مالکیت فروشگاه
-- ثبت فروشگاه
-- اعلان‌ها
-- حساب کاربری
-- انتخاب شهر
-- بخش‌های محبوب و جدید
-- مقایسه محصولات
-- سیستم تبلیغات
-- ثبت رویدادهای Analytics
-- Fallback handler سراسری
-- داده نمایشی اختیاری با `SEED_DEMO_DATA`
-- کنترل نقش‌های کاربر
-- ساختار Repository برای عملیات دیتابیس
-- Serviceهای مستقل برای منطق‌های قابل تفکیک
-- Database Backend abstraction
-- SQLite Backend
-- تراکنش‌های دیتابیس با پشتیبانی از `BEGIN IMMEDIATE`
-- تست‌های واحد و Static Analysis
+**توجه:** مستقر بودن Worker به معنی آماده بودن کامل ربات برای استفادهٔ واقعی نیست. تا زمانی که Webhook و چرخهٔ واقعی دریافت و ارسال پیام آزمایش نشده‌اند، وضعیت عملیاتی ربات کامل محسوب نمی‌شود.
 
 ---
 
-# معماری پروژه
+## ۱. معماری فعلی
 
-پروژه به‌صورت ماژولار طراحی شده و منطق اصلی ربات در یک فایل واحد قرار ندارد.
+پروژه دو مسیر مرتبط دارد:
 
-ساختار اصلی فعلی:
+1. هستهٔ قدیمی ربات با Python، کتابخانهٔ aiogram و SQLite برای اجرای محلی.
+2. مسیر جدید Cloudflare Worker با Python، دریافت Webhook و ذخیره‌سازی پایدار در Cloudflare D1.
 
-    .
-    ├── bot.py
-    ├── requirements.txt
-    ├── .env.example
-    ├── .gitignore
-    ├── README.md
-    │
-    ├── miniapp/
-    │   └── index.html
-    │
-    ├── bot/
-    │   ├── __init__.py
-    │   ├── config.py
-    │   ├── constants.py
-    │   ├── database.py
-    │   ├── database_backend.py
-    │   ├── sqlite_backend.py
-    │   ├── keyboards.py
-    │   ├── repositories.py
-    │   ├── states.py
-    │   ├── utils.py
-    │   │
-    │   ├── handlers/
-    │   │   ├── __init__.py
-    │   │   ├── account.py
-    │   │   ├── admin.py
-    │   │   ├── ads.py
-    │   │   ├── buyer.py
-    │   │   ├── compare.py
-    │   │   ├── navigation.py
-    │   │   ├── notifications.py
-    │   │   ├── products.py
-    │   │   ├── referrals.py
-    │   │   ├── search.py
-    │   │   ├── seller.py
-    │   │   └── support.py
-    │   │
-    │   └── services/
-    │       ├── __init__.py
-    │       ├── backups.py
-    │       ├── notifications.py
-    │       ├── referrals.py
-    │       └── tasks.py
-    │
-    └── tests/
-        ├── _extract.py
-        ├── _fakedb.py
-        ├── test_category_navigation_logic.py
-        ├── test_local_search_parser.py
-        ├── test_phase3_reliability_pagination.py
-        ├── test_phase4_admin_ads.py
-        ├── test_phase4_admin_requests.py
-        ├── test_phase4_admin_users.py
-        ├── test_project_files.py
-        ├── test_referral_system.py
-        ├── test_roles_favorites_compare.py
-        ├── test_roles_start_and_public_ads.py
-        ├── test_schema_and_seed.py
-        ├── test_search_engine_e2e.py
-        ├── test_seller_claims.py
-        ├── test_static_analysis.py
-        ├── test_store_active_toggle.py
-        └── test_utils.py
-
----
-
-# لایه‌های معماری
-
-معماری منطقی فعلی به شکل زیر است:
-
-    Telegram
-        │
-        ▼
-    Handlers
-        │
-        ▼
-    Services
-        │
-        ▼
-    Repositories
-        │
-        ▼
-    DatabaseBackend
-        │
-        ▼
-    SQLiteBackend
-        │
-        ▼
-    SQLite Database
-
-این لایه‌ها مسئولیت‌های متفاوتی دارند و نباید بدون دلیل با یکدیگر ادغام شوند.
-
----
-
-## Handlers
-
-Handlerها مسئول دریافت ورودی Telegram و مدیریت Flow هستند.
-
-نمونه‌ها:
-
-- `account.py`
-- `admin.py`
-- `ads.py`
-- `buyer.py`
-- `compare.py`
-- `navigation.py`
-- `notifications.py`
-- `products.py`
-- `referrals.py`
-- `search.py`
-- `seller.py`
-- `support.py`
-
-Handler نباید محل اصلی منطق دیتابیس یا منطق پیچیده کسب‌وکار باشد.
-
----
-
-## Services
-
-Serviceها برای منطق‌های قابل تفکیک و reusable استفاده می‌شوند.
-
-Serviceهای فعلی:
-
-    bot/services/notifications.py
-    bot/services/referrals.py
-    bot/services/tasks.py
-    bot/services/backups.py
-
-برای مثال، سیستم Notification بین ذخیره‌سازی Notification و ارسال مستقیم پیام Telegram تفکیک شده است.
-
----
-
-## Repositories
-
-فایل:
-
-    bot/repositories.py
-
-Repository layer مسئول عملیات اصلی داده و persistence مربوط به Entityهای پروژه است.
-
-هدف این لایه این است که Handlerها و Serviceها تا حد امکان مستقیماً با جزئیات پیاده‌سازی دیتابیس درگیر نشوند.
-
-Repositoryها نباید به implementation-specific APIهای SQLite مانند `db.conn` یا `db.execute()` وابسته باشند.
-
-برای عملیات دیتابیس از Backend abstraction استفاده می‌شود.
-
----
-
-# Database Architecture
-
-معماری دیتابیس پروژه از یک abstraction layer استفاده می‌کند.
-
-ساختار فعلی:
-
-    Application
-        │
-        ▼
-    DatabaseBackend
-        │
-        ▼
-    SQLiteBackend
-        │
-        ▼
-    aiosqlite / SQLite
-
-فایل‌های اصلی:
-
-    bot/database_backend.py
-    bot/sqlite_backend.py
-    bot/database.py
-
----
-
-## DatabaseBackend
-
-فایل:
-
-    bot/database_backend.py
-
-این فایل contract مربوط به Backend دیتابیس را تعریف می‌کند.
-
-عملیات اصلی شامل:
-
-- `connect`
-- `close`
-- `execute`
-- `fetchone`
-- `fetchall`
-- `executemany`
-- `transaction`
-
-هدف این abstraction این است که لایه‌های بالاتر پروژه به SQLite-specific implementation وابسته نباشند.
-
----
-
-## SQLiteBackend
-
-فایل:
-
-    bot/sqlite_backend.py
-
-پیاده‌سازی فعلی `DatabaseBackend` برای SQLite است.
-
-این Backend از `aiosqlite` استفاده می‌کند.
-
-عملیات تراکنشی از جمله:
-
-    BEGIN
-
-و در صورت نیاز:
-
-    BEGIN IMMEDIATE
-
-را پشتیبانی می‌کند.
-
-`BEGIN IMMEDIATE` در بخش‌هایی که نیاز به کنترل race condition و رزرو زودتر write lock دارند استفاده می‌شود.
-
----
-
-## Database
-
-فایل:
-
-    bot/database.py
-
-این فایل همچنان مسئول بخش low-level مربوط به SQLite است، از جمله:
-
-- ایجاد اتصال
-- schema initialization
-- migrations
-- seed
-- عملیات bootstrap دیتابیس
-
-استفاده مستقیم از `db.conn` در این فایل به دلیل نقش low-level آن عمدی است.
-
-بنابراین نباید استفاده‌های داخلی `database.py` از `sqlite3` یا connection-level APIs را با عملیات Repository/Service اشتباه گرفت.
-
----
-
-# دیتابیس فعلی
-
-پروژه از SQLite برای اجرای فعلی استفاده می‌کند.
-
-جدول‌های اصلی شامل موارد زیر هستند:
-
-    users
-    cities
-    categories
-    sellers
-    products
-    favorites
-    seller_claims
-    reviews
-    reports
-    events
-    notifications
-    orders
-    referrals
-    referral_rewards
-    seller_favorites
-    requests
-    audit_log
-    compare_selections
-
-Seed شهرها و دسته‌بندی‌ها به‌صورت idempotent طراحی شده‌اند تا اجرای مجدد برنامه باعث ایجاد رکوردهای تکراری نشود.
-
-داده‌های Demo نیز اختیاری هستند و با `SEED_DEMO_DATA` کنترل می‌شوند.
-
----
-
-# تراکنش‌ها و Consistency
-
-برای عملیات حساس دیتابیس، Transaction از طریق Backend abstraction انجام می‌شود.
-
-Repositoryها نباید Transaction را با اتصال مستقیم به implementation دیتابیس مدیریت کنند.
-
-نمونه مفهومی:
-
-    DatabaseBackend
-        └── transaction()
-                │
-                ├── BEGIN
-                └── COMMIT / ROLLBACK
-
-برای عملیات‌هایی که به lock زودهنگام نیاز دارند:
-
-    transaction(immediate=True)
-
-استفاده می‌شود.
-
-این ساختار برای جلوگیری از race condition در عملیات حساس طراحی شده است.
-
----
-
-# جستجوی محلی
-
-معماری جستجو:
-
-    User Query
-        │
-        ▼
-    QueryParser
-        │
-        ▼
-    StructuredQuery
-        │
-        ▼
-    SearchEngine
-        │
-        ▼
-    Ranking
-        │
-        ▼
-    Results
-
----
-
-## QueryParser
-
-`QueryParser` یک contract مستقل برای تبدیل متن خام کاربر به Query ساختاریافته است.
-
----
-
-## LocalQueryParser
-
-پیاده‌سازی فعلی `QueryParser` است و بدون API یا سرویس AI خارجی اجرا می‌شود.
-
-قابلیت‌های آن شامل:
-
-- نرمال‌سازی اعداد فارسی و عربی
-- نرمال‌سازی حروف فارسی
-- تشخیص محدوده قیمت
-- تشخیص شهر
-- تشخیص دسته‌بندی
-- مترادف‌های رایج
-- برخی غلط‌های تایپی رایج
-- تشخیص رنگ
-- تشخیص جنسیت
-- حذف کلمات اضافی و محاوره‌ای
-
----
-
-## SearchEngine
-
-`SearchEngine` باید به contract مربوط به `QueryParser` وابسته باشد و نباید مستقیماً به `LocalQueryParser` وابسته شود.
-
-این طراحی اجازه می‌دهد در آینده QueryParserهای جدید، از جمله پیاده‌سازی‌های مبتنی بر AI، بدون بازنویسی منطق اصلی SearchEngine اضافه شوند.
-
----
-
-## Ranking
-
-نتایج بر اساس داده واقعی دیتابیس رتبه‌بندی می‌شوند.
-
-معیارها می‌توانند شامل موارد زیر باشند:
-
-- تطابق دسته‌بندی
-- تطابق کلمات کلیدی
-- شهر
-- محدوده قیمت
-- امتیاز
-- تعداد نظرات
-- بازدید
-
-Search Engine نباید محصول یا نتیجه ساختگی ایجاد کند.
-
----
-
-# سیستم Compare
-
-سیستم Compare به‌صورت Database-backed طراحی شده است.
-
-انتخاب‌های مقایسه در جدول:
-
-    compare_selections
-
-ذخیره می‌شوند.
-
-هر کاربر می‌تواند حداکثر:
-
-    4
-
-محصول را برای مقایسه انتخاب کند.
-
-وضعیت Compare نباید صرفاً در حافظه process نگهداری شود، زیرا در محیط‌های چند-instance یا پس از restart process از بین خواهد رفت.
-
----
-
-# سیستم Referral
-
-هر فروشنده می‌تواند لینک معرفی اختصاصی داشته باشد.
-
-ساختار لینک:
-
-    https://t.me/<bot_username>?start=shop_<seller_id>
-
-ورود کاربران از طریق لینک‌های Referral در سیستم ثبت می‌شود.
-
-قابلیت‌های اصلی:
-
-- جلوگیری از ثبت چندباره یک کاربر
-- جلوگیری از self-referral
-- ثبت آمار معرفی
-- نمایش لینک معرفی
-- ساختار قابل توسعه برای Rewardها
-
----
-
-# اعلان‌ها
-
-سیستم Notification در Service مستقل قرار دارد.
-
-مسیر اصلی:
-
-    bot/services/notifications.py
-
-این Service مسئول ذخیره و مدیریت اعلان‌های داخلی دیتابیس است.
-
-قابلیت‌های اصلی:
-
-- ایجاد اعلان
-- دریافت اعلان‌های خوانده‌نشده
-- خواندن یک اعلان
-- خواندن همه اعلان‌ها
-
-ذخیره‌سازی Notification از ارسال مستقیم پیام Telegram جدا نگه داشته شده است.
-
----
-
-# Telegram Mini App
-
-پوشه:
-
-    miniapp/
-
-در MVP فعلی شامل placeholder اولیه Telegram Mini App است.
-
-فایل فعلی:
-
-    miniapp/index.html
-
-Mini App هنوز منطق اصلی پروژه را در اختیار ندارد و Bot به آن وابسته نیست.
-
-توسعه کامل Mini App در مراحل بعدی انجام خواهد شد.
-
----
-
-# Cloudflare Architecture
-
-Cloudflare بخش مهمی از معماری Deployment آینده پروژه است.
-
-هدف نهایی این است که Telegram Webhook از طریق Cloudflare دریافت و به Backend مناسب پروژه منتقل شود.
+هدف مهاجرت، انتقال تدریجی منطق موردنیاز به مسیر Worker است؛ بدون حذف بی‌دلیل قابلیت‌های قبلی یا بازنویسی غیرضروری کل پروژه.
 
 معماری هدف:
 
-    Telegram
-        │
-        │ Webhook
-        ▼
-    Cloudflare Worker
-        │
-        ▼
-    Bot Backend
-        │
-        ▼
-    Handlers
-        │
-        ▼
-    Services
-        │
-        ▼
-    Repositories
-        │
-        ▼
-    DatabaseBackend
-        │
-        ▼
-    Cloudflare D1
+```text
+Telegram User
+      |
+      v
+Telegram Bot
+      |
+      v
+Telegram Webhook
+      |
+      v
+Cloudflare Worker
+      |
+      +----> Webhook Validation
+      |
+      +----> Update / Callback Processing
+      |
+      +----> Worker Backend
+      |          |
+      |          v
+      |       Cloudflare D1
+      |
+      +----> Telegram Bot API
+```
+
+مسیر اجرای محلی قدیمی:
+
+```text
+Telegram
+    |
+    v
+Python / aiogram
+    |
+    v
+Handlers
+    |
+    v
+Services / Repositories
+    |
+    v
+SQLite Backend
+    |
+    v
+SQLite Database
+```
+
+این دو مسیر نباید بدون بررسی سازگاری با یکدیگر ادغام شوند. اجرای محلی و Worker محدودیت‌های اجرایی متفاوتی دارند و باید وابستگی‌های هر مسیر مشخص بماند.
 
 ---
 
-## وضعیت فعلی Cloudflare
+## ۲. زیرساخت Cloudflare
 
-در حال حاضر:
+### Worker
 
-- پروژه Cloudflare ایجاد شده است.
-- D1 database برای پروژه ایجاد شده است.
-- schema مربوط به D1 آماده‌سازی شده است.
-- ساختار Backend abstraction در پروژه ایجاد شده است.
-- SQLite همچنان Backend فعلی اجرای محلی است.
-- Webhook Telegram هنوز به‌صورت نهایی Production فعال نشده است.
-- Cloudflare Worker نهایی هنوز جایگزین مسیر فعلی اجرای Bot نشده است.
+نام Worker:
 
-بنابراین نباید وضعیت فعلی را با Migration کامل به Cloudflare اشتباه گرفت.
+`arzankadehaibot`
 
----
+نشانی:
 
-# D1 و Database Backend
+https://arzankadehaibot.a-shahbazpor.workers.dev
 
-هدف معماری این است که منطق برنامه به SQLite وابسته نباشد.
+فایل اصلی Worker:
 
-در حالت فعلی:
+`src/entry.py`
 
-    DatabaseBackend
-        │
-        ▼
-    SQLiteBackend
-        │
-        ▼
-    SQLite
+این نشانی برای بررسی سلامت پایهٔ سرویس استفاده می‌شود. پاسخ موفق به درخواست سادهٔ HTTP به‌تنهایی صحت Webhook تلگرام یا ارسال پیام واقعی را ثابت نمی‌کند.
 
-در معماری آینده Cloudflare:
+### دیتابیس D1
 
-    DatabaseBackend
-        │
-        ▼
-    D1 Backend
-        │
-        ▼
-    Cloudflare D1
+نام دیتابیس:
 
-این جداسازی باعث می‌شود لایه‌های بالاتر پروژه مجبور نباشند برای تغییر دیتابیس بازنویسی شوند.
+`arzankadeh-db`
 
-پیاده‌سازی نهایی D1 Backend باید فقط پس از بررسی دقیق compatibility واقعی Cloudflare Worker، Python runtime و APIهای مورد استفاده انجام شود.
+Binding:
 
----
+`DB`
 
-# Telegram Bot Runtime
+شناسهٔ دیتابیس:
 
-در وضعیت فعلی Bot از polling استفاده می‌کند.
+`1f3a3d15-aaaa-4b17-992a-74c508582917`
 
-اجرای فعلی:
+Binding دیتابیس در تنظیمات Worker تعریف شده است. شناسهٔ دیتابیس اطلاعات محرمانه‌ای مانند Bot Token نیست، اما تغییر آن باید هماهنگ با تنظیمات استقرار انجام شود.
 
-    python bot.py
+### تنظیمات Worker
 
-مسیر فعلی:
+فایل تنظیمات:
 
-    Telegram
-        │
-        ▼
-    aiogram Dispatcher
-        │
-        ▼
-    Handlers
+`wrangler.jsonc`
 
-Webhook مسیر هدف Deployment است اما تا زمانی که Backend دریافت Webhook و چرخه کامل اجرای آن به‌درستی آماده و تست نشده باشد، نباید polling را به‌صورت ناقص حذف کرد.
+تنظیمات شناخته‌شده:
+
+- فایل ورودی: `src/entry.py`
+- تاریخ سازگاری: `2026-09-29`
+- قابلیت Python Workers
+- اتصال D1 با Binding به نام `DB`
+
+تنظیمات استقرار باید از همین فایل و وضعیت واقعی شاخهٔ توسعه بررسی شوند. از ایجاد فایل تنظیمات موازی یا تغییر معماری بدون نیاز مستند خودداری شود.
 
 ---
 
-# تنظیمات محیطی
+## ۳. ساختار مسیر Worker
 
-نمونه تنظیمات در:
+بخش‌های اصلی مسیر مهاجرت شامل موارد زیر هستند:
 
-    .env.example
+```text
+src/
+├── entry.py
+├── worker/
+│   ├── __init__.py
+│   ├── account.py
+│   ├── admin.py
+│   ├── admin_ads.py
+│   ├── ads.py
+│   ├── categories.py
+│   ├── compare.py
+│   ├── discovery.py
+│   ├── favorites.py
+│   ├── hot.py
+│   ├── messages.py
+│   ├── notifications.py
+│   ├── product_management.py
+│   ├── product_stats.py
+│   ├── products.py
+│   ├── publicads.py
+│   ├── referrals.py
+│   ├── report.py
+│   ├── requests.py
+│   ├── review.py
+│   ├── search.py
+│   ├── seller.py
+│   ├── seller_claims.py
+│   ├── seller_registration.py
+│   ├── shop.py
+│   ├── start.py
+│   ├── state.py
+│   ├── store_status.py
+│   ├── support.py
+│   ├── telegram.py
+│   └── webhook.py
+└── worker_backend/
+    ├── __init__.py
+    ├── backend.py
+    ├── database_backend.py
+    └── d1_backend.py
+```
 
-قرار دارد.
+این ساختار نمای کلی مسیر Worker است. پیش از تغییر یا حذف هر فایل، فهرست واقعی فایل‌های شاخهٔ `cloudflare-webhook-migration` و وابستگی‌های آن باید دوباره بررسی شود.
 
-نمونه:
+### مسئولیت فایل‌های اصلی
 
-    BOT_TOKEN=your_telegram_bot_token_here
-    DATABASE_PATH=arzan_kadeh.db
-    SEED_DEMO_DATA=false
-    ADMIN_CHAT_ID=your_admin_chat_id_here
-    ADMIN_USERNAME=@awlism
+- `src/entry.py`: نقطهٔ ورود Worker، دریافت درخواست، اتصال اجزای پردازش و هدایت Updateها.
+- `src/worker/webhook.py`: بررسی درخواست Webhook و اعتبارسنجی Secret.
+- `src/worker/telegram.py`: ارتباط با Telegram Bot API از محیط Worker.
+- `src/worker/state.py`: مدیریت وضعیت پایدار مکالمه‌ها در دیتابیس.
+- `src/worker/search.py`: منطق جست‌وجوی محلی و پردازش عبارت جست‌وجو.
+- `src/worker_backend/backend.py`: لایهٔ Backend مورد استفادهٔ منطق برنامه.
+- `src/worker_backend/database_backend.py`: قرارداد عملیات دیتابیس.
+- `src/worker_backend/d1_backend.py`: پیاده‌سازی عملیات دیتابیس برای Cloudflare D1.
 
----
-
-## BOT_TOKEN
-
-توکن اصلی ربات Telegram است.
-
-این مقدار باید فقط در محیط اجرای واقعی تنظیم شود و نباید داخل Repository یا کد عمومی قرار بگیرد.
-
----
-
-## DATABASE_PATH
-
-مسیر دیتابیس SQLite محلی را مشخص می‌کند.
-
-مقدار پیش‌فرض:
-
-    arzan_kadeh.db
-
----
-
-## SEED_DEMO_DATA
-
-برای فعال‌کردن داده‌های نمایشی استفاده می‌شود.
-
-حالت پیش‌فرض:
-
-    false
-
-برای فعال‌کردن:
-
-    SEED_DEMO_DATA=true
-
----
-
-## ADMIN_CHAT_ID
-
-آیدی عددی Chat مدیر Telegram است.
-
-این مقدار username نیست.
-
-اگر مقدار معتبر وجود نداشته باشد، قابلیت‌هایی که نیاز به ارسال مستقیم پیام مدیریتی دارند باید بدون ایجاد Crash از ارسال مستقیم صرف‌نظر کنند.
-
----
-
-## ADMIN_USERNAME
-
-username عمومی مدیر برای نمایش در بخش‌های مرتبط با پشتیبانی و مدیریت است.
-
-مقدار فعلی نمونه:
-
-    @awlism
+وجود این فایل‌ها به معنی تکمیل همهٔ قابلیت‌ها نیست. هر قابلیت باید از نظر اتصال به Router، عملیات دیتابیس، مدیریت خطا و پاسخ تلگرام ممیزی شود.
 
 ---
 
-# نصب
+## ۴. Backend و دیتابیس
 
-نیازمندی‌های پروژه در:
+پروژه برای جدا کردن منطق برنامه از جزئیات دیتابیس از لایهٔ Backend استفاده می‌کند.
 
-    requirements.txt
+قرارداد کلی عملیات دیتابیس شامل موارد زیر است:
 
-قرار دارند.
+- اجرای Query
+- دریافت یک ردیف
+- دریافت چند ردیف
+- اجرای گروهی عملیات
+- مدیریت تراکنش‌ها
 
-نصب:
+در مسیر Worker، دیتابیس اصلی و پایدار Cloudflare D1 است. فایل SQLite مربوط به اجرای محلی نباید به‌عنوان ذخیره‌سازی پایدار Worker استفاده شود.
 
-    pip install -r requirements.txt
+### محدودیت‌های D1
 
-سپس:
+پیاده‌سازی D1 باید با APIهای واقعی محیط Cloudflare سازگار باشد. عملیات نوشتن، تراکنش‌ها و مقدارهای بازگشتی باید مطابق رفتار واقعی Backend بررسی شوند.
 
-    cp .env.example .env
+برای مثال، اگر نتیجهٔ یک عملیات نوشتن پیش از Commit در دسترس نباشد، منطق برنامه نباید بدون بررسی به `lastrowid` یا رفتار مشابه SQLite وابسته شود. در صورت نیاز باید پس از Commit، رکورد موردنظر با Query مناسب بازیابی شود.
 
-و مقادیر واقعی محیط را داخل `.env` قرار دهید.
+همچنین:
 
-فایل `.env` نباید commit شود.
+- نام ستون‌ها باید با Schema واقعی D1 یکسان باشد.
+- عملیات حساس باید خطاهای دیتابیس را به‌درستی مدیریت کنند.
+- داده‌های کاربر نباید به‌دلیل خطای موقت یا اجرای مجدد Update به‌طور ناخواسته تکرار شوند.
+- وضعیت مکالمه‌ها باید در محیط بدون حافظهٔ پایدار محلی حفظ شود.
+- Queryها باید پارامتری باشند و از الحاق ناامن ورودی کاربر به SQL جلوگیری شود.
+- تغییر Schema باید با بررسی سازگاری داده‌های موجود انجام شود.
 
----
+### جدول‌های شناخته‌شدهٔ D1
 
-# اجرای محلی
+در بررسی‌های قبلی، جدول‌های زیر مشاهده شده‌اند:
 
-پس از نصب dependencies و تنظیم `.env`:
+```text
+_cf_KV
+audit_log
+categories
+cities
+compare_selections
+events
+favorites
+notifications
+orders
+products
+referral_rewards
+referrals
+reports
+requests
+reviews
+seller_claims
+seller_favorites
+sellers
+sqlite_sequence
+users
+worker_states
+```
 
-    python bot.py
-
-در وضعیت فعلی، Bot با polling اجرا می‌شود.
-
----
-
-# تست‌ها
-
-پوشه `tests` شامل تست‌های پروژه و Static Analysis است.
-
-بخش‌هایی مانند موارد زیر پوشش داده می‌شوند:
-
-- Database
-- Schema
-- Seed
-- Navigation
-- Utilities
-- Repositoryها
-- Serviceها
-- Handlerها
-- Search
-- Referral
-- Seller Claims
-- Compare
-- Favorites
-- Admin flows
-- Static Analysis
-- ساختار پروژه
-- رفتارهای اصلی MVP
-
-اجرای کامل تست‌ها:
-
-    pytest tests -v
-
-یا:
-
-    python -m unittest discover -s tests -v
+این فهرست برای شناخت ساختار فعلی است. پیش از اجرای Migration یا تغییر Schema باید ساختار واقعی و آخرین وضعیت دیتابیس بررسی شود.
 
 ---
 
-# Static Analysis
+## ۵. قابلیت‌های محصول
 
-پروژه شامل تست‌های Static Analysis برای شناسایی الگوهای خطرناک و معماری ناسازگار است.
+قابلیت‌های موجود در طراحی و هستهٔ پروژه شامل موارد زیر هستند. وضعیت عملکرد هر قابلیت در مسیر Worker باید جداگانه تأیید شود.
 
-از جمله موارد بررسی‌شده:
+### کشف و جست‌وجو
 
-- دسترسی مستقیم غیرمجاز به SQLite
-- استفاده نامناسب از Database connection
-- ساختار Repositoryها
-- ساختار Handlerها
-- امنیت queryها
-- URL validation
-- ساختار فایل‌ها
-- وابستگی‌های پروژه
+- دسته‌بندی چندسطحی
+- دسته‌بندی مبتنی بر دیتابیس و `parent_id`
+- جست‌وجوی محلی و رایگان
+- پردازش ساختاریافتهٔ عبارت جست‌وجو
+- فیلترهای مرتبط با قیمت، شهر، دسته‌بندی و ویژگی‌های محصول
+- مرتب‌سازی نتایج بر اساس داده‌های موجود
+- نمایش محصولات جدید و محبوب
 
-لایه‌های بالاتر نباید بدون دلیل به implementation-specific APIهای SQLite مانند:
+### فروشگاه و فروشنده
 
-    db.conn
+- ثبت فروشگاه
+- نمایش اطلاعات فروشگاه
+- ثبت محصول
+- مدیریت محصولات
+- وضعیت فعال بودن فروشگاه
+- درخواست مالکیت فروشگاه
+- سیستم معرفی و پاداش فروشنده
+- امکانات مرتبط با ارتباط با فروشنده
 
-یا:
+### امکانات کاربران
 
-    db.execute()
+- حساب کاربری
+- انتخاب شهر
+- علاقه‌مندی محصولات
+- علاقه‌مندی فروشندگان
+- مقایسهٔ محصولات
+- ثبت نظر و امتیاز
+- گزارش تخلف
+- اعلان‌ها
+- پشتیبانی
 
-وابسته شوند.
+### مدیریت
 
-استثناهای low-level مانند:
+- کنترل نقش‌های کاربر
+- قابلیت‌های مدیریتی
+- مدیریت تبلیغات
+- ثبت رویدادهای موردنیاز برای Analytics
+- مدیریت برخی درخواست‌ها و گزارش‌ها
 
-    bot/database.py
-    bot/sqlite_backend.py
+### قابلیت‌های توسعه‌ای
 
-بخشی از implementation داخلی SQLite هستند و با Repository/Service code یکسان نیستند.
+- Telegram Mini App
+- جست‌وجوی پیشرفته‌تر مبتنی بر AI
+- امکانات توسعه‌یافتهٔ فروشندگان
+- Analytics پیشرفته
+- تکمیل چرخهٔ سفارش و پیگیری
+- قابلیت‌های بیشتر مقایسهٔ محصولات
+
+این موارد به‌عنوان محدودهٔ محصول ثبت شده‌اند؛ نباید بدون اجرای آزمون مناسب، همهٔ آن‌ها را در مسیر Worker عملیاتی و کامل فرض کرد.
 
 ---
 
-# امنیت
+## ۶. جست‌وجوی محلی
 
-اطلاعات حساس نباید بدون دلیل در Git commit شوند.
+هدف جست‌وجوی محلی این است که بدون نیاز به API پولی، عبارت کاربر به معیارهای ساختاریافته تبدیل شود و نتایج مرتبط از دیتابیس بازیابی شوند.
 
-مواردی مانند:
+اجزای مهم:
+
+- `LocalQueryParser`
+- جست‌وجوی محصولات
+- فیلتر قیمت
+- تشخیص ویژگی‌های قابل استخراج از عبارت کاربر
+- محدود کردن تعداد نتایج
+- مرتب‌سازی نتایج
+- مدیریت عبارت‌های ناقص یا نامشخص
+
+تغییرات جست‌وجو باید با ساختار واقعی Queryها، نام ثابت‌ها و نوع داده‌های بازگشتی هماهنگ باشند.
+
+استفاده از سرویس‌های AI خارجی یا APIهای پولی بدون بررسی ضرورت و تأیید صریح انجام نمی‌شود.
+
+---
+
+## ۷. Webhook تلگرام
+
+مسیر هدف دریافت Updateها از Telegram Webhook به Worker متصل است.
+
+فایل‌های اصلی:
+
+```text
+src/entry.py
+src/worker/webhook.py
+src/worker/telegram.py
+```
+
+### الزامات امنیتی
+
+- درخواست ورودی باید با Secret مورد انتظار اعتبارسنجی شود.
+- Secret نباید در کد، README، فایل تنظیمات عمومی یا Logها قرار گیرد.
+- اگر Secret تنظیم نشده باشد، مسیر Webhook نباید به‌صورت ناامن درخواست‌ها را بپذیرد.
+- درخواست نامعتبر باید بدون اجرای منطق اصلی رد شود.
+- Bot Token باید به‌عنوان Secret محیط Worker نگهداری شود.
+- خطاهای Telegram API باید ثبت و مدیریت شوند، بدون اینکه اطلاعات محرمانه افشا شوند.
+
+### وضعیت فعلی
+
+کد مسیر Webhook و اعتبارسنجی Secret وجود دارد، اما فعال بودن Webhook در حساب واقعی تلگرام و موفقیت ارسال و دریافت پیام هنوز باید با آزمایش عملی تأیید شود.
+
+برای تأیید نهایی باید این موارد بررسی شوند:
+
+1. وجود Secrets موردنیاز در محیط درست Worker.
+2. ثبت Webhook با نشانی صحیح.
+3. بررسی نتیجهٔ `getWebhookInfo`.
+4. ارسال یک پیام واقعی به ربات.
+5. مشاهدهٔ پردازش موفق Update.
+6. دریافت پاسخ واقعی از ربات.
+7. بررسی خطاها و پیام‌های تکراری احتمالی.
+
+تا پیش از انجام این مراحل، نباید ربات را به‌عنوان سرویس Production کاملاً آماده معرفی کرد.
+
+---
+
+## ۸. تنظیمات محرمانه
+
+اطلاعات حساس باید در تنظیمات امن محیط اجرا ذخیره شوند، نه در فایل‌های عمومی مخزن.
+
+موارد موردنیاز مسیر Worker ممکن است شامل موارد زیر باشند:
 
 - `BOT_TOKEN`
-- Secretها
-- Credentialها
-- فایل‌های دیتابیس واقعی
-- تنظیمات خصوصی Deployment
-- Cloudflare secrets
-- API keys
+- `TELEGRAM_WEBHOOK_SECRET`
 
-باید خارج از Repository یا در Secret Management مناسب نگهداری شوند.
+تنظیمات مدیریتی یا سایر متغیرهای لازم باید بر اساس کد واقعی مسیر انتخاب شوند.
 
-فایل `.gitignore` برای جلوگیری از commit شدن فایل‌های محیطی و دیتابیس‌های محلی تنظیم شده است.
+در مسیر قدیمی اجرای محلی، فایل `.env.example` برای معرفی متغیرهای موردنیاز استفاده می‌شود. این فایل نباید حاوی مقادیر واقعی محرمانه باشد.
 
----
+نمونهٔ متغیرهای مسیر قدیمی می‌تواند شامل موارد زیر باشد:
 
-# قوانین توسعه
+```dotenv
+BOT_TOKEN=
+DATABASE_PATH=bot.db
+SEED_DEMO_DATA=0
+ADMIN_CHAT_ID=
+ADMIN_USERNAME=
+```
 
-هنگام توسعه پروژه:
+این نمونه برای معرفی نام متغیرهاست و جایگزین بررسی تنظیمات واقعی Worker نیست.
 
-- معماری ماژولار حفظ شود.
-- منطق جدید مستقیماً داخل `bot.py` اضافه نشود مگر در موارد مربوط به Bootstrap و راه‌اندازی.
-- Handlerها مسئول دریافت ورودی و کنترل Flow باشند.
-- منطق کسب‌وکار در Serviceها قرار گیرد.
-- عملیات داده در Repositoryها یا Backendهای مربوطه متمرکز باشد.
-- لایه‌های بالاتر به SQLite-specific API وابسته نشوند.
-- ثابت‌های مشترک در `constants.py` نگهداری شوند.
-- تنظیمات محیطی از `config.py` دریافت شوند.
-- Secretها داخل Repository قرار نگیرند.
-- تغییرات معماری فقط در صورت نیاز واقعی انجام شوند.
-- تغییرات جدید نباید رفتارهای موجود MVP را بدون دلیل تغییر دهند.
-- تست‌های جدید باید با معماری ماژولار فعلی هماهنگ باشند.
-- تغییرات Cloudflare و Webhook نباید بدون بررسی جریان فعلی Telegram اعمال شوند.
-- Backend جدید باید contract مربوط به `DatabaseBackend` را رعایت کند.
-- منطق Repository نباید به Backend خاصی وابسته شود.
-- Migrationهای دیتابیس باید idempotent و قابل تکرار باشند.
-- عملیات حساس دیتابیس باید از Transaction مناسب استفاده کنند.
+**هیچ Bot Token، Webhook Secret یا اطلاعات ورود نباید در README یا کد منبع قرار گیرد.**
 
 ---
 
-# اصول Persistence
+## ۹. اجرای محلی قدیمی
 
-در بخش‌های application-level پروژه:
+مسیر قدیمی از Python، aiogram و SQLite استفاده می‌کند.
 
-    Handler
-        ↓
-    Service
-        ↓
-    Repository
-        ↓
-    DatabaseBackend
+فایل‌های شناخته‌شده:
 
-نباید به شکل زیر عمل شود:
+```text
+bot.py
+bot/
+requirements.txt
+.env.example
+```
 
-    Handler
-        ↓
-    SQLite connection
+وابستگی‌های شناخته‌شدهٔ مسیر قدیمی:
 
-یا:
+```text
+aiogram >= 3.7, < 4
+aiosqlite >= 0.20, < 0.21
+python-dotenv >= 1, < 2
+```
 
-    Service
-        ↓
-    db.conn.execute(...)
+این اطلاعات مربوط به هستهٔ قدیمی است. اجرای محلی نباید با اجرای Worker اشتباه گرفته شود.
 
-پیاده‌سازی SQLite در پایین‌ترین لایه نگهداری می‌شود.
-
-این جداسازی برای مهاجرت آینده به D1 و همچنین تست‌پذیری بهتر پروژه ضروری است.
+برای اجرای محلی، ابتدا باید محیط Python، وابستگی‌ها، فایل محیطی و دیتابیس مطابق مستندات و وضعیت واقعی کد آماده شوند. اجرای `python bot.py` فقط برای مسیر قدیمی است و روش استقرار Worker محسوب نمی‌شود.
 
 ---
 
-# وضعیت MVP
+## ۱۰. استقرار Worker
 
-ArzanKadeh AI در حال توسعه است و معماری پروژه برای رشد تدریجی طراحی شده است.
+فایل تنظیمات اصلی:
 
-تمرکز فعلی روی:
+`wrangler.jsonc`
 
-- پایداری هسته ربات
-- معماری ماژولار
-- صحت دیتابیس
-- Repository abstraction
-- Database Backend abstraction
-- جستجوی محلی
-- تجربه کاربری Telegram
-- تست‌پذیری
-- امنیت تنظیمات
-- آماده‌سازی Cloudflare
-- آماده‌سازی Webhook
-- حفظ سازگاری SQLite تا زمان تکمیل Backend جدید
+فرمان استقرار شناخته‌شده:
 
-است.
+```bash
+uv run pywrangler deploy
+```
 
----
+این فرمان باید از محیطی اجرا شود که نسخه‌های ابزار، وابستگی‌های پروژه و دسترسی Cloudflare در آن به‌درستی تنظیم شده‌اند.
 
-# مسیر توسعه آینده
+قبل از هر استقرار:
 
-قابلیت‌های آینده می‌توانند شامل موارد زیر باشند:
+1. شاخهٔ `cloudflare-webhook-migration` را بررسی کن.
+2. مطمئن شو تغییرات موردنظر در همان شاخه ذخیره شده‌اند.
+3. وضعیت فایل‌های تنظیمات و وابستگی‌ها را بررسی کن.
+4. مطمئن شو هیچ Secret وارد مخزن نشده است.
+5. بررسی‌های لازم را اجرا کن.
+6. استقرار را انجام بده.
+7. خروجی استقرار و نسخهٔ فعال را بررسی کن.
+8. سلامت Worker و اتصال D1 را تأیید کن.
 
-- Telegram Webhook کامل
-- Cloudflare Worker integration
-- Cloudflare D1 Backend
-- Telegram Mini App کامل
-- AI Search پیشرفته
-- سیستم تبلیغات پیشرفته‌تر
-- امکانات بیشتر برای فروشندگان
-- Analytics پیشرفته
-- سیستم سفارش و پیگیری کامل‌تر
-- قابلیت‌های بیشتر برای مقایسه محصولات
-- زیرساخت مقیاس‌پذیرتر
-- Persistent FSM مناسب محیط Webhook
-- قابلیت‌های Background Task مناسب محیط Deployment جدید
-
-این قابلیت‌ها باید روی معماری موجود توسعه داده شوند و از تغییرات غیرضروری در هسته پروژه جلوگیری شود.
+استقرار موفق به‌تنهایی سلامت همهٔ Handlerها یا صحت ارتباط با Telegram Bot API را ثابت نمی‌کند.
 
 ---
 
-# پشتیبانی
+## ۱۱. تست و کنترل کیفیت
 
-برای پشتیبانی و ارتباط با تیم پروژه:
+تست‌ها باید متناسب با مرحلهٔ مهاجرت اجرا شوند.
 
-    @awlism
+گروه‌های مهم آزمون:
+
+- اعتبارسنجی Webhook
+- پردازش Updateهای تلگرام
+- پردازش Callback Queryها
+- ارتباط با D1
+- عملیات خواندن و نوشتن
+- مدیریت تراکنش‌ها
+- ذخیره و بازیابی State
+- جست‌وجو و فیلتر محصولات
+- مقایسهٔ محصولات
+- ثبت و مدیریت فروشگاه
+- علاقه‌مندی‌ها
+- درخواست‌ها و گزارش‌ها
+- مدیریت خطاهای Telegram API
+- کنترل دسترسی و نقش‌ها
+- سازگاری مسیر Worker با محدودیت‌های Cloudflare
+
+تست‌هایی که Telegram API را Mock می‌کنند، جایگزین آزمایش ارتباط واقعی با تلگرام نیستند.
+
+همچنین نتیجهٔ تست‌های مسیر قدیمی aiogram را نباید به‌عنوان اثبات صحت مسیر Worker تلقی کرد.
+
+### ترتیب پیشنهادی بررسی
+
+1. ممیزی کامل کد و وابستگی‌ها
+2. بررسی سازگاری Backend و Schema دیتابیس
+3. بررسی یکپارچگی Routerها و Handlerها
+4. بررسی مدیریت State و تراکنش‌ها
+5. اجرای تست‌های هدفمند
+6. اجرای مجموعهٔ تست مناسب پس از پایان اصلاحات
+7. استقرار نسخهٔ تأییدشده
+8. آزمون Webhook واقعی
+9. آزمون رفت‌وبرگشت پیام
+10. بررسی خطاهای باقی‌مانده و تأیید آمادگی Production
+
+از اجرای مکرر تست‌های سنگین قبل از پایان ممیزی و اصلاحات هماهنگ خودداری شود.
 
 ---
 
-# License
+## ۱۲. اصول نگهداری کد
 
- این پروژه در حال توسعه است و شرایط استفاده و License نهایی آن در مراحل بعدی مشخص خواهد شد.
+برای جلوگیری از پیچیده شدن غیرضروری پروژه:
+
+- پیش از اضافه کردن فایل یا کد جدید، ابتدا وجود قابلیت مشابه بررسی شود.
+- کد تکراری و وابستگی غیرضروری بدون دلیل اضافه نشود.
+- ساختار فعلی پروژه بدون نیاز واقعی بازطراحی نشود.
+- فایل‌های قدیمی تا زمانی که وابستگی‌ها و جایگزین آن‌ها بررسی نشده‌اند حذف نشوند.
+- قراردادهای Backend و نوع داده‌های بازگشتی یکسان و مشخص باشند.
+- منطق کسب‌وکار از جزئیات اجرایی دیتابیس جدا بماند.
+- مسیر Worker به SQLite محلی یا فایل‌های پایدار محلی وابسته نشود.
+- اطلاعات محرمانه وارد Commit، Log یا مستندات عمومی نشوند.
+- تغییرات هر مرحله با شاخه و Commit واقعی بررسی شوند.
+- وضعیت استقرار فقط با خروجی قابل‌تأیید اعلام شود.
+
+هدف، تکمیل مهاجرت روی پروژهٔ موجود است، نه ساخت مجدد آن از ابتدا.
+
+---
+
+## ۱۳. ساختار کلی هستهٔ قدیمی
+
+ساختار هستهٔ قدیمی شامل اجزایی مانند موارد زیر است:
+
+```text
+bot/
+├── __init__.py
+├── config.py
+├── constants.py
+├── database.py
+├── database_backend.py
+├── sqlite_backend.py
+├── keyboards.py
+├── repositories.py
+├── states.py
+├── utils.py
+├── handlers/
+└── services/
+```
+
+مسئولیت‌های کلی:
+
+- `handlers/`: مدیریت ورودی‌ها و جریان مکالمه
+- `services/`: منطق‌های قابل تفکیک و استفادهٔ مجدد
+- `repositories.py`: عملیات داده
+- `database_backend.py`: قرارداد Backend
+- `sqlite_backend.py`: پیاده‌سازی SQLite
+- `database.py`: بخش‌های سطح پایین دیتابیس
+- `states.py`: وضعیت‌های موردنیاز مکالمه
+- `config.py`: تنظیمات مسیر قدیمی
+
+نام و محل دقیق فایل‌ها باید با ساختار واقعی مخزن تطبیق داده شوند؛ این نمای کلی برای توضیح معماری است.
+
+---
+
+## ۱۴. مشکلاتی که باید در ممیزی نهایی بررسی شوند
+
+موارد زیر چک‌لیست بررسی هستند و به‌معنی اثبات وجود باگ در همهٔ آن‌ها نیستند:
+
+- مسیرهای ناقص یا غیرمتصل در Routerها
+- اختلاف Schema بین SQLite و D1
+- وابستگی به رفتارهای خاص SQLite
+- مقادیر بازگشتی عملیات نوشتن
+- Commit و Rollback تراکنش‌ها
+- Stateهای باقی‌مانده یا ناسازگار
+- Updateهای تکراری تلگرام
+- خطاهای موقت Telegram Bot API
+- مدیریت خطا و Timeout
+- اعتبارسنجی ورودی‌ها
+- محدودیت تعداد نتایج جست‌وجو
+- مجوزهای مدیر و فروشنده
+- وابستگی‌های ناموجود یا غیرضروری
+- تنظیمات ناسازگار استقرار
+- Secrets ناقص یا اشتباه
+- تفاوت میان تست Mock و رفتار واقعی Production
+- مستندات قدیمی که وضعیت فعلی مهاجرت را اشتباه نشان می‌دهند
+
+هر ایراد باید پس از بررسی فایل و جریان واقعی ثبت شود. اصلاحات باید هماهنگ باشند تا با رفع یک مورد، قابلیت دیگری ناخواسته خراب نشود.
+
+---
+
+## ۱۵. قابلیت‌های آینده
+
+قابلیت‌های توسعه‌ای احتمالی:
+
+- تکمیل تجربهٔ کاربری تلگرام
+- تکمیل Webhook و آزمون‌های عملیاتی
+- تکمیل پوشش قابلیت‌های ربات در مسیر Worker
+- بهبود جست‌وجو و رتبه‌بندی
+- توسعهٔ Telegram Mini App
+- امکانات پیشرفته‌تر فروشندگان
+- Analytics دقیق‌تر
+- توسعهٔ قابلیت‌های سفارش و پیگیری
+- توسعهٔ مقایسهٔ محصولات
+- بهبود مدیریت اعلان‌ها
+- قابلیت‌های مقیاس‌پذیری و پایداری
+
+این موارد باید روی معماری موجود و با حفظ قابلیت‌های فعلی توسعه داده شوند.
+
+---
+
+## ۱۶. منابع رسمی
+
+- مخزن پروژه: https://github.com/Awlism/ArzanKadehAiBot
+- شاخهٔ مهاجرت: https://github.com/Awlism/ArzanKadehAiBot/tree/cloudflare-webhook-migration
+- Cloudflare Workers: https://developers.cloudflare.com/workers/
+- Cloudflare D1: https://developers.cloudflare.com/d1/
+- Python Workers: https://developers.cloudflare.com/workers/languages/python/
+- Telegram Bot API: https://core.telegram.org/bots/api
+- Telegram Webhooks: https://core.telegram.org/bots/webhooks
+
+---
+
+## وضعیت نهایی مستندات
+
+این README معماری فعلی، مسیر قدیمی، مسیر Worker، دیتابیس D1 و مراحل باقی‌مانده را از هم تفکیک می‌کند.
+
+وضعیت عملیاتی نهایی فقط زمانی تأیید می‌شود که Webhook واقعی تلگرام فعال باشد، پیام واقعی دریافت شود، پاسخ واقعی ارسال شود و جریان‌های اصلی ربات در محیط مستقرشده بررسی شوند.
+
+پروژه باید به‌صورت تدریجی، قابل‌ممیزی و بدون تغییرات غیرضروری تکمیل شود.
