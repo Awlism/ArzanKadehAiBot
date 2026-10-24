@@ -891,6 +891,7 @@ async def handle_ad_confirm(
         user_id,
         topic,
         seller_id,
+        code,
     )
 
     if request_id is None:
@@ -902,12 +903,6 @@ async def handle_ad_confirm(
         )
         return
 
-    await _audit(
-        db,
-        user_id,
-        request_id,
-        code,
-    )
 
     try:
         await _notify_admin(
