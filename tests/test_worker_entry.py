@@ -411,8 +411,27 @@ def _install_worker_module_stubs() -> list:
             }
         )
 
+    async def clear_state(
+        backend,
+        user_id,
+    ):
+        handler_calls.append(
+            {
+                "name": "clear_state",
+                "args": (
+                    backend,
+                    user_id,
+                ),
+                "kwargs": {},
+            }
+        )
+
     state_module.ensure_state_table = (
         ensure_state_table
+    )
+
+    state_module.clear_state = (
+        clear_state
     )
 
     _install_module(
