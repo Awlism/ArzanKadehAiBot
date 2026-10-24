@@ -896,27 +896,6 @@ async def handle_admin_ad_view(
             ]
         )
 
-        keyboard_rows.append(
-            [
-                _button(
-                    "💰 قیمت",
-                    f"adsetprice:{request_id}",
-                ),
-                _button(
-                    "⏱ مدت",
-                    f"adsetduration:{request_id}",
-                ),
-            ]
-        )
-
-        keyboard_rows.append(
-            [
-                _button(
-                    "📍 جایگاه",
-                    f"adsetplacement:{request_id}",
-                )
-            ]
-        )
 
     keyboard_rows.append(
         _back_button("adsadmin")
