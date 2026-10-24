@@ -33,6 +33,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SRC_ROOT = PROJECT_ROOT / "src"
 
 PROCESSED_UPDATE_IDS = set()
+FAIL_MARK_UPDATE_IDS = set()
 
 # Preserve modules that were loaded before this test file installs stubs.
 # This prevents the entry integration tests from leaking fake modules into
@@ -494,6 +495,11 @@ def _install_worker_module_stubs() -> list:
             "kwargs": {},
         })
 
+        if update_id in FAIL_MARK_UPDATE_IDS:
+            raise RuntimeError(
+                "Simulated failure while marking update processed"
+            )
+
     async def release_update_claim(backend, update_id):
         PROCESSED_UPDATE_IDS.discard(update_id)
         handler_calls.append({
@@ -758,6 +764,7 @@ class WorkerEntryIntegrationTests(
     def setUp(self):
         HANDLER_CALLS.clear()
         PROCESSED_UPDATE_IDS.clear()
+        FAIL_MARK_UPDATE_IDS.clear()
 
         entry.backend.backend = None
         entry.backend.connected = False
@@ -1359,6 +1366,87 @@ class WorkerEntryIntegrationTests(
         self.assertEqual(
             names.count("mark_update_processed"),
             1,
+        )
+        
+    def test_mark_processed_failure_keeps_update_claimed(self):
+        update_id = 71
+
+        FAIL_MARK_UPDATE_IDS.add(update_id)
+
+        request_payload = {
+            "update_id": update_id,
+            "callback_query": {
+                "id": "callback-mark-failure-71",
+                "from": {
+                    "id": 123,
+                },
+                "data": "hot",
+            },
+        }
+
+        headers = {
+            "X-Telegram-Bot-Api-Secret-Token":
+                "test-secret",
+        }
+
+        first_response = run(
+            self.worker.fetch(
+                FakeRequest(
+                    "POST",
+                    request_payload,
+                    headers=headers,
+                )
+            )
+        )
+
+        second_response = run(
+            self.worker.fetch(
+                FakeRequest(
+                    "POST",
+                    request_payload,
+                    headers=headers,
+                )
+            )
+        )
+
+        self.assertEqual(
+            first_response.status,
+            500,
+        )
+
+        self.assertEqual(
+            second_response.status,
+            200,
+        )
+
+        names = [
+            item["name"]
+            for item in HANDLER_CALLS
+        ]
+
+        self.assertEqual(
+            names.count("handle_hot"),
+            1,
+        )
+
+        self.assertEqual(
+            names.count("claim_update"),
+            2,
+        )
+
+        self.assertEqual(
+            names.count("mark_update_processed"),
+            1,
+        )
+
+        self.assertEqual(
+            names.count("release_update_claim"),
+            0,
+        )
+
+        self.assertIn(
+            update_id,
+            PROCESSED_UPDATE_IDS,
         )
         
     def test_invalid_json_returns_400(self):
