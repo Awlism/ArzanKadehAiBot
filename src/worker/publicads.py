@@ -967,6 +967,43 @@ async def _finish_public_ad(
 
                 await tx.execute(
                     """
+                    INSERT INTO requests (
+                        user_id,
+                        request_type,
+                        topic,
+                        message,
+                        status,
+                        created_at,
+                        updated_at
+                    )
+                    SELECT
+                        ?,
+                        'general_ad',
+                        ?,
+                        ?,
+                        'PENDING',
+                        ?,
+                        ?
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM requests
+                        WHERE user_id = ?
+                          AND request_type = 'general_ad'
+                          AND status = 'PENDING'
+                    );
+                    """,
+                    (
+                        user_id,
+                        title.strip(),
+                        data.get("description"),
+                        now,
+                        now,
+                        user_id,
+                    ),
+                )
+
+                await tx.execute(
+                    """
                     INSERT INTO audit_log (
                         actor_user_id,
                         action,
@@ -1062,6 +1099,36 @@ async def _finish_public_ad(
                 )
 
             return
+            
+        results = tx.results
+
+        audit_result = (
+            results[1]
+            if len(results) > 1
+            else None
+        )
+
+        notification_result = (
+            results[2]
+            if len(results) > 2
+            else None
+        )
+
+        if (
+            audit_result is None
+            or audit_result.rowcount != 1
+        ):
+            raise RuntimeError(
+                "Public ad audit insert failed."
+            )
+
+        if (
+            notification_result is None
+            or notification_result.rowcount != 1
+        ):
+            raise RuntimeError(
+                "Public ad notification insert failed."
+            )
 
         # Read the INSERT result after the D1 transaction commits.
         results = tx.results
