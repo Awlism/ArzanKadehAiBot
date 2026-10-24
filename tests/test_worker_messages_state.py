@@ -769,7 +769,7 @@ class MessagesStateDispatchTests(
         )
 
         self.assertIs(
-            support_calls[0]["kwargs"].get("env"),
+            support_calls[0]["args"][3],
             env,
         )
 
