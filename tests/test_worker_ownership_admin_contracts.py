@@ -520,11 +520,24 @@ class WorkerOwnershipAdminContractTests(
     def test_admin_ad_flow_checks_admin_authorization(
         self,
     ):
+        shared_source = _function_source(
+            ADMIN_ADS_FILE,
+            "_start_setting",
+        )
+
+        shared_normalized = _normalized(
+            shared_source
+        )
+
+        self.assertIn(
+            "_is_admin",
+            shared_normalized,
+        )
+
         for function_name in (
             "handle_admin_ad_price_start",
             "handle_admin_ad_duration_start",
             "handle_admin_ad_placement_start",
-            "handle_admin_ad_decision",
         ):
             source = _function_source(
                 ADMIN_ADS_FILE,
@@ -536,10 +549,24 @@ class WorkerOwnershipAdminContractTests(
             )
 
             self.assertIn(
-                "_is_admin",
+                "_start_setting(",
                 normalized,
                 function_name,
             )
+
+        decision_source = _function_source(
+            ADMIN_ADS_FILE,
+            "handle_admin_ad_decision",
+        )
+
+        decision_normalized = _normalized(
+            decision_source
+        )
+
+        self.assertIn(
+            "_is_admin",
+            decision_normalized,
+        )
 
     def test_admin_ad_message_rejects_non_admin(
         self,
