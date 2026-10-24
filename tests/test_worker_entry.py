@@ -757,7 +757,6 @@ class WorkerEntryIntegrationTests(
 ):
     def setUp(self):
         HANDLER_CALLS.clear()
-        entry.state_module.processed_update_ids.clear()
 
         entry.backend.backend = None
         entry.backend.connected = False
