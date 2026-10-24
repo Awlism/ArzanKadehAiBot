@@ -642,38 +642,13 @@ async def _handle_start_parameter(
     if seller is None:
         return
 
-    owner_user_id = seller.get(
-        "owner_user_id"
-    )
-
-    try:
-        owner_user_id = (
-            int(owner_user_id)
-            if owner_user_id is not None
-            else None
-        )
-    except (
-        TypeError,
-        ValueError,
-    ):
-        owner_user_id = None
-
-    if (
-        owner_user_id == referred_user_id
-    ):
-        return
-
     recorded = await record_referral_if_new(
         backend,
         seller_id,
         referred_user_id,
     )
 
-    if (
-        not recorded
-        or owner_user_id is None
-        or owner_user_id < 1
-    ):
+    if not recorded:
         return
 
     await backend.execute(
