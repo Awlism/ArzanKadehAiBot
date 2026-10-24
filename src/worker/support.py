@@ -271,8 +271,7 @@ async def _send_admin_support_request(
             parse_mode="HTML",
         )
     except Exception:
-        # Failure to notify the admin must not roll back
-        # an already-created support request.
+        # Failure to notify the admin must not undo an already-created request.
         return
 
 
@@ -721,9 +720,57 @@ async def handle_support_text(
         return
 
     now = _now_iso()
+    request_id: Optional[int] = None
 
     try:
         async with db.transaction(immediate=True) as tx:
+            # First create the actual support request.
+            await tx.execute(
+                """
+                INSERT INTO requests (
+                    user_id,
+                    request_type,
+                    topic,
+                    message,
+                    status,
+                    created_at,
+                    updated_at
+                )
+                SELECT
+                    ?,
+                    'support',
+                    ?,
+                    ?,
+                    'PENDING',
+                    ?,
+                    ?
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM requests
+                    WHERE user_id = ?
+                      AND request_type = 'support'
+                      AND topic = ?
+                      AND status IN (
+                          'PENDING',
+                          'OPEN',
+                          'IN_PROGRESS',
+                          'APPROVED'
+                      )
+                );
+                """,
+                (
+                    user_id,
+                    topic,
+                    text,
+                    now,
+                    now,
+                    user_id,
+                    topic,
+                ),
+            )
+
+            # Then create the audit record only for the request inserted
+            # immediately before this statement.
             await tx.execute(
                 """
                 INSERT INTO audit_log (
@@ -747,6 +794,8 @@ async def handle_support_text(
                   AND user_id = ?
                   AND request_type = 'support'
                   AND topic = ?
+                  AND message = ?
+                  AND status = 'PENDING'
                   AND created_at = ?;
                 """,
                 (
@@ -755,20 +804,23 @@ async def handle_support_text(
                     now,
                     user_id,
                     topic,
+                    text,
                     now,
                 ),
             )
 
-        # The queued INSERT has committed. Read its result now.
+        # The queued writes are committed when the transaction exits.
         results = tx.results
-        insert_result = results[0] if results else None
 
-        if insert_result is None:
+        request_result = results[0] if len(results) > 0 else None
+        audit_result = results[1] if len(results) > 1 else None
+
+        if request_result is None:
             raise RuntimeError(
                 "Support request INSERT result is missing."
             )
 
-        if insert_result.rowcount == 0:
+        if request_result.rowcount != 1:
             await clear_state(db, user_id)
 
             if chat_id is not None:
@@ -783,10 +835,14 @@ async def handle_support_text(
 
             return
 
-        request_id = insert_result.lastrowid
+        if audit_result is None or audit_result.rowcount != 1:
+            raise RuntimeError(
+                "Support request audit insert failed."
+            )
 
-        # Fallback only when the runtime did not return lastrowid.
-        if request_id is None:
+        request_id_value = request_result.lastrowid
+
+        if request_id_value is None:
             request_row = await db.fetchone(
                 """
                 SELECT id
@@ -809,14 +865,14 @@ async def handle_support_text(
             )
 
             if request_row is not None:
-                request_id = request_row["id"]
+                request_id_value = request_row["id"]
 
-        if request_id is None:
+        if request_id_value is None:
             raise RuntimeError(
                 "Support request ID could not be resolved."
             )
 
-        request_id = int(request_id)
+        request_id = int(request_id_value)
 
     except Exception:
         await clear_state(db, user_id)
@@ -831,28 +887,6 @@ async def handle_support_text(
             )
 
         return
-
-    await db.execute(
-        """
-        INSERT INTO audit_log (
-            actor_user_id,
-            action,
-            entity_type,
-            entity_id,
-            details,
-            created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?);
-        """,
-        (
-            user_id,
-            "support_request_created",
-            "request",
-            request_id,
-            topic,
-            now,
-        ),
-    )
 
     await clear_state(db, user_id)
 
