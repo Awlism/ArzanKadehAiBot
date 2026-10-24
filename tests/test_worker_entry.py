@@ -495,7 +495,7 @@ def _install_worker_module_stubs() -> list:
         })
 
     async def release_update_claim(backend, update_id):
-        processed_update_ids.discard(update_id)
+        PROCESSED_UPDATE_IDS.discard(update_id)
         handler_calls.append({
             "name": "release_update_claim",
             "args": (backend, update_id),
@@ -510,7 +510,7 @@ def _install_worker_module_stubs() -> list:
     state_module.claim_update = claim_update
     state_module.mark_update_processed = mark_update_processed
     state_module.release_update_claim = release_update_claim
-    state_module.processed_update_ids = processed_update_ids
+    state_module.processed_update_ids = PROCESSED_UPDATE_IDS
 
     _install_module(
         "worker.state",
@@ -757,6 +757,7 @@ class WorkerEntryIntegrationTests(
 ):
     def setUp(self):
         HANDLER_CALLS.clear()
+        PROCESSED_UPDATE_IDS.clear()
 
         entry.backend.backend = None
         entry.backend.connected = False
