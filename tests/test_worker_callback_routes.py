@@ -239,7 +239,10 @@ class CallbackRouteContractTests(
             handler_names = []
 
             for child in ast.walk(
-                node.body
+                ast.Module(
+                    body=node.body,
+                    type_ignores=[],
+                )
             ):
                 if not isinstance(
                     child,
