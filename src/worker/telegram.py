@@ -10,7 +10,10 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from workers import fetch
+try:
+    from workers import fetch
+except (ImportError, ModuleNotFoundError):
+    fetch = None
 
 
 class TelegramAPIError(Exception):
