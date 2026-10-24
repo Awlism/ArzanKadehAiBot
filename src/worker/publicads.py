@@ -756,8 +756,8 @@ async def _finish_public_ad(
                     ),
                 )
 
-                # This audit entry is created only if the immediately
-                # preceding request INSERT inserted a row.
+                # Create the audit entry only for the request inserted
+                # by the immediately preceding statement.
                 await tx.execute(
                     """
                     INSERT INTO audit_log (
@@ -772,25 +772,25 @@ async def _finish_public_ad(
                         ?,
                         'general_ad_request_created',
                         'request',
-                        last_insert_rowid(),
+                        r.id,
                         ?,
                         ?
+                    FROM requests AS r
                     WHERE changes() = 1
-                      AND EXISTS (
-                          SELECT 1
-                          FROM requests
-                          WHERE id = last_insert_rowid()
-                            AND user_id = ?
-                            AND request_type = 'general_ad'
-                            AND status = 'PENDING'
-                            AND created_at = ?
-                      );
+                      AND r.user_id = ?
+                      AND r.request_type = 'general_ad'
+                      AND r.topic = ?
+                      AND r.message IS ?
+                      AND r.status = 'PENDING'
+                      AND r.created_at = ?;
                     """,
                     (
                         user_id,
                         title,
                         now,
                         user_id,
+                        title,
+                        description,
                         now,
                     ),
                 )
