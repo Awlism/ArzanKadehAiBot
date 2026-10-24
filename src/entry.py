@@ -36,6 +36,7 @@ from worker.start import (
 )
 from worker.messages import handle_message
 from worker.telegram import TelegramClient
+from worker.ad_display import send_placement_ads
 from worker.state import (
     clear_state,
     ensure_state_table,
@@ -298,6 +299,24 @@ async def _handle_main_menu(
         telegram,
         callback_query,
     )
+    
+    ad_chat_id = chat_id
+
+    if ad_chat_id is None:
+        user = callback_query.get("from") or {}
+        ad_chat_id = user.get("id")
+
+    if ad_chat_id is not None:
+        try:
+            await send_placement_ads(
+                backend,
+                telegram,
+                int(ad_chat_id),
+                "home",
+                limit=1,
+            )
+        except Exception:
+            pass
 
 
 class Default(WorkerEntrypoint):
