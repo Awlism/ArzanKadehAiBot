@@ -22,6 +22,7 @@ from worker.state import (
     set_state,
 )
 
+from worker.ad_display import send_placement_ads
 
 SEARCH_STATE = "search"
 PAGE_SIZE = 8
@@ -2431,6 +2432,17 @@ async def handle_search_message(
         now
     )
 
+    await _send(
+        telegram,
+        message,
+        header,
+        _result_keyboard(
+            products,
+            sellers,
+            0,
+        ),
+    )
+    
     await _send(
         telegram,
         message,
