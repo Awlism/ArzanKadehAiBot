@@ -167,6 +167,7 @@ def _install_backend_stubs() -> None:
             self.connected = False
             self.fetchall_calls = []
             self.fetchone_calls = []
+            self.execute_calls = []
 
             self.__class__.instances.append(
                 self
