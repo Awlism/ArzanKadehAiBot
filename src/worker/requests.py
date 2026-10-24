@@ -355,6 +355,7 @@ async def _list_my_requests(
         label = {
             "support": "🛟 پشتیبانی",
             "ad": "📢 درخواست تبلیغات",
+            "general_ad": "📢 تبلیغ در ارزانکده",
         }.get(
             request_type,
             request_type or "درخواست",
