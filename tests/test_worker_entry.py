@@ -1041,7 +1041,12 @@ class WorkerEntryIntegrationTests(
                     FakeRequest(
                         "POST",
                         {
-                            "update_id": 50,
+                            "update_id": 50 + routes.index(
+                                (
+                                    callback_data,
+                                    expected_handler,
+                                )
+                            ),
                             "callback_query": {
                                 "id": "callback-contact",
                                 "from": {
