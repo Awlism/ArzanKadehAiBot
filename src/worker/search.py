@@ -2444,15 +2444,20 @@ async def handle_search_message(
     )
     
     await _send(
-        telegram,
-        message,
-        header,
-        _result_keyboard(
-            products,
-            sellers,
-            0,
-        ),
-    )
+    chat = message.get("chat") or {}
+    chat_id = chat.get("id")
+
+    if chat_id is not None:
+        try:
+            await send_placement_ads(
+                db,
+                telegram,
+                int(chat_id),
+                "search",
+                limit=1,
+            )
+        except Exception:
+            pass
 
     return True
 
