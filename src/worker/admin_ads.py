@@ -1605,83 +1605,193 @@ async def handle_admin_ad_decision(
         ).get("last_name"),
     )
 
-    if action == "reject":
-        result = await db.execute(
-            """
-            UPDATE requests
-            SET
-                status = 'REJECTED',
-                updated_at = ?
-            WHERE id = ?
-              AND status = 'PENDING'
-              AND request_type IN ('ad', 'general_ad');
-            """,
-            (
-                _now_iso(),
-                request_id,
-            ),
+    new_status = (
+        "REJECTED"
+        if action == "reject"
+        else (
+            "ACTIVE"
+            if request.get("ad_duration_days")
+            else "APPROVED"
         )
+    )
 
-        new_status = "REJECTED"
+    operation_time = datetime.now(
+        timezone.utc
+    ).isoformat(
+        timespec="microseconds"
+    )
 
-    elif request.get(
-        "ad_duration_days"
-    ):
+    if new_status == "ACTIVE":
         expires_at = (
             datetime.now(timezone.utc)
             + timedelta(
-                days=int(
-                    request["ad_duration_days"]
-                )
+                days=int(request["ad_duration_days"])
             )
-        ).isoformat(
-            timespec="seconds"
-        )
-
-        result = await db.execute(
-            """
-            UPDATE requests
-            SET
-                status = 'ACTIVE',
-                ad_expires_at = ?,
-                updated_at = ?
-            WHERE id = ?
-              AND status = 'PENDING'
-              AND request_type IN ('ad', 'general_ad');
-            """,
-            (
-                expires_at,
-                _now_iso(),
-                request_id,
-            ),
-        )
-
-        new_status = "ACTIVE"
-
+        ).isoformat(timespec="seconds")
     else:
-        result = await db.execute(
-            """
-            UPDATE requests
-            SET
-                status = 'APPROVED',
-                updated_at = ?
-            WHERE id = ?
-              AND status = 'PENDING'
-              AND request_type IN ('ad', 'general_ad');
-            """,
-            (
-                _now_iso(),
-                request_id,
-            ),
+        expires_at = None
+
+    if action == "approve":
+        if new_status == "ACTIVE":
+            message = (
+                "✅ تبلیغت تأیید شد و "
+                f"برای {request['ad_duration_days']} روز فعال می‌مونه."
+            )
+        else:
+            message = (
+                "✅ درخواست تبلیغاتت تأیید شد. "
+                "تیم ارزانکده برای هماهنگی قیمت و پرداخت "
+                "باهات تماس می‌گیره."
+            )
+    else:
+        message = (
+            "تبلیغت فعلاً امکان‌پذیر نیست. "
+            "برای جزئیات بیشتر با پشتیبانی در ارتباط باش."
         )
 
-        new_status = "APPROVED"
+    title = (
+        "تبلیغ در ارزانکده"
+        if request["request_type"] == "general_ad"
+        else "درخواست تبلیغات"
+    )
 
-    if getattr(
-        result,
-        "rowcount",
-        0,
-    ) != 1:
+    audit_action = (
+        "request_approved"
+        if action == "approve"
+        else "request_rejected"
+    )
+
+    try:
+        async with db.transaction() as tx:
+            if new_status == "REJECTED":
+                await tx.execute(
+                    """
+                    UPDATE requests
+                    SET
+                        status = 'REJECTED',
+                        updated_at = ?
+                    WHERE id = ?
+                      AND status = 'PENDING'
+                      AND request_type IN ('ad', 'general_ad');
+                    """,
+                    (
+                        operation_time,
+                        request_id,
+                    ),
+                )
+
+            elif new_status == "ACTIVE":
+                await tx.execute(
+                    """
+                    UPDATE requests
+                    SET
+                        status = 'ACTIVE',
+                        ad_expires_at = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                      AND status = 'PENDING'
+                      AND request_type IN ('ad', 'general_ad');
+                    """,
+                    (
+                        expires_at,
+                        operation_time,
+                        request_id,
+                    ),
+                )
+
+            else:
+                await tx.execute(
+                    """
+                    UPDATE requests
+                    SET
+                        status = 'APPROVED',
+                        updated_at = ?
+                    WHERE id = ?
+                      AND status = 'PENDING'
+                      AND request_type IN ('ad', 'general_ad');
+                    """,
+                    (
+                        operation_time,
+                        request_id,
+                    ),
+                )
+
+            await tx.execute(
+                """
+                INSERT INTO audit_log (
+                    actor_user_id,
+                    action,
+                    entity_type,
+                    entity_id,
+                    details,
+                    created_at
+                )
+                SELECT ?, ?, 'request', id, ?, ?
+                FROM requests
+                WHERE id = ?
+                  AND status = ?
+                  AND updated_at = ?
+                  AND request_type IN ('ad', 'general_ad');
+                """,
+                (
+                    admin_user_id,
+                    audit_action,
+                    new_status,
+                    operation_time,
+                    request_id,
+                    new_status,
+                    operation_time,
+                ),
+            )
+
+            await tx.execute(
+                """
+                INSERT INTO notifications (
+                    user_id,
+                    title,
+                    message,
+                    notification_type,
+                    is_read,
+                    created_at
+                )
+                SELECT ?, ?, ?, 'info', 0, ?
+                FROM requests
+                WHERE id = ?
+                  AND status = ?
+                  AND updated_at = ?
+                  AND request_type IN ('ad', 'general_ad');
+                """,
+                (
+                    request["user_id"],
+                    title,
+                    message,
+                    operation_time,
+                    request_id,
+                    new_status,
+                    operation_time,
+                ),
+            )
+
+        results = tx.results
+
+    except Exception:
+        await _answer_callback(
+            telegram,
+            callback_query,
+            text=(
+                "⚠️ ذخیره تغییر انجام نشد. "
+                "لطفاً دوباره تلاش کن."
+            ),
+            show_alert=True,
+        )
+        return
+
+    if (
+        len(results) != 3
+        or getattr(results[0], "rowcount", 0) != 1
+        or getattr(results[1], "rowcount", 0) != 1
+        or getattr(results[2], "rowcount", 0) != 1
+    ):
         current = await _get_ad_request(
             db,
             request_id,
@@ -1698,55 +1808,6 @@ async def handle_admin_ad_decision(
             show_alert=True,
         )
         return
-
-    await _audit(
-        db,
-        admin_user_id,
-        (
-            "request_approved"
-            if action == "approve"
-            else "request_rejected"
-        ),
-        request_id,
-    )
-
-    if action == "approve":
-        if new_status == "ACTIVE":
-            message = (
-                "✅ تبلیغت تأیید شد و "
-                f"برای {request['ad_duration_days']} روز فعال می‌مونه."
-            )
-        else:
-            message = (
-                "✅ درخواست تبلیغاتت تأیید شد. "
-                "تیم ارزانکده برای هماهنگی قیمت و پرداخت "
-                "باهات تماس می‌گیره."
-            )
-
-        title = (
-            "تبلیغ در ارزانکده"
-            if request["request_type"] == "general_ad"
-            else "درخواست تبلیغات"
-        )
-
-    else:
-        message = (
-            "تبلیغت فعلاً امکان‌پذیر نیست. "
-            "برای جزئیات بیشتر با پشتیبانی در ارتباط باش."
-        )
-
-        title = (
-            "تبلیغ در ارزانکده"
-            if request["request_type"] == "general_ad"
-            else "درخواست تبلیغات"
-        )
-
-    await _notify_user(
-        db,
-        request["user_id"],
-        title,
-        message,
-    )
 
     await _answer_callback(
         telegram,
