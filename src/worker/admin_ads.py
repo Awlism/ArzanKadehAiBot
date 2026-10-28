@@ -1107,11 +1107,11 @@ async def _set_ad_value(
                         telegram,
                         chat_id,
                         (
-                            f"⚠️ تنظیم درخواست #{request_id} ثبت شد، "
-                            "اما تبلیغ هنوز فعال نشده؛ "
-                            f"{next_step}"
+                            f"{success_text}\n\n"
+                            f"⚠️ تبلیغ هنوز فعال نشده؛ {next_step}"
                         ),
                     )
+                    return
 
             else:
                 expires_at = (
