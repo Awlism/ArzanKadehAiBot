@@ -1674,9 +1674,17 @@ async def _finish_product_add(
                     created_at,
                     updated_at
                 )
-                VALUES (
+                SELECT
                     ?, ?, ?, ?, ?, ?, ?,
                     'AVAILABLE', 0, 0, 0, ?, ?
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM sellers
+                    WHERE id = ?
+                      AND (
+                          owner_user_id = ?
+                          OR created_by_user_id = ?
+                      )
                 );
                 """,
                 (
@@ -1689,6 +1697,9 @@ async def _finish_product_add(
                     data.get("image_url"),
                     now,
                     now,
+                    seller_id,
+                    user_id,
+                    user_id,
                 ),
             )
 
