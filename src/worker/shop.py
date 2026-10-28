@@ -11,6 +11,7 @@ from html import escape
 from typing import Any
 from worker.contact_validation import (
     instagram_url,
+    phone_number,
     telegram_url,
     website_url,
     whatsapp_url,
@@ -1295,6 +1296,7 @@ async def handle_shop_edit_message(
         "telegram_support": telegram_url,
         "whatsapp": whatsapp_url,
         "website": website_url,
+        "phone": phone_number,
     }
 
     validator = validators.get(field)
@@ -1309,6 +1311,7 @@ async def handle_shop_edit_message(
                 "telegram_support": "⚠️ آیدی پشتیبانی تلگرام معتبر نیست. دوباره بفرست:",
                 "whatsapp": "⚠️ شماره یا لینک واتساپ معتبر نیست. دوباره بفرست:",
                 "website": "⚠️ لینک وب‌سایت معتبر نیست. دوباره بفرست:",
+                "phone": "⚠️ شماره تلفن معتبر نیست. شماره را با ۷ تا ۱۵ رقم و قالب صحیح بفرست:",
             }
 
             await _send(
