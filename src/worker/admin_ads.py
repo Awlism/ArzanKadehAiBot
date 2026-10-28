@@ -1092,17 +1092,24 @@ async def _set_ad_value(
             )
 
             if not can_activate:
-                if (
-                    updated["request_type"] == "general_ad"
-                    and placement is None
-                ):
+                if updated["request_type"] == "general_ad":
+                    if placement is None:
+                        next_step = (
+                            "ابتدا جایگاه «صفحه اصلی» یا "
+                            "«نتایج جستجو» را تعیین کن."
+                        )
+                    else:
+                        next_step = (
+                            "ابتدا مدت نمایش معتبر را تعیین کن."
+                        )
+
                     await _send(
                         telegram,
                         chat_id,
                         (
-                            f"⚠️ مدت درخواست #{request_id} ثبت شد، "
-                            "اما تبلیغ هنوز فعال نشده؛ ابتدا جایگاه "
-                            "«صفحه اصلی» یا «نتایج جستجو» را تعیین کن."
+                            f"⚠️ تنظیم درخواست #{request_id} ثبت شد، "
+                            "اما تبلیغ هنوز فعال نشده؛ "
+                            f"{next_step}"
                         ),
                     )
 
