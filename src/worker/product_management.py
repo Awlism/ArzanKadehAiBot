@@ -1176,7 +1176,9 @@ async def handle_product_add_start(
             )
             return
 
-        if state_data.get("step") != "add_category":
+        current_step = state_data.get("step")
+
+        if current_step not in ("add_category", "add_name"):
             await _answer(
                 telegram,
                 callback_query,
@@ -1184,6 +1186,14 @@ async def handle_product_add_start(
                 True,
             )
             return
+
+        if current_step == "add_name":
+            await _set_state(
+                db,
+                user_id,
+                "add_category",
+                state_data,
+            )
 
         seller_id = _parse_id(
             state_data.get("seller_id")
