@@ -8,6 +8,7 @@ This module is safe to use in the Cloudflare Worker runtime.
 from __future__ import annotations
 
 import re
+import ipaddress
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -77,7 +78,7 @@ def telegram_url(value: Any) -> str | None:
     value = value.strip("/").lstrip("@")
 
     if not re.fullmatch(
-        r"[A-Za-z0-9_]{5,32}",
+        r"[A-Za-z][A-Za-z0-9_]{3,30}[A-Za-z0-9]",
         value,
     ):
         return None
