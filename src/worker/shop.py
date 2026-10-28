@@ -1245,32 +1245,75 @@ async def handle_shop_edit_message(
         return True
 
     value_to_store = value or None
+    now = _now_iso()
 
-    await db.execute(
-        f"""
-        UPDATE sellers
-        SET {field} = ?,
-            updated_at = ?
-        WHERE id = ?;
-        """,
-        (
-            value_to_store,
-            _now_iso(),
-            seller_id,
-        ),
-    )
+    try:
+        async with db.transaction(immediate=True) as transaction:
+            await transaction.execute(
+                f"""
+                UPDATE sellers
+                SET {field} = ?,
+                    updated_at = ?
+                WHERE id = ?
+                  AND (
+                      owner_user_id = ?
+                      OR created_by_user_id = ?
+                  );
+                """,
+                (
+                    value_to_store,
+                    now,
+                    seller_id,
+                    user_id,
+                    user_id,
+                ),
+            )
+
+            await transaction.execute(
+                """
+                INSERT INTO audit_log (
+                    actor_user_id,
+                    action,
+                    entity_type,
+                    entity_id,
+                    details,
+                    created_at
+                )
+                SELECT ?, 'shop_field_updated', 'seller', ?, ?, ?
+                WHERE changes() = 1;
+                """,
+                (
+                    user_id,
+                    seller_id,
+                    field,
+                    now,
+                ),
+            )
+
+        results = transaction.results
+
+        if (
+            len(results) != 2
+            or any(
+                getattr(result, "rowcount", 0) != 1
+                for result in results
+            )
+        ):
+            raise RuntimeError(
+                "Shop field update or audit insert failed."
+            )
+
+    except Exception:
+        await _send(
+            telegram,
+            message,
+            "⚠️ تغییر اطلاعات ذخیره نشد. دوباره تلاش کن.",
+        )
+        return True
 
     await clear_state(
         db,
         user_id,
-    )
-
-    await _audit(
-        db,
-        user_id,
-        "shop_field_updated",
-        seller_id,
-        field,
     )
 
     await _send(
