@@ -174,7 +174,6 @@ from worker.shop import (
     handle_shop_edit_start,
     handle_shop_city_start,
     handle_shop_city_pick,
-    handle_shop_toggle_active,
 )
 
 from worker.ads import (
