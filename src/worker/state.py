@@ -327,6 +327,15 @@ async def release_update_claim(
 
     Processed updates are never deleted by this function.
     """
+    if (
+        isinstance(update_id, bool)
+        or not isinstance(update_id, int)
+        or update_id < 0
+    ):
+        raise ValueError(
+            "A valid Telegram update_id is required."
+        )
+
     await db.execute(
         """
         DELETE FROM processed_updates
