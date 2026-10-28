@@ -478,6 +478,25 @@ class ProcessedUpdateTests(unittest.TestCase):
             original_claimed_at,
         )
 
+    def test_processing_claim_cannot_be_reclaimed_at_exact_lease_boundary(self):
+        update_id = 105
+
+        self.assertTrue(
+            run(state.claim_update(self.db, update_id))
+        )
+
+        self.db.clock += state.UPDATE_CLAIM_LEASE_SECONDS
+
+        self.assertFalse(
+            run(state.claim_update(self.db, update_id))
+        )
+
+        self.db.clock += 1
+
+        self.assertTrue(
+            run(state.claim_update(self.db, update_id))
+        )
+
     def test_processed_update_cannot_be_claimed_again(self):
         self.assertTrue(run(state.claim_update(self.db, 101)))
         self.assertTrue(run(state.mark_update_processed(self.db, 101)))
