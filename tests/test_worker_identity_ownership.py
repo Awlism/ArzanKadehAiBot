@@ -40,7 +40,58 @@ class DatabaseResult:
         self.rowcount = rowcount
         self.lastrowid = lastrowid
 
+class FakeTransaction:
+    def __init__(self, db):
+        self.db = db
+        self.pending = []
+        self.results = []
 
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type,
+        exc,
+        traceback,
+    ):
+        if exc_type is not None:
+            return False
+
+        for sql, params in self.pending:
+            result = await self.db.execute(
+                sql,
+                params,
+            )
+            self.results.append(result)
+
+        return False
+
+    async def fetchone(
+        self,
+        sql,
+        params=None,
+    ):
+        return await self.db.fetchone(
+            sql,
+            params,
+        )
+
+    async def execute(
+        self,
+        sql,
+        params=None,
+    ):
+        self.pending.append(
+            (
+                sql,
+                params,
+            )
+        )
+        return DatabaseResult(
+            rowcount=1
+        )
+        
 class FakeDB:
     """
     Minimal async database double.
@@ -74,6 +125,12 @@ class FakeDB:
             DatabaseResult
         ] = []
 
+    def transaction(
+        self,
+        immediate=False,
+    ):
+        return FakeTransaction(self)
+        
     async def fetchone(
         self,
         sql: str,
