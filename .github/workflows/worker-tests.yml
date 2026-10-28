@@ -63,4 +63,6 @@ jobs:
             tests.test_worker_user_scoped_contracts \
             tests.test_worker_review_report_contracts \
             tests.test_worker_admin_auth \
-            tests.test_worker_telegram
+            tests.test_worker_telegram \
+            tests.test_worker_seller_urls \
+            tests.test_worker_contact_validation
