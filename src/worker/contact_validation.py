@@ -107,26 +107,46 @@ def website_url(value: Any) -> str | None:
         if parsed.scheme.lower() not in {"http", "https"}:
             return None
 
-        if not parsed.hostname:
+        hostname = parsed.hostname
+
+        if (
+            not hostname
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
             return None
 
-        if parsed.username is not None or parsed.password is not None:
-            return None
-
-        # Accessing .port also validates malformed port values.
         port = parsed.port
 
         if port is not None and not 1 <= port <= 65535:
             return None
 
-        hostname = parsed.hostname
+        try:
+            ipaddress.ip_address(hostname)
+        except ValueError:
+            try:
+                ascii_hostname = hostname.encode("idna").decode("ascii")
+            except UnicodeError:
+                return None
 
-        if (
-            hostname.startswith(".")
-            or hostname.endswith(".")
-            or ".." in hostname
-        ):
-            return None
+            if len(ascii_hostname) > 253:
+                return None
+
+            labels = ascii_hostname.rstrip(".").split(".")
+
+            if len(labels) < 2 or any(
+                not label
+                or len(label) > 63
+                or not re.fullmatch(
+                    r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?",
+                    label,
+                )
+                for label in labels
+            ):
+                return None
+
+            if not re.search(r"[A-Za-z]", labels[-1]):
+                return None
 
     except (ValueError, TypeError):
         return None
