@@ -25,6 +25,7 @@ import importlib.util
 import sys
 import types
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from typing import Any
 
@@ -1356,6 +1357,82 @@ class WorkerEntryIntegrationTests(
             "handle_hot",
             names,
         )
+
+    def test_dispatch_failure_releases_update_claim(self):
+        class FailingRouter:
+            def set_message_handler(self, handler):
+                pass
+
+            def set_callback_handler(self, handler):
+                pass
+
+            async def dispatch(self, update):
+                raise RuntimeError("Original dispatch failure")
+
+        request = FakeRequest(
+            "POST",
+            {
+                "update_id": 9001,
+                "callback_query": {
+                    "id": "callback-dispatch-failure",
+                    "from": {"id": 123},
+                    "data": "hot",
+                },
+            },
+        )
+
+        with patch.object(entry, "WorkerRouter", FailingRouter):
+            response = run(self.worker.fetch(request))
+
+        self.assertEqual(response.status, 500)
+        self.assertNotIn(9001, PROCESSED_UPDATE_IDS)
+
+        names = [
+            item["name"]
+            for item in HANDLER_CALLS
+        ]
+
+        self.assertIn("release_update_claim", names)
+
+    def test_release_failure_does_not_mask_dispatch_failure(self):
+        class FailingRouter:
+            def set_message_handler(self, handler):
+                pass
+
+            def set_callback_handler(self, handler):
+                pass
+
+            async def dispatch(self, update):
+                raise RuntimeError("Original dispatch failure")
+
+        async def failing_release(backend, update_id):
+            raise RuntimeError("Claim release failure")
+
+        request = FakeRequest(
+            "POST",
+            {
+                "update_id": 9002,
+                "callback_query": {
+                    "id": "callback-release-failure",
+                    "from": {"id": 123},
+                    "data": "hot",
+                },
+            },
+        )
+
+        with (
+            patch.object(entry, "WorkerRouter", FailingRouter),
+            patch.object(
+                entry,
+                "release_update_claim",
+                failing_release,
+            ),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Original dispatch failure",
+            ):
+                run(self.worker._handle_webhook(request))
 
     def test_duplicate_webhook_update_is_not_dispatched_twice(self):
         request_payload = {
