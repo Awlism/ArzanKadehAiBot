@@ -1341,62 +1341,6 @@ async def handle_admin_report_decision(
         update_result is None
         or update_result.rowcount != 1
     ):
-        await _answer_callback(
-            telegram,
-            callback_query,
-            "⚠️ این گزارش قبلاً تعیین‌تکلیف شده است.",
-            show_alert=True,
-        )
-        return True
-        
-        await _answer_callback(
-            telegram,
-            callback_query,
-            "⚠️ این گزارش قبلاً تعیین‌تکلیف شده است.",
-            show_alert=True,
-        )
-        return True
-
-    audit_action = (
-        "report_approved"
-        if action == "approve"
-        else "report_rejected"
-    )
-
-    await backend.execute(
-        """
-        INSERT INTO audit_log (
-            actor_user_id,
-            action,
-            entity_type,
-            entity_id,
-            details,
-            created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?);
-        """,
-        (
-            admin_user_id,
-            audit_action,
-            "report",
-            report_id,
-            None,
-            _now_iso(),
-        ),
-    )
-
-    if action == "approve":
-        notification_title = "نتیجه گزارش شما"
-        notification_message = (
-            "✅ گزارشت بررسی و تأیید شد. "
-            "ممنون که به امن‌تر شدن ارزانکده کمک می‌کنی."
-        )
-    else:
-        notification_title = "نتیجه گزارش شما"
-        notification_message = (
-            "🚫 گزارشت بررسی شد.\n"
-            "بعد از بررسی، مورد گزارش‌شده نیاز به اقدام نداشت."
-        )
 
     await backend.execute(
         """
