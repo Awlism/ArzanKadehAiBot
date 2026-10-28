@@ -74,6 +74,31 @@ def _parse_int(value: Any) -> Optional[int]:
     return result
 
 
+def _normalize_ad_placement(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+
+    normalized = str(value)
+    normalized = normalized.replace("ي", "ی")
+    normalized = normalized.replace("ك", "ک")
+    normalized = normalized.replace("\u200c", " ")
+    normalized = " ".join(normalized.lower().split())
+
+    placement_choices = {
+        "صفحه اصلی": "صفحه اصلی",
+        "خانه": "صفحه اصلی",
+        "home": "صفحه اصلی",
+        "main": "صفحه اصلی",
+        "نتایج جستجو": "نتایج جستجو",
+        "نتایج جست‌وجو": "نتایج جستجو",
+        "جستجو": "نتایج جستجو",
+        "جست‌وجو": "نتایج جستجو",
+        "search": "نتایج جستجو",
+    }
+
+    return placement_choices.get(normalized)
+
+
 def _parse_non_negative_int(
     value: Any,
 ) -> Optional[int]:
