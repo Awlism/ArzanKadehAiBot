@@ -1334,6 +1334,7 @@ async def handle_admin_ad_placement_start(
         env,
         "ad_placement",
         "📍 جایگاه را انتخاب کن و دقیقاً یکی از این دو عبارت را بفرست:\n۱) صفحه اصلی\n۲) نتایج جستجو",
+    )
 
 
 async def handle_admin_ad_message(
