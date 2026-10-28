@@ -32,6 +32,9 @@ def _clean(value: Any) -> str | None:
 
 def phone_number(value: Any) -> str | None:
     """Validate a phone number and return its cleaned representation."""
+    if not isinstance(value, str):
+        return None
+
     value = _clean(value)
 
     if value is None:
