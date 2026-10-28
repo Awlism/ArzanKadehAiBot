@@ -967,6 +967,14 @@ async def handle_register_seller_message(
         return True
 
     if step == "description":
+        if text != "ندارد" and len(text) > 1000:
+            await _send(
+                telegram,
+                message,
+                "⚠️ توضیحات فروشگاه نباید بیشتر از ۱۰۰۰ کاراکتر باشد. کوتاه‌تر بنویس:",
+            )
+            return True
+
         data["register_description"] = (
             ""
             if text == "ندارد"
