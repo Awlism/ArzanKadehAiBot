@@ -1036,6 +1036,11 @@ async def handle_shop_city_pick(
         )
         return
 
+    await clear_state(
+        db,
+        user_id,
+    )
+
     await _answer(
         telegram,
         callback_query,
