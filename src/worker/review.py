@@ -981,8 +981,8 @@ async def handle_review_text(
         message_text = str(exc).lower()
 
         if (
-            "unique" in message_text
-            or "constraint" in message_text
+            "unique constraint failed" in message_text
+            or "is not unique" in message_text
         ):
             await clear_state(
                 backend,
