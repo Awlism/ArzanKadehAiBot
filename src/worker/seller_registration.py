@@ -938,6 +938,14 @@ async def handle_register_seller_message(
     )
 
     if step == "name":
+        if len(text) > 100:
+            await _send(
+                telegram,
+                message,
+                "⚠️ نام فروشگاه نباید بیشتر از ۱۰۰ کاراکتر باشد. کوتاه‌تر بنویس:",
+            )
+            return True
+
         data["register_name"] = text
 
         await _set_registration_state(
