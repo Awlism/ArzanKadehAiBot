@@ -1341,27 +1341,13 @@ async def handle_admin_report_decision(
         update_result is None
         or update_result.rowcount != 1
     ):
-
-    await backend.execute(
-        """
-        INSERT INTO notifications (
-            user_id,
-            title,
-            message,
-            notification_type,
-            is_read,
-            created_at
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ این گزارش قبلاً تعیین‌تکلیف شده است.",
+            show_alert=True,
         )
-        VALUES (?, ?, ?, ?, 0, ?);
-        """,
-        (
-            report["user_id"],
-            notification_title,
-            notification_message,
-            "report",
-            _now_iso(),
-        ),
-    )
+        return True
 
     await _answer_callback(
         telegram,
