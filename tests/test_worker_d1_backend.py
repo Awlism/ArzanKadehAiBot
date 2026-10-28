@@ -722,6 +722,59 @@ class D1TransactionTests(
             scenario()
         )
 
+    def test_transaction_results_map_each_statement_after_commit(self):
+        self.database.batch_results = [
+            {
+                "meta": {
+                    "changes": 1,
+                    "last_row_id": 11,
+                }
+            },
+            {
+                "meta": {
+                    "changes": 0,
+                    "last_row_id": None,
+                }
+            },
+        ]
+
+        async def scenario():
+            async with self.backend.transaction() as tx:
+                await tx.execute(
+                    "INSERT INTO events (name) VALUES (?)",
+                    ("one",),
+                )
+                await tx.execute(
+                    "UPDATE events SET name = ? WHERE id = ?",
+                    ("two", 999),
+                )
+
+            results = tx.results
+
+            self.assertEqual(len(results), 2)
+            self.assertEqual(results[0].rowcount, 1)
+            self.assertEqual(results[0].lastrowid, 11)
+            self.assertEqual(results[1].rowcount, 0)
+            self.assertIsNone(results[1].lastrowid)
+
+        run(scenario())
+
+    def test_transaction_results_are_unavailable_after_abort(self):
+        async def scenario():
+            tx = self.backend.transaction()
+
+            with self.assertRaises(ValueError):
+                async with tx:
+                    await tx.execute(
+                        "INSERT INTO events (name) VALUES (?)",
+                        ("one",),
+                    )
+                    raise ValueError("abort transaction")
+
+            with self.assertRaises(RuntimeError):
+                _ = tx.results
+
+        run(scenario())
 
 if __name__ == "__main__":
     unittest.main()
