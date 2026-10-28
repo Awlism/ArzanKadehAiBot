@@ -1246,24 +1246,109 @@ async def handle_admin_report_decision(
         )
         return True
 
-    new_status = "APPROVED" if action == "approve" else "REJECTED"
+    new_status = (
+        "APPROVED"
+        if action == "approve"
+        else "REJECTED"
+    )
+    now = _now_iso()
 
-    update_result = await backend.execute(
-        """
-        UPDATE reports
-        SET status = ?
-        WHERE id = ?
-          AND status = 'PENDING';
-        """,
-        (
-            new_status,
-            report_id,
-        ),
+    audit_action = (
+        "report_approved"
+        if action == "approve"
+        else "report_rejected"
     )
 
-    # Only the callback that actually changed PENDING may create
-    # an audit entry or notify the reporter.
-    if update_result is None or update_result.rowcount != 1:
+    if action == "approve":
+        notification_title = "نتیجه گزارش شما"
+        notification_message = (
+            "✅ گزارشت بررسی و تأیید شد. "
+            "ممنون که به امن‌تر شدن ارزانکده کمک می‌کنی."
+        )
+    else:
+        notification_title = "نتیجه گزارش شما"
+        notification_message = (
+            "🚫 گزارشت بررسی شد.\n"
+            "بعد از بررسی، مورد گزارش‌شده نیاز به اقدام نداشت."
+        )
+
+    # Keep the status update, audit entry, and notification
+    # in one D1 transaction.
+    async with backend.transaction() as tx:
+        await tx.execute(
+            """
+            UPDATE reports
+            SET status = ?
+            WHERE id = ?
+              AND status = 'PENDING';
+            """,
+            (
+                new_status,
+                report_id,
+            ),
+        )
+
+        await tx.execute(
+            """
+            INSERT INTO audit_log (
+                actor_user_id,
+                action,
+                entity_type,
+                entity_id,
+                details,
+                created_at
+            )
+            SELECT ?, ?, 'report', ?, NULL, ?
+            WHERE changes() = 1;
+            """,
+            (
+                admin_user_id,
+                audit_action,
+                report_id,
+                now,
+            ),
+        )
+
+        await tx.execute(
+            """
+            INSERT INTO notifications (
+                user_id,
+                title,
+                message,
+                notification_type,
+                is_read,
+                created_at
+            )
+            SELECT ?, ?, ?, 'report', 0, ?
+            WHERE changes() = 1;
+            """,
+            (
+                report["user_id"],
+                notification_title,
+                notification_message,
+                now,
+            ),
+        )
+
+    statement_results = tx.results
+    update_result = (
+        statement_results[0]
+        if statement_results
+        else None
+    )
+
+    if (
+        update_result is None
+        or update_result.rowcount != 1
+    ):
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ این گزارش قبلاً تعیین‌تکلیف شده است.",
+            show_alert=True,
+        )
+        return True
+        
         await _answer_callback(
             telegram,
             callback_query,
