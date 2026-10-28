@@ -439,6 +439,14 @@ async def _finish_registration(
         )
         return
 
+    if len(name) > 100:
+        await _send(
+            telegram,
+            message,
+            "⚠️ نام فروشگاه نباید بیشتر از ۱۰۰ کاراکتر باشد. لطفاً ثبت‌نام را دوباره با نام کوتاه‌تری انجام بده.",
+        )
+        return
+
     city_id = data.get(
         "register_city_id"
     )
