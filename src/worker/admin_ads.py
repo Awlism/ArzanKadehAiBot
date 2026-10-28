@@ -1066,7 +1066,7 @@ async def _set_ad_value(
         )
         return
 
-if field in {"ad_duration_days", "ad_placement"}:
+    if field in {"ad_duration_days", "ad_placement"}:
         updated = await _get_ad_request(
             db,
             request_id,
