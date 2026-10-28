@@ -91,177 +91,28 @@ def _status_badge(
     )
 
 
-def _normalize_username_url(
-    value: Any,
-    base_url: str,
-    pattern: str,
-) -> str | None:
-    if value is None:
-        return None
+def _instagram_url(value: Any) -> str | None:
+    from worker.contact_validation import instagram_url
 
-    value = str(value).strip()
-
-    if not value:
-        return None
-
-    value = re.sub(
-        pattern,
-        "",
-        value,
-        flags=re.IGNORECASE,
-    )
-
-    value = value.strip("/").lstrip("@")
-
-    if not value:
-        return None
-
-    if not re.fullmatch(
-        r"[A-Za-z0-9._]+",
-        value,
-    ):
-        return None
-
-    return f"{base_url}{value}"
+    return instagram_url(value)
 
 
-def _instagram_url(
-    value: Any,
-) -> str | None:
-    return _normalize_username_url(
-        value,
-        "https://instagram.com/",
-        r"^https?://(www\.)?instagram\.com/",
-    )
+def _telegram_url(value: Any) -> str | None:
+    from worker.contact_validation import telegram_url
+
+    return telegram_url(value)
 
 
-def _telegram_url(
-    value: Any,
-) -> str | None:
-    return _normalize_username_url(
-        value,
-        "https://t.me/",
-        r"^https?://(www\.)?t\.me/",
-    )
+def _website_url(value: Any) -> str | None:
+    from worker.contact_validation import website_url
+
+    return website_url(value)
 
 
-def _website_url(
-    value: Any,
-) -> str | None:
-    if value is None:
-        return None
+def _whatsapp_url(value: Any) -> str | None:
+    from worker.contact_validation import whatsapp_url
 
-    value = str(value).strip()
-
-    if not value:
-        return None
-
-    if "://" not in value:
-        value = f"https://{value}"
-
-    lowered = value.lower()
-
-    if not (
-        lowered.startswith("http://")
-        or lowered.startswith("https://")
-    ):
-        return None
-
-    if any(
-        char in value
-        for char in (
-            "\n",
-            "\r",
-            "\t",
-            "<",
-            ">",
-            '"',
-            "'",
-        )
-    ):
-        return None
-
-    return value
-
-
-def _whatsapp_url(
-    value: Any,
-) -> str | None:
-    from urllib.parse import parse_qs, urlsplit
-
-    if value is None:
-        return None
-
-    value = str(value).strip()
-
-    if not value:
-        return None
-
-    # لینک آماده فقط از دامنه‌های رسمی واتساپ پذیرفته می‌شود.
-    if "://" in value:
-        try:
-            parsed = urlsplit(value)
-
-            if (
-                parsed.scheme.lower() != "https"
-                or parsed.hostname is None
-                or parsed.hostname.lower()
-                not in {
-                    "wa.me",
-                    "api.whatsapp.com",
-                }
-                or parsed.username is not None
-                or parsed.password is not None
-                or parsed.port is not None
-            ):
-                return None
-
-            if parsed.hostname.lower() == "wa.me":
-                if not re.fullmatch(
-                    r"/[0-9]{7,15}/?",
-                    parsed.path,
-                ):
-                    return None
-
-            elif (
-                parsed.path.rstrip("/") != "/send"
-            ):
-                return None
-
-            else:
-                query = parse_qs(
-                    parsed.query,
-                    keep_blank_values=True,
-                )
-                phones = query.get("phone", [])
-
-                if (
-                    len(phones) != 1
-                    or not re.fullmatch(
-                        r"[0-9]{7,15}",
-                        phones[0],
-                    )
-                ):
-                    return None
-
-            return value
-
-        except (ValueError, TypeError):
-            return None
-
-    # ورودی شماره باید فقط از نویسه‌های متعارف شماره تشکیل شده باشد.
-    if not re.fullmatch(
-        r"[0-9+\s().-]+",
-        value,
-    ):
-        return None
-
-    digits = re.sub(r"\D", "", value)
-
-    if not re.fullmatch(r"[0-9]{7,15}", digits):
-        return None
-
-    return f"https://wa.me/{digits}"
+    return whatsapp_url(value)
 
 
 def _back_keyboard() -> dict[str, Any]:
