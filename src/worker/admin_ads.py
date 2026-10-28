@@ -1076,51 +1076,89 @@ async def _set_ad_value(
             updated
             and updated["status"] == "APPROVED"
         ):
-            expires_at = (
-                datetime.now(timezone.utc)
-                + timedelta(
-                    days=int(value)
-                )
-            ).isoformat(
-                timespec="seconds"
+            duration_days = _parse_int(
+                updated.get("ad_duration_days")
+            )
+            placement = _normalize_ad_placement(
+                updated.get("ad_placement")
             )
 
-            activation = await db.execute(
-                """
-                UPDATE requests
-                SET
-                    status = 'ACTIVE',
-                    ad_expires_at = ?,
-                    updated_at = ?
-                WHERE id = ?
-                  AND status = 'APPROVED'
-                  AND request_type IN ('ad', 'general_ad');
-                """,
-                (
-                    expires_at,
-                    _now_iso(),
-                    request_id,
-                ),
+            can_activate = (
+                duration_days is not None
+                and (
+                    updated["request_type"] != "general_ad"
+                    or placement is not None
+                )
             )
 
-            if getattr(
-                activation,
-                "rowcount",
-                0,
-            ) == 1:
-                await _notify_user(
-                    db,
-                    updated["user_id"],
+            if not can_activate:
+                if (
+                    updated["request_type"] == "general_ad"
+                    and placement is None
+                ):
+                    await _send(
+                        telegram,
+                        chat_id,
+                        (
+                            f"⚠️ مدت درخواست #{request_id} ثبت شد، "
+                            "اما تبلیغ هنوز فعال نشده؛ ابتدا جایگاه "
+                            "«صفحه اصلی» یا «نتایج جستجو» را تعیین کن."
+                        ),
+                    )
+
+            else:
+                expires_at = (
+                    datetime.now(timezone.utc)
+                    + timedelta(days=duration_days)
+                ).isoformat(
+                    timespec="seconds"
+                )
+
+                activation = await db.execute(
+                    """
+                    UPDATE requests
+                    SET
+                        status = 'ACTIVE',
+                        ad_expires_at = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                      AND status = 'APPROVED'
+                      AND (
+                          request_type = 'ad'
+                          OR (
+                              request_type = 'general_ad'
+                              AND ad_placement IN (
+                                  'صفحه اصلی',
+                                  'نتایج جستجو'
+                              )
+                          )
+                      );
+                    """,
                     (
-                        "تبلیغ در ارزانکده"
-                        if updated["request_type"] == "general_ad"
-                        else "درخواست تبلیغات"
-                    ),
-                    (
-                        "✅ تبلیغت فعال شد و برای "
-                        f"{value} روز نمایش داده می‌شه."
+                        expires_at,
+                        _now_iso(),
+                        request_id,
                     ),
                 )
+
+                if getattr(
+                    activation,
+                    "rowcount",
+                    0,
+                ) == 1:
+                    await _notify_user(
+                        db,
+                        updated["user_id"],
+                        (
+                            "تبلیغ در ارزانکده"
+                            if updated["request_type"] == "general_ad"
+                            else "درخواست تبلیغات"
+                        ),
+                        (
+                            "✅ تبلیغت فعال شد و برای "
+                            f"{duration_days} روز نمایش داده می‌شه."
+                        ),
+                    )
 
     await _send(
         telegram,
