@@ -111,6 +111,15 @@ async def get_state(
     user_id: int,
 ) -> dict[str, Any] | None:
     """Return a user's current state, or None if absent."""
+    if (
+        isinstance(user_id, bool)
+        or not isinstance(user_id, int)
+        or user_id < 1
+    ):
+        raise ValueError(
+            "A valid internal user id is required."
+        )
+
     row = await db.fetchone(
         """
         SELECT state, data, updated_at
