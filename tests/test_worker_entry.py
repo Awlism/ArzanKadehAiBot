@@ -775,6 +775,62 @@ class WorkerEntryIntegrationTests(
 
         self.worker.env = FakeEnv(secret="test-secret")
 
+    def test_scheduled_cleans_old_processed_updates(self):
+        run(
+            self.worker.scheduled(
+                None,
+                None,
+                None,
+            )
+        )
+
+        self.assertEqual(
+            len(entry.D1Backend.instances),
+            1,
+        )
+
+        d1 = entry.D1Backend.instances[0]
+
+        self.assertEqual(
+            len(d1.execute_calls),
+            2,
+        )
+
+        cleanup_sql = " ".join(
+            d1.execute_calls[0][0].split()
+        ).lower()
+
+        self.assertIn(
+            "delete from processed_updates",
+            cleanup_sql,
+        )
+        self.assertIn(
+            "where status = 'processed'",
+            cleanup_sql,
+        )
+        self.assertIn(
+            "processed_at is not null",
+            cleanup_sql,
+        )
+        self.assertIn(
+            "processed_at <= unixepoch() - 2592000",
+            cleanup_sql,
+        )
+
+        self.assertNotIn(
+            "status = 'processing'",
+            cleanup_sql,
+        )
+
+        expire_sql = " ".join(
+            d1.execute_calls[1][0].split()
+        ).lower()
+
+        self.assertIn(
+            "update requests",
+            expire_sql,
+        )
+
     def test_get_returns_d1_health_response(self):
         response = run(
             self.worker.fetch(
