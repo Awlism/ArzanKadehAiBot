@@ -1670,15 +1670,28 @@ async def handle_admin_ad_decision(
         ).get("last_name"),
     )
 
-    new_status = (
-        "REJECTED"
-        if action == "reject"
-        else (
-            "ACTIVE"
-            if request.get("ad_duration_days")
-            else "APPROVED"
+    duration_days = _parse_int(
+        request.get("ad_duration_days")
+    )
+
+    placement = _normalize_ad_placement(
+        request.get("ad_placement")
+    )
+
+    can_activate = (
+        duration_days is not None
+        and (
+            request["request_type"] != "general_ad"
+            or placement is not None
         )
     )
+
+    if action == "reject":
+        new_status = "REJECTED"
+    elif can_activate:
+        new_status = "ACTIVE"
+    else:
+        new_status = "APPROVED"
 
     operation_time = datetime.now(
         timezone.utc
