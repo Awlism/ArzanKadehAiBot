@@ -1750,16 +1750,32 @@ async def handle_admin_ad_decision(
                     UPDATE requests
                     SET
                         status = 'ACTIVE',
+                        ad_placement = CASE
+                            WHEN request_type = 'general_ad'
+                            THEN ?
+                            ELSE ad_placement
+                        END,
                         ad_expires_at = ?,
                         updated_at = ?
                     WHERE id = ?
                       AND status = 'PENDING'
-                      AND request_type IN ('ad', 'general_ad');
+                      AND (
+                          request_type = 'ad'
+                          OR (
+                              request_type = 'general_ad'
+                              AND ? IN (
+                                  'صفحه اصلی',
+                                  'نتایج جستجو'
+                              )
+                          )
+                      );
                     """,
                     (
+                        placement,
                         expires_at,
                         operation_time,
                         request_id,
+                        placement,
                     ),
                 )
 
