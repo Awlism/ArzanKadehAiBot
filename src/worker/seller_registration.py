@@ -1379,16 +1379,28 @@ async def handle_register_skip(
         )
         return
 
-    data = dict(
-        state.get(
-            "data",
-            {},
+    state_data = state.get("data") or {}
+
+    if not isinstance(state_data, dict):
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ اطلاعات ثبت فروشگاه نامعتبر است.",
+            True,
         )
-    )
-    data.pop(
-        "step",
-        None,
-    )
+        return
+
+    if field != state_data.get("step"):
+        await _answer_callback(
+            telegram,
+            callback_query,
+            "⚠️ این مرحله دیگر فعال نیست.",
+            True,
+        )
+        return
+
+    data = dict(state_data)
+    data.pop("step", None)
 
     if field == "instagram":
         data["register_instagram"] = None
