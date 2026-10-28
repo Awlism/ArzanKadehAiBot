@@ -1047,7 +1047,9 @@ async def handle_register_seller_message(
         return True
 
     if step == "website":
-        if _website_url(text) is None:
+        website_url = _website_url(text)
+
+        if website_url is None:
             await _send(
                 telegram,
                 message,
@@ -1055,7 +1057,17 @@ async def handle_register_seller_message(
             )
             return True
 
-        data["register_website"] = text
+        data["register_website"] = website_url
+
+        await _finish_registration(
+            db,
+            telegram,
+            message,
+            user_id,
+            data,
+        )
+
+        return True
 
         await _finish_registration(
             db,
