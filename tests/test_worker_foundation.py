@@ -424,6 +424,28 @@ class WorkerStateTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     run(state.get_state(self.db, user_id))
 
+    def test_database_errors_propagate(self):
+        class FailingDatabase:
+            async def execute(self, query, params=None):
+                raise RuntimeError("D1 execute failed")
+
+            async def fetchone(self, query, params=None):
+                raise RuntimeError("D1 fetchone failed")
+
+        db = FailingDatabase()
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "D1 execute failed",
+        ):
+            run(state.set_state(db, 10, "search"))
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "D1 fetchone failed",
+        ):
+            run(state.get_state(db, 10))
+
     def test_invalid_state_name_is_rejected(self):
         with self.assertRaises(ValueError):
             run(state.set_state(self.db, 10, ""))
