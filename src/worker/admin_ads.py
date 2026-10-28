@@ -1119,6 +1119,11 @@ async def _set_ad_value(
                     UPDATE requests
                     SET
                         status = 'ACTIVE',
+                        ad_placement = CASE
+                            WHEN request_type = 'general_ad'
+                            THEN ?
+                            ELSE ad_placement
+                        END,
                         ad_expires_at = ?,
                         updated_at = ?
                     WHERE id = ?
@@ -1127,7 +1132,7 @@ async def _set_ad_value(
                           request_type = 'ad'
                           OR (
                               request_type = 'general_ad'
-                              AND ad_placement IN (
+                              AND ? IN (
                                   'صفحه اصلی',
                                   'نتایج جستجو'
                               )
@@ -1135,9 +1140,11 @@ async def _set_ad_value(
                       );
                     """,
                     (
+                        placement,
                         expires_at,
                         _now_iso(),
                         request_id,
+                        placement,
                     ),
                 )
 
