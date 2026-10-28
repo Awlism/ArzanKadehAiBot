@@ -418,6 +418,12 @@ class WorkerStateTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             run(state.set_state(self.db, 0, "search"))
 
+    def test_get_state_rejects_invalid_user_ids(self):
+        for user_id in (0, -1, True, 1.5, "10"):
+            with self.subTest(user_id=user_id):
+                with self.assertRaises(ValueError):
+                    run(state.get_state(self.db, user_id))
+
     def test_invalid_state_name_is_rejected(self):
         with self.assertRaises(ValueError):
             run(state.set_state(self.db, 10, ""))
