@@ -690,16 +690,22 @@ class Default(WorkerEntrypoint):
                 callback_handler
             )
 
+
         try:
             await router.dispatch(update)
         except Exception:
             # If dispatch fails, release the claim so a Telegram retry can
             # attempt the update again instead of being treated as complete.
-            await release_update_claim(
-                backend,
-                update_id,
-            )
+            try:
+                await release_update_claim(
+                    backend,
+                    update_id,
+                )
+            except Exception:
+                # Preserve the original dispatch error if claim release fails.
+                pass
             raise
+
 
         # Mark the update as complete only after dispatch succeeds.
         await mark_update_processed(
