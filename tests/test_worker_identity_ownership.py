@@ -867,6 +867,34 @@ class IdentityOwnershipTests(
             result
         )
 
+    def test_referral_foreign_key_error_is_not_treated_as_duplicate(self):
+        class ForeignKeyDB(FakeDB):
+            async def execute(self, sql, params=None):
+                self.execute_calls.append((sql, params))
+                raise Exception("FOREIGN KEY constraint failed")
+
+        db = ForeignKeyDB()
+        db.fetchone_results = [
+            {
+                "id": 50,
+                "owner_user_id": 999,
+                "created_by_user_id": 998,
+            },
+            None,
+        ]
+
+        with self.assertRaisesRegex(
+            Exception,
+            "FOREIGN KEY constraint failed",
+        ):
+            run(
+                self.referrals.record_referral_if_new(
+                    db,
+                    50,
+                    100,
+                )
+            )
+
     def test_product_favorite_remove_sql_is_user_scoped(self):
         self.db.execute_results = [
             DatabaseResult(
