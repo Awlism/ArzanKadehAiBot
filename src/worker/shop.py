@@ -1256,6 +1256,38 @@ async def handle_shop_edit_message(
         return True
 
     value_to_store = value or None
+
+    validators = {
+        "instagram": instagram_url,
+        "telegram": telegram_url,
+        "telegram_support": telegram_url,
+        "whatsapp": whatsapp_url,
+        "website": website_url,
+    }
+
+    validator = validators.get(field)
+
+    if value_to_store is not None and validator is not None:
+        normalized_value = validator(value_to_store)
+
+        if normalized_value is None:
+            error_messages = {
+                "instagram": "⚠️ آیدی یا لینک اینستاگرام معتبر نیست. دوباره بفرست:",
+                "telegram": "⚠️ آیدی یا لینک تلگرام معتبر نیست. دوباره بفرست:",
+                "telegram_support": "⚠️ آیدی پشتیبانی تلگرام معتبر نیست. دوباره بفرست:",
+                "whatsapp": "⚠️ شماره یا لینک واتساپ معتبر نیست. دوباره بفرست:",
+                "website": "⚠️ لینک وب‌سایت معتبر نیست. دوباره بفرست:",
+            }
+
+            await _send(
+                telegram,
+                message,
+                error_messages[field],
+            )
+            return True
+
+        value_to_store = normalized_value
+
     now = _now_iso()
 
     try:
