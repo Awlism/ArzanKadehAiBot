@@ -320,6 +320,7 @@ async def _handle_main_menu(
 
 
 class Default(WorkerEntrypoint):
+
     async def scheduled(
         self,
         controller,
@@ -333,6 +334,17 @@ class Default(WorkerEntrypoint):
         backend.set_backend(d1_backend)
 
         await backend.connect()
+
+        await ensure_processed_updates_table(backend)
+
+        await backend.execute(
+            """
+            DELETE FROM processed_updates
+            WHERE status = 'processed'
+              AND processed_at IS NOT NULL
+              AND processed_at <= unixepoch() - 2592000;
+            """
+        )
 
         now = datetime.now(
             timezone.utc
