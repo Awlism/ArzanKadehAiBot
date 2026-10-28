@@ -473,8 +473,8 @@ async def record_referral_if_new(
         message = str(exc).lower()
 
         if (
-            "unique" in message
-            or "constraint" in message
+            "unique constraint failed" in message
+            or "is not unique" in message
         ):
             return False
 
