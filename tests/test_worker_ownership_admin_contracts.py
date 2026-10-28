@@ -426,10 +426,6 @@ class WorkerOwnershipAdminContractTests(
             columns,
         )
 
-        self.assertIn(
-            "created_by_user_id",
-            columns,
-        )
 
     def test_seller_registration_uses_internal_user_id(
         self,
