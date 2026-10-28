@@ -565,6 +565,46 @@ class ProcessedUpdateTests(unittest.TestCase):
                         )
                     )
 
+    def test_database_execute_errors_propagate_for_update_claims(self):
+        class FailingDatabase:
+            async def execute(self, query, params=None):
+                raise RuntimeError("D1 execute failed")
+
+        db = FailingDatabase()
+
+        operations = (
+            lambda: state.claim_update(db, 200),
+            lambda: state.mark_update_processed(db, 200),
+            lambda: state.release_update_claim(db, 200),
+        )
+
+        for operation in operations:
+            with self.subTest(operation=operation):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "D1 execute failed",
+                ):
+                    run(operation())
+
+    def test_mark_processed_fetchone_errors_propagate(self):
+        class FailingFetchDatabase:
+            async def execute(self, query, params=None):
+                return FakeResult(1)
+
+            async def fetchone(self, query, params=None):
+                raise RuntimeError("D1 fetchone failed")
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "D1 fetchone failed",
+        ):
+            run(
+                state.mark_update_processed(
+                    FailingFetchDatabase(),
+                    201,
+                )
+            )
+
     def test_processed_update_cannot_be_claimed_again(self):
         self.assertTrue(run(state.claim_update(self.db, 101)))
         self.assertTrue(run(state.mark_update_processed(self.db, 101)))
