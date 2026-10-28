@@ -1270,6 +1270,22 @@ async def handle_shop_edit_message(
             "⚠️ توضیحات فروشگاه نباید بیشتر از ۱۰۰۰ کاراکتر باشد. کوتاه‌تر بنویس:",
         )
         return True
+        
+    field_limits = {
+        "phone": 30,
+        "location_text": 200,
+        "coverage_area": 200,
+    }
+
+    max_length = field_limits.get(field)
+
+    if max_length is not None and len(value) > max_length:
+        await _send(
+            telegram,
+            message,
+            f"⚠️ این فیلد نباید بیشتر از {max_length} کاراکتر باشد. کوتاه‌تر بنویس:",
+        )
+        return True
 
     value_to_store = value or None
 
