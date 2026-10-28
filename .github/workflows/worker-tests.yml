@@ -38,6 +38,7 @@ jobs:
         run: |
           python -m unittest \
             tests.test_worker_entry \
+            tests.test_worker_foundation \
             tests.test_worker_callback_routes \
             tests.test_worker_d1_backend \
             tests.test_project_files \
