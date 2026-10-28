@@ -497,6 +497,24 @@ class ProcessedUpdateTests(unittest.TestCase):
             run(state.claim_update(self.db, update_id))
         )
 
+    def test_claim_update_rejects_invalid_update_ids(self):
+        for update_id in (-1, True, 1.5, "105"):
+            with self.subTest(update_id=update_id):
+                with self.assertRaises(ValueError):
+                    run(state.claim_update(self.db, update_id))
+
+    def test_claim_update_rejects_invalid_lease_seconds(self):
+        for lease_seconds in (0, -1, True, 1.5, "300"):
+            with self.subTest(lease_seconds=lease_seconds):
+                with self.assertRaises(ValueError):
+                    run(
+                        state.claim_update(
+                            self.db,
+                            106,
+                            lease_seconds=lease_seconds,
+                        )
+                    )
+
     def test_processed_update_cannot_be_claimed_again(self):
         self.assertTrue(run(state.claim_update(self.db, 101)))
         self.assertTrue(run(state.mark_update_processed(self.db, 101)))
