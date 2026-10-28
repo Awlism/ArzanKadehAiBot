@@ -392,7 +392,7 @@ class WorkerOwnershipAdminContractTests(
             normalized,
         )
 
-    def test_seller_registration_insert_binds_owner_and_creator(
+    def test_seller_registration_insert_binds_creator_without_assigning_owner(
         self,
     ):
         source = _function_source(
@@ -417,6 +417,11 @@ class WorkerOwnershipAdminContractTests(
         columns = match.group(1)
 
         self.assertIn(
+            "created_by_user_id",
+            columns,
+        )
+
+        self.assertNotIn(
             "owner_user_id",
             columns,
         )
