@@ -497,6 +497,14 @@ async def _finish_registration(
         )
         or ""
     ).strip()
+    
+    if len(description) > 1000:
+        await _send(
+            telegram,
+            message,
+            "⚠️ توضیحات فروشگاه نباید بیشتر از ۱۰۰۰ کاراکتر باشد. لطفاً ثبت‌نام را دوباره با توضیحات کوتاه‌تری انجام بده.",
+        )
+        return
 
     instagram = data.get(
         "register_instagram"
