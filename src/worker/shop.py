@@ -1254,6 +1254,22 @@ async def handle_shop_edit_message(
             "⚠️ نام فروشگاه نمی‌تونه خالی باشه. دوباره بفرست:",
         )
         return True
+        
+    if field == "name" and len(value) > 100:
+        await _send(
+            telegram,
+            message,
+            "⚠️ نام فروشگاه نباید بیشتر از ۱۰۰ کاراکتر باشد. کوتاه‌تر بنویس:",
+        )
+        return True
+
+    if field == "description" and len(value) > 1000:
+        await _send(
+            telegram,
+            message,
+            "⚠️ توضیحات فروشگاه نباید بیشتر از ۱۰۰۰ کاراکتر باشد. کوتاه‌تر بنویس:",
+        )
+        return True
 
     value_to_store = value or None
 
