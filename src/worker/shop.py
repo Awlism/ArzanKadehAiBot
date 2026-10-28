@@ -9,6 +9,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from html import escape
 from typing import Any
+from worker.contact_validation import (
+    instagram_url,
+    telegram_url,
+    website_url,
+    whatsapp_url,
+)
 
 from worker.state import clear_state, get_state, set_state
 
