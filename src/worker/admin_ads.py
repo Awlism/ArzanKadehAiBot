@@ -1464,30 +1464,9 @@ async def handle_admin_ad_message(
 
 
     else:
-        normalized_placement = (
+        value = _normalize_ad_placement(
             value_text
-            .replace("ي", "ی")
-            .replace("ك", "ک")
-            .replace("\u200c", " ")
         )
-        normalized_placement = " ".join(
-            normalized_placement.lower().split()
-        )
-
-        placement_choices = {
-            "صفحه اصلی": "صفحه اصلی",
-            "صفحه‌اصلی": "صفحه اصلی",
-            "خانه": "صفحه اصلی",
-            "home": "صفحه اصلی",
-            "main": "صفحه اصلی",
-            "نتایج جستجو": "نتایج جستجو",
-            "نتایج جست‌وجو": "نتایج جستجو",
-            "جستجو": "نتایج جستجو",
-            "جست‌وجو": "نتایج جستجو",
-            "search": "نتایج جستجو",
-        }
-
-        value = placement_choices.get(normalized_placement)
 
         if value is None:
             await _send(
