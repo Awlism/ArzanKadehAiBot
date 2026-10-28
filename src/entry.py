@@ -647,62 +647,63 @@ class Default(WorkerEntrypoint):
                 status=200,
             )
 
-        update_type = detect_update_type(update)
 
-        router = WorkerRouter()
+        try:
+            update_type = detect_update_type(update)
 
-        if update_type == "message":
-            telegram = TelegramClient(
-                self.env
-            )
+            router = WorkerRouter()
 
-            async def message_handler(message):
-                if _is_start_command(message):
-                    return await handle_start(
+            if update_type == "message":
+                telegram = TelegramClient(
+                    self.env
+                )
+
+                async def message_handler(message):
+                    if _is_start_command(message):
+                        return await handle_start(
+                            message,
+                            telegram,
+                            self.env,
+                        )
+
+                    return await handle_message(
                         message,
                         telegram,
                         self.env,
                     )
 
-                return await handle_message(
-                    message,
-                    telegram,
-                    self.env,
+                router.set_message_handler(
+                    message_handler
                 )
 
-            router.set_message_handler(
-                message_handler
-            )
-
-        elif update_type == "callback_query":
-            telegram = TelegramClient(
-                self.env
-            )
-
-            async def callback_handler(callback_query):
-                return await _handle_callback_query(
-                    callback_query,
-                    telegram,
-                    self.env,
+            elif update_type == "callback_query":
+                telegram = TelegramClient(
+                    self.env
                 )
 
-            router.set_callback_handler(
-                callback_handler
-            )
+                async def callback_handler(callback_query):
+                    return await _handle_callback_query(
+                        callback_query,
+                        telegram,
+                        self.env,
+                    )
 
+                router.set_callback_handler(
+                    callback_handler
+                )
 
-        try:
             await router.dispatch(update)
+
         except Exception:
-            # If dispatch fails, release the claim so a Telegram retry can
-            # attempt the update again instead of being treated as complete.
+            # Release the claim if setup or dispatch fails, allowing Telegram
+            # to retry the update instead of leaving it stuck as processing.
             try:
                 await release_update_claim(
                     backend,
                     update_id,
                 )
             except Exception:
-                # Preserve the original dispatch error if claim release fails.
+                # Preserve the original setup or dispatch error.
                 pass
             raise
 
