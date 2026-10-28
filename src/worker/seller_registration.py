@@ -62,99 +62,28 @@ def _parse_positive_id(
     return parsed
 
 
-def _normalize_username_url(
-    value: Any,
-    base_url: str,
-    pattern: str,
-) -> str | None:
-    if value is None:
-        return None
-
-    value = str(value).strip()
-
-    if not value:
-        return None
-
-    value = re.sub(
-        pattern,
-        "",
-        value,
-        flags=re.IGNORECASE,
-    )
-
-    value = value.strip(
-        "/"
-    ).lstrip("@")
-
-    if not value:
-        return None
-
-    if not re.fullmatch(
-        r"[A-Za-z0-9._]+",
-        value,
-    ):
-        return None
-
-    return f"{base_url}{value}"
-
-
 def _instagram_url(
     value: Any,
 ) -> str | None:
-    return _normalize_username_url(
-        value,
-        "https://instagram.com/",
-        r"^https?://(www\.)?instagram\.com/",
-    )
+    from worker.contact_validation import instagram_url
+
+    return instagram_url(value)
 
 
 def _telegram_url(
     value: Any,
 ) -> str | None:
-    return _normalize_username_url(
-        value,
-        "https://t.me/",
-        r"^https?://(www\.)?t\.me/",
-    )
+    from worker.contact_validation import telegram_url
+
+    return telegram_url(value)
 
 
 def _website_url(
     value: Any,
 ) -> str | None:
-    if value is None:
-        return None
+    from worker.contact_validation import website_url
 
-    value = str(value).strip()
-
-    if not value:
-        return None
-
-    if "://" not in value:
-        value = f"https://{value}"
-
-    lowered = value.lower()
-
-    if not (
-        lowered.startswith("http://")
-        or lowered.startswith("https://")
-    ):
-        return None
-
-    if any(
-        char in value
-        for char in (
-            "\n",
-            "\r",
-            "\t",
-            "<",
-            ">",
-            '"',
-            "'",
-        )
-    ):
-        return None
-
-    return value
+    return website_url(value)
 
 
 def _back_keyboard(
