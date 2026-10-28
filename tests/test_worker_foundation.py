@@ -439,6 +439,45 @@ class ProcessedUpdateTests(unittest.TestCase):
         self.assertTrue(run(state.claim_update(self.db, 100)))
         self.assertFalse(run(state.claim_update(self.db, 100)))
 
+    def test_expired_processing_claim_can_be_reclaimed(self):
+        update_id = 104
+
+        self.assertTrue(
+            run(
+                state.claim_update(
+                    self.db,
+                    update_id,
+                )
+            )
+        )
+
+        original_claimed_at = (
+            self.db.processed_updates[update_id]["claimed_at"]
+        )
+
+        self.db.clock += (
+            state.UPDATE_CLAIM_LEASE_SECONDS + 1
+        )
+
+        self.assertTrue(
+            run(
+                state.claim_update(
+                    self.db,
+                    update_id,
+                )
+            )
+        )
+
+        self.assertEqual(
+            self.db.processed_updates[update_id]["status"],
+            "processing",
+        )
+
+        self.assertGreater(
+            self.db.processed_updates[update_id]["claimed_at"],
+            original_claimed_at,
+        )
+
     def test_processed_update_cannot_be_claimed_again(self):
         self.assertTrue(run(state.claim_update(self.db, 101)))
         self.assertTrue(run(state.mark_update_processed(self.db, 101)))
