@@ -1452,7 +1452,12 @@ class WorkerEntryIntegrationTests(
             },
         )
 
-        response = run(self.worker.fetch(request))
+        with patch.object(
+            entry,
+            "WorkerRouter",
+            FailingRouter,
+        ):
+            response = run(self.worker.fetch(request))
 
         self.assertEqual(response.status, 500)
         self.assertNotIn(9003, PROCESSED_UPDATE_IDS)
