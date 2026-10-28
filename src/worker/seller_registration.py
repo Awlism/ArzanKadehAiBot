@@ -1069,15 +1069,6 @@ async def handle_register_seller_message(
 
         return True
 
-        await _finish_registration(
-            db,
-            telegram,
-            message,
-            user_id,
-            data,
-        )
-
-        return True
 
     return False
 
