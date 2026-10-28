@@ -969,32 +969,72 @@ async def handle_shop_city_pick(
         )
         return
 
-    await db.execute(
-        """
-        UPDATE sellers
-        SET city_id = ?,
-            updated_at = ?
-        WHERE id = ?;
-        """,
-        (
-            city_id,
-            _now_iso(),
-            seller_id,
-        ),
-    )
+    now = _now_iso()
 
-    await clear_state(
-        db,
-        user_id,
-    )
+    try:
+        async with db.transaction(immediate=True) as transaction:
+            await transaction.execute(
+                """
+                UPDATE sellers
+                SET city_id = ?,
+                    updated_at = ?
+                WHERE id = ?
+                  AND (
+                      owner_user_id = ?
+                      OR created_by_user_id = ?
+                  );
+                """,
+                (
+                    city_id,
+                    now,
+                    seller_id,
+                    user_id,
+                    user_id,
+                ),
+            )
 
-    await _audit(
-        db,
-        user_id,
-        "shop_city_updated",
-        seller_id,
-        str(city.get("name") or ""),
-    )
+            await transaction.execute(
+                """
+                INSERT INTO audit_log (
+                    actor_user_id,
+                    action,
+                    entity_type,
+                    entity_id,
+                    details,
+                    created_at
+                )
+                SELECT ?, 'shop_city_updated', 'seller', ?, ?, ?
+                WHERE changes() = 1;
+                """,
+                (
+                    user_id,
+                    seller_id,
+                    str(city.get("name") or ""),
+                    now,
+                ),
+            )
+
+        results = transaction.results
+
+        if (
+            len(results) != 2
+            or any(
+                getattr(result, "rowcount", 0) != 1
+                for result in results
+            )
+        ):
+            raise RuntimeError(
+                "Shop city update or audit insert failed."
+            )
+
+    except Exception:
+        await _answer(
+            telegram,
+            callback_query,
+            "⚠️ تغییر شهر ذخیره نشد. دوباره تلاش کن.",
+            True,
+        )
+        return
 
     await _answer(
         telegram,
