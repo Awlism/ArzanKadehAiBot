@@ -1434,6 +1434,38 @@ class WorkerEntryIntegrationTests(
             ):
                 run(self.worker._handle_webhook(request))
 
+
+    def test_router_initialization_failure_releases_update_claim(self):
+        class FailingRouter:
+            def __init__(self):
+                raise RuntimeError("Router initialization failure")
+
+        request = FakeRequest(
+            "POST",
+            {
+                "update_id": 9003,
+                "callback_query": {
+                    "id": "callback-router-init-failure",
+                    "from": {"id": 123},
+                    "data": "hot",
+                },
+            },
+        )
+
+        response = run(self.worker.fetch(request))
+
+        self.assertEqual(response.status, 500)
+        self.assertNotIn(9003, PROCESSED_UPDATE_IDS)
+
+        names = [
+            item["name"]
+            for item in HANDLER_CALLS
+        ]
+
+        self.assertIn("claim_update", names)
+        self.assertIn("release_update_claim", names)
+
+    
     def test_duplicate_webhook_update_is_not_dispatched_twice(self):
         request_payload = {
             "update_id": 70,
