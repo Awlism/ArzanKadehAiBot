@@ -781,7 +781,7 @@ class IdentityOwnershipTests(
             len(
                 self.db.execute_calls
             ),
-            1,
+            2,
         )
 
         sql, params = (
