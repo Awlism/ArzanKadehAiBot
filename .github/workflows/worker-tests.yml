@@ -56,4 +56,10 @@ jobs:
             tests.test_phase4_admin_ads \
             tests.test_phase4_admin_requests \
             tests.test_phase4_admin_users \
-            tests.test_worker_messages_state
+            tests.test_worker_messages_state \
+            tests.test_worker_identity_ownership \
+            tests.test_worker_ownership_admin_contracts \
+            tests.test_worker_user_scoped_contracts \
+            tests.test_worker_review_report_contracts \
+            tests.test_worker_admin_auth \
+            tests.test_worker_telegram
