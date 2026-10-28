@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 """
 Shared validation and normalization for seller contact links.
@@ -7,8 +6,8 @@ This module is safe to use in the Cloudflare Worker runtime.
 
 from __future__ import annotations
 
-import re
 import ipaddress
+import re
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -29,6 +28,27 @@ def _clean(value: Any) -> str | None:
         return None
 
     return value
+
+
+def phone_number(value: Any) -> str | None:
+    """Validate a phone number and return its cleaned representation."""
+    value = _clean(value)
+
+    if value is None:
+        return None
+
+    if not re.fullmatch(r"\+?[0-9\s().-]+", value):
+        return None
+
+    digits = re.sub(r"\D", "", value)
+
+    if not 7 <= len(digits) <= 15:
+        return None
+
+    if value.startswith("+"):
+        return f"+{digits}"
+
+    return digits
 
 
 def instagram_url(value: Any) -> str | None:
