@@ -1066,6 +1066,7 @@ async def handle_shop_city_pick(
     )
 
 
+
 async def handle_shop_toggle_active(
     db: Any,
     telegram: Any,
@@ -1129,32 +1130,94 @@ async def handle_shop_toggle_active(
 
     new_value = 0 if current else 1
 
-    await db.execute(
-        """
-        UPDATE sellers
-        SET is_active = ?,
-            updated_at = ?
-        WHERE id = ?;
-        """,
-        (
-            new_value,
-            _now_iso(),
-            seller_id,
-        ),
-    )
-
     action = (
         "store_deactivated"
         if current
         else "store_activated"
     )
 
-    await _audit(
-        db,
-        user_id,
-        action,
-        seller_id,
-    )
+    now = _now_iso()
+
+    try:
+        async with db.transaction(
+            immediate=True,
+        ) as transaction:
+            await transaction.execute(
+                """
+                UPDATE sellers
+                SET
+                    is_active = ?,
+                    updated_at = ?
+                WHERE id = ?
+                  AND (
+                      owner_user_id = ?
+                      OR created_by_user_id = ?
+                  )
+                  AND COALESCE(is_active, 1) = ?;
+                """,
+                (
+                    new_value,
+                    now,
+                    seller_id,
+                    user_id,
+                    user_id,
+                    int(current),
+                ),
+            )
+
+            await transaction.execute(
+                """
+                INSERT INTO audit_log (
+                    actor_user_id,
+                    action,
+                    entity_type,
+                    entity_id,
+                    details,
+                    created_at
+                )
+                SELECT ?, ?, 'seller', ?, NULL, ?
+                WHERE changes() = 1;
+                """,
+                (
+                    user_id,
+                    action,
+                    seller_id,
+                    now,
+                ),
+            )
+
+        results = transaction.results
+
+        update_result = (
+            results[0]
+            if len(results) > 0
+            else None
+        )
+
+        audit_result = (
+            results[1]
+            if len(results) > 1
+            else None
+        )
+
+        if (
+            update_result is None
+            or update_result.rowcount != 1
+            or audit_result is None
+            or audit_result.rowcount != 1
+        ):
+            raise RuntimeError(
+                "Shop status update or audit insert failed."
+            )
+
+    except Exception:
+        await _answer(
+            telegram,
+            callback_query,
+            "⚠️ تغییر وضعیت فروشگاه ذخیره نشد. دوباره تلاش کن.",
+            True,
+        )
+        return
 
     await _answer(
         telegram,
