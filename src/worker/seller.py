@@ -283,9 +283,7 @@ async def _seller_keyboard(
         seller.get("created_by_user_id"),
     )
 
-    show_contacts = (
-        is_active or is_owner
-    )
+    show_contacts = is_active
 
     keyboard: list[list[dict[str, Any]]] = []
 
