@@ -185,11 +185,10 @@ def website_url(value: Any) -> str | None:
             if len(ascii_hostname) > 253:
                 return None
 
-            normalized_hostname = ascii_hostname.rstrip(".")
-
-            if ascii_hostname != normalized_hostname + "." and ascii_hostname.endswith(".."):
+            if ascii_hostname.endswith(".."):
                 return None
 
+            normalized_hostname = ascii_hostname.rstrip(".")
             labels = normalized_hostname.split(".")
 
             if len(labels) < 2 or any(
@@ -242,7 +241,7 @@ def whatsapp_url(value: Any) -> str | None:
                     return None
 
             else:
-                if parsed.path.rstrip("/") != "/send":
+                if parsed.path != "/send":
                     return None
 
                 query = parse_qs(
