@@ -23,6 +23,6 @@ include = [
 
 [dependency-groups]
 dev = [
-    "workers-py>=1.1.7",
-    "workers-runtime-sdk",
+    "workers-py==1.17.9",
+    "workers-runtime-sdk==1.9.5",
 ]
