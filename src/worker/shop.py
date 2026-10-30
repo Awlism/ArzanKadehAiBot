@@ -512,8 +512,10 @@ async def _render_shop_view(
         )
         return
 
-    is_active = bool(
-        seller.get("is_active", 1)
+    is_active = (
+        bool(seller["is_active"])
+        if seller.get("is_active") is not None
+        else True
     )
 
     has_contact = any(
@@ -1119,8 +1121,10 @@ async def handle_shop_toggle_active(
         )
         return
 
-    current = bool(
-        seller.get("is_active", 1)
+    current = (
+        bool(seller["is_active"])
+        if seller.get("is_active") is not None
+        else True
     )
 
     new_value = 0 if current else 1
