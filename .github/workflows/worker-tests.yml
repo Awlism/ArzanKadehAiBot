@@ -2,9 +2,6 @@
 name: ArzanKadeh Tests
 
 on:
-  push:
-    branches:
-      - cloudflare-webhook-migration
   pull_request:
     branches:
       - cloudflare-webhook-migration
