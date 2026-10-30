@@ -9,14 +9,14 @@ from __future__ import annotations
 import ipaddress
 import re
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 
 def _clean(value: Any) -> str | None:
-    if value is None:
+    if not isinstance(value, str):
         return None
 
-    value = str(value).strip()
+    value = value.strip()
 
     if not value:
         return None
@@ -32,9 +32,6 @@ def _clean(value: Any) -> str | None:
 
 def phone_number(value: Any) -> str | None:
     """Validate a phone number and return its cleaned representation."""
-    if not isinstance(value, str):
-        return None
-
     value = _clean(value)
 
     if value is None:
@@ -60,19 +57,34 @@ def instagram_url(value: Any) -> str | None:
     if value is None:
         return None
 
-    value = re.sub(
-        r"^https?://(?:www\.)?instagram\.com/",
-        "",
-        value,
-        flags=re.IGNORECASE,
-    )
+    if "://" in value:
+        try:
+            parsed = urlsplit(value)
 
-    value = value.strip("/").lstrip("@")
+            if (
+                parsed.scheme.lower() not in {"http", "https"}
+                or parsed.hostname is None
+                or parsed.hostname.lower()
+                not in {"instagram.com", "www.instagram.com"}
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.port is not None
+                or parsed.query
+                or parsed.fragment
+            ):
+                return None
 
-    if not re.fullmatch(
-        r"[A-Za-z0-9._]{1,30}",
-        value,
-    ):
+            value = parsed.path.strip("/")
+
+        except (ValueError, TypeError):
+            return None
+    else:
+        value = value.strip("/")
+
+    if value.startswith("@"):
+        value = value[1:]
+
+    if not re.fullmatch(r"[A-Za-z0-9._]{1,30}", value):
         return None
 
     if (
@@ -91,14 +103,32 @@ def telegram_url(value: Any) -> str | None:
     if value is None:
         return None
 
-    value = re.sub(
-        r"^https?://(?:www\.)?t\.me/",
-        "",
-        value,
-        flags=re.IGNORECASE,
-    )
+    if "://" in value:
+        try:
+            parsed = urlsplit(value)
 
-    value = value.strip("/").lstrip("@")
+            if (
+                parsed.scheme.lower() not in {"http", "https"}
+                or parsed.hostname is None
+                or parsed.hostname.lower()
+                not in {"t.me", "www.t.me"}
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.port is not None
+                or parsed.query
+                or parsed.fragment
+            ):
+                return None
+
+            value = parsed.path.strip("/")
+
+        except (ValueError, TypeError):
+            return None
+    else:
+        value = value.strip("/")
+
+    if value.startswith("@"):
+        value = value[1:]
 
     if not re.fullmatch(
         r"[A-Za-z][A-Za-z0-9_]{3,30}[A-Za-z0-9]",
@@ -155,7 +185,12 @@ def website_url(value: Any) -> str | None:
             if len(ascii_hostname) > 253:
                 return None
 
-            labels = ascii_hostname.rstrip(".").split(".")
+            normalized_hostname = ascii_hostname.rstrip(".")
+
+            if ascii_hostname != normalized_hostname + "." and ascii_hostname.endswith(".."):
+                return None
+
+            labels = normalized_hostname.split(".")
 
             if len(labels) < 2 or any(
                 not label
@@ -195,21 +230,20 @@ def whatsapp_url(value: Any) -> str | None:
                 or parsed.username is not None
                 or parsed.password is not None
                 or parsed.port is not None
+                or parsed.fragment
             ):
                 return None
 
             if parsed.hostname.lower() == "wa.me":
-                if not re.fullmatch(
-                    r"/[0-9]{7,15}/?",
-                    parsed.path,
+                if (
+                    not re.fullmatch(r"/[0-9]{7,15}/?", parsed.path)
+                    or parsed.query
                 ):
                     return None
 
             else:
                 if parsed.path.rstrip("/") != "/send":
                     return None
-
-                from urllib.parse import parse_qs
 
                 query = parse_qs(
                     parsed.query,
@@ -219,10 +253,7 @@ def whatsapp_url(value: Any) -> str | None:
 
                 if (
                     len(phones) != 1
-                    or not re.fullmatch(
-                        r"[0-9]{7,15}",
-                        phones[0],
-                    )
+                    or not re.fullmatch(r"[0-9]{7,15}", phones[0])
                 ):
                     return None
 
