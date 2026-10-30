@@ -818,6 +818,7 @@ class WorkerDatabaseUsageTests(unittest.TestCase):
         modules_not_required_to_use_database = {
             "src/worker/__init__.py",
             "src/worker/admin_auth.py",
+            "src/worker/contact_validation.py",
             "src/worker/router.py",
             "src/worker/telegram.py",
             "src/worker/webhook.py",
