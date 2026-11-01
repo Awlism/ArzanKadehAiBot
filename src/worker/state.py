@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 """
 ArzanKadeh AI
@@ -13,6 +14,7 @@ This module does not import aiogram, sqlite, or aiosqlite.
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -35,7 +37,9 @@ CREATE TABLE IF NOT EXISTS processed_updates (
     status TEXT NOT NULL
         CHECK (status IN ('processing', 'processed')),
     claimed_at INTEGER NOT NULL,
-    processed_at INTEGER
+    processed_at INTEGER,
+    claim_token TEXT,
+    lease_expires_at INTEGER
 );
 """
 
@@ -90,6 +94,27 @@ def _deserialize_data(
         )
 
     return data
+
+
+def _validate_update_id(update_id: int) -> None:
+    if (
+        isinstance(update_id, bool)
+        or not isinstance(update_id, int)
+        or update_id < 0
+    ):
+        raise ValueError(
+            "A valid Telegram update_id is required."
+        )
+
+
+def _validate_claim_token(claim_token: str) -> None:
+    if (
+        not isinstance(claim_token, str)
+        or not claim_token.strip()
+    ):
+        raise ValueError(
+            "A valid update claim token is required."
+        )
 
 
 async def ensure_state_table(
@@ -214,23 +239,14 @@ async def claim_update(
     db: Any,
     update_id: int,
     lease_seconds: int = UPDATE_CLAIM_LEASE_SECONDS,
-) -> bool:
+) -> str | None:
     """
-    Atomically claim a Telegram update for processing.
+    Atomically claim a Telegram update.
 
-    Returns True if this request acquired the claim.
-    Returns False if the update is already processing or processed.
-
-    A stale processing claim may be reclaimed after its lease expires.
+    Returns a unique ownership token when acquired.
+    Returns None when another active or completed claim exists.
     """
-    if (
-        isinstance(update_id, bool)
-        or not isinstance(update_id, int)
-        or update_id < 0
-    ):
-        raise ValueError(
-            "A valid Telegram update_id is required."
-        )
+    _validate_update_id(update_id)
 
     if (
         isinstance(lease_seconds, bool)
@@ -241,77 +257,87 @@ async def claim_update(
             "The update claim lease must be a positive integer."
         )
 
+    claim_token = uuid.uuid4().hex
+
     result = await db.execute(
         """
         INSERT INTO processed_updates (
             update_id,
             status,
             claimed_at,
-            processed_at
+            processed_at,
+            claim_token,
+            lease_expires_at
         )
         VALUES (
             ?,
             'processing',
             unixepoch(),
-            NULL
+            NULL,
+            ?,
+            unixepoch() + ?
         )
         ON CONFLICT(update_id)
         DO UPDATE SET
             status = 'processing',
             claimed_at = unixepoch(),
-            processed_at = NULL
+            processed_at = NULL,
+            claim_token = excluded.claim_token,
+            lease_expires_at = excluded.lease_expires_at
         WHERE
             processed_updates.status = 'processing'
-            AND processed_updates.claimed_at
-                < unixepoch() - ?;
+            AND (
+                processed_updates.lease_expires_at IS NULL
+                OR processed_updates.lease_expires_at <= unixepoch()
+            );
         """,
         (
             update_id,
+            claim_token,
             lease_seconds,
         ),
     )
 
-    return result.rowcount > 0
+    if result is None or result.rowcount <= 0:
+        return None
+
+    return claim_token
 
 
 async def mark_update_processed(
     db: Any,
     update_id: int,
+    claim_token: str,
 ) -> bool:
     """
-    Confirm that a Telegram update has been marked processed.
+    Mark an update processed only if the caller still owns its claim.
 
-    Returns True when the update is processed, including when another
-    request already marked it processed.
-
-    Raises RuntimeError if the database cannot confirm that state.
-    Database errors are allowed to propagate to the caller.
+    A stale worker cannot complete an update reclaimed by another worker.
     """
-    if (
-        isinstance(update_id, bool)
-        or not isinstance(update_id, int)
-        or update_id < 0
-    ):
-        raise ValueError(
-            "A valid Telegram update_id is required."
-        )
+    _validate_update_id(update_id)
+    _validate_claim_token(claim_token)
 
     await db.execute(
         """
         UPDATE processed_updates
         SET
             status = 'processed',
-            processed_at = unixepoch()
+            processed_at = unixepoch(),
+            lease_expires_at = NULL
         WHERE
             update_id = ?
-            AND status = 'processing';
+            AND status = 'processing'
+            AND claim_token = ?;
         """,
-        (update_id,),
+        (
+            update_id,
+            claim_token,
+        ),
     )
 
     row = await db.fetchone(
         """
-        SELECT status
+        SELECT status, claim_token
         FROM processed_updates
         WHERE update_id = ?
         LIMIT 1;
@@ -319,40 +345,48 @@ async def mark_update_processed(
         (update_id,),
     )
 
-    if row is not None and row.get("status") == "processed":
+    if (
+        row is not None
+        and row.get("status") == "processed"
+        and row.get("claim_token") == claim_token
+    ):
         return True
 
     raise RuntimeError(
-        "Telegram update processing status could not be confirmed."
+        "Telegram update processing ownership could not be confirmed."
     )
 
 
 async def release_update_claim(
     db: Any,
     update_id: int,
-) -> None:
+    claim_token: str,
+) -> bool:
     """
-    Release an unfinished claim so Telegram can retry the update.
+    Release an unfinished claim only if the caller still owns it.
 
-    Processed updates are never deleted by this function.
+    Processed updates and claims owned by another worker are preserved.
     """
-    if (
-        isinstance(update_id, bool)
-        or not isinstance(update_id, int)
-        or update_id < 0
-    ):
-        raise ValueError(
-            "A valid Telegram update_id is required."
-        )
+    _validate_update_id(update_id)
+    _validate_claim_token(claim_token)
 
-    await db.execute(
+    result = await db.execute(
         """
         DELETE FROM processed_updates
         WHERE
             update_id = ?
-            AND status = 'processing';
+            AND status = 'processing'
+            AND claim_token = ?;
         """,
-        (update_id,),
+        (
+            update_id,
+            claim_token,
+        ),
+    )
+
+    return bool(
+        result is not None
+        and result.rowcount > 0
     )
 
 
