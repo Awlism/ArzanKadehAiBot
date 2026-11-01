@@ -629,16 +629,15 @@ class Default(WorkerEntrypoint):
             backend
         )
 
-        claimed = await claim_update(
+        claim_token = await claim_update(
             backend,
             update_id,
         )
 
         # Telegram can retry the same update when it doesn't receive a
-        # successful response. If this update is already processed, or
-        # another request currently owns its claim, acknowledge it without
-        # dispatching the handlers again.
-        if not claimed:
+        # successful response. If another request owns this update, or it
+        # has already been processed, acknowledge it without redispatching.
+        if claim_token is None:
             return Response(
                 build_webhook_response_body(
                     detect_update_type(update)
@@ -700,6 +699,7 @@ class Default(WorkerEntrypoint):
                 await release_update_claim(
                     backend,
                     update_id,
+                    claim_token,
                 )
             except Exception:
                 # Preserve the original setup or dispatch error.
@@ -711,6 +711,7 @@ class Default(WorkerEntrypoint):
         await mark_update_processed(
             backend,
             update_id,
+            claim_token,
         )
 
         body = build_webhook_response_body(
