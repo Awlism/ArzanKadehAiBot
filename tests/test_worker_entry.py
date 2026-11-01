@@ -813,37 +813,58 @@ class WorkerEntryIntegrationTests(
 
         self.assertEqual(
             len(d1.execute_calls),
-            2,
+            3,
         )
 
-        cleanup_sql = " ".join(
+        processed_cleanup_sql = " ".join(
             d1.execute_calls[0][0].split()
         ).lower()
 
         self.assertIn(
             "delete from processed_updates",
-            cleanup_sql,
+            processed_cleanup_sql,
         )
         self.assertIn(
             "where status = 'processed'",
-            cleanup_sql,
+            processed_cleanup_sql,
         )
         self.assertIn(
             "processed_at is not null",
-            cleanup_sql,
+            processed_cleanup_sql,
         )
         self.assertIn(
             "processed_at <= unixepoch() - 2592000",
-            cleanup_sql,
+            processed_cleanup_sql,
         )
 
         self.assertNotIn(
             "status = 'processing'",
-            cleanup_sql,
+            processed_cleanup_sql,
+        )
+
+        abandoned_claim_cleanup_sql = " ".join(
+            d1.execute_calls[1][0].split()
+        ).lower()
+
+        self.assertIn(
+            "delete from processed_updates",
+            abandoned_claim_cleanup_sql,
+        )
+        self.assertIn(
+            "where status = 'processing'",
+            abandoned_claim_cleanup_sql,
+        )
+        self.assertIn(
+            "lease_expires_at is not null",
+            abandoned_claim_cleanup_sql,
+        )
+        self.assertIn(
+            "lease_expires_at <= unixepoch() - 86400",
+            abandoned_claim_cleanup_sql,
         )
 
         expire_sql = " ".join(
-            d1.execute_calls[1][0].split()
+            d1.execute_calls[2][0].split()
         ).lower()
 
         self.assertIn(
