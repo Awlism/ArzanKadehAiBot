@@ -345,6 +345,16 @@ class Default(WorkerEntrypoint):
             """
         )
 
+        # Remove abandoned processing claims after a 24-hour grace period.
+        await backend.execute(
+            """
+            DELETE FROM processed_updates
+            WHERE status = 'processing'
+              AND lease_expires_at IS NOT NULL
+              AND lease_expires_at <= unixepoch() - 86400;
+            """
+        )
+
         now = datetime.now(
             timezone.utc
         ).isoformat(
