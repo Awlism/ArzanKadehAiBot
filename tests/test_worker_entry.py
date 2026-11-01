@@ -35,6 +35,7 @@ SRC_ROOT = PROJECT_ROOT / "src"
 
 PROCESSED_UPDATE_IDS = set()
 FAIL_MARK_UPDATE_IDS = set()
+UPDATE_CLAIM_TOKENS = {}
 
 # Preserve modules that were loaded before this test file installs stubs.
 # This prevents the entry integration tests from leaking fake modules into
@@ -484,28 +485,45 @@ def _install_worker_module_stubs() -> list:
         })
 
         if update_id in PROCESSED_UPDATE_IDS:
-            return False
+            return None
 
+        claim_token = f"test-claim-{update_id}"
+        UPDATE_CLAIM_TOKENS[update_id] = claim_token
         PROCESSED_UPDATE_IDS.add(update_id)
-        return True
 
-    async def mark_update_processed(backend, update_id):
+        return claim_token
+
+    async def mark_update_processed(
+        backend,
+        update_id,
+        claim_token,
+    ):
         handler_calls.append({
             "name": "mark_update_processed",
-            "args": (backend, update_id),
+            "args": (backend, update_id, claim_token),
             "kwargs": {},
         })
+
+        if UPDATE_CLAIM_TOKENS.get(update_id) != claim_token:
+            raise RuntimeError("Claim ownership mismatch")
 
         if update_id in FAIL_MARK_UPDATE_IDS:
             raise RuntimeError(
                 "Simulated failure while marking update processed"
             )
 
-    async def release_update_claim(backend, update_id):
-        PROCESSED_UPDATE_IDS.discard(update_id)
+    async def release_update_claim(
+        backend,
+        update_id,
+        claim_token,
+    ):
+        if UPDATE_CLAIM_TOKENS.get(update_id) == claim_token:
+            UPDATE_CLAIM_TOKENS.pop(update_id, None)
+            PROCESSED_UPDATE_IDS.discard(update_id)
+
         handler_calls.append({
             "name": "release_update_claim",
-            "args": (backend, update_id),
+            "args": (backend, update_id, claim_token),
             "kwargs": {},
         })
 
@@ -766,6 +784,7 @@ class WorkerEntryIntegrationTests(
         HANDLER_CALLS.clear()
         PROCESSED_UPDATE_IDS.clear()
         FAIL_MARK_UPDATE_IDS.clear()
+        UPDATE_CLAIM_TOKENS.clear()
 
         entry.backend.backend = None
         entry.backend.connected = False
@@ -1405,7 +1424,11 @@ class WorkerEntryIntegrationTests(
             async def dispatch(self, update):
                 raise RuntimeError("Original dispatch failure")
 
-        async def failing_release(backend, update_id):
+        async def failing_release(
+            backend,
+            update_id,
+            claim_token,
+        ):
             raise RuntimeError("Claim release failure")
 
         request = FakeRequest(
