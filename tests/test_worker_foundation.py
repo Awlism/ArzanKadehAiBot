@@ -95,6 +95,7 @@ class FakeResult:
         self.rowcount = rowcount
 
 
+
 class FakeDatabase:
     """In-memory test double for the state.py database operations."""
 
@@ -137,7 +138,9 @@ class FakeDatabase:
 
         if normalized.startswith("insert into processed_updates"):
             update_id = int(params[0])
-            lease_seconds = int(params[1])
+            claim_token = str(params[1])
+            lease_seconds = int(params[2])
+
             existing = self.processed_updates.get(update_id)
 
             if existing is None:
@@ -145,37 +148,56 @@ class FakeDatabase:
                     "status": "processing",
                     "claimed_at": self.clock,
                     "processed_at": None,
+                    "claim_token": claim_token,
+                    "lease_expires_at": self.clock + lease_seconds,
                 }
                 return FakeResult(1)
 
             if (
                 existing["status"] == "processing"
-                and existing["claimed_at"]
-                < self.clock - lease_seconds
+                and (
+                    existing["lease_expires_at"] is None
+                    or existing["lease_expires_at"] <= self.clock
+                )
             ):
-                existing["status"] = "processing"
-                existing["claimed_at"] = self.clock
-                existing["processed_at"] = None
+                existing.update({
+                    "status": "processing",
+                    "claimed_at": self.clock,
+                    "processed_at": None,
+                    "claim_token": claim_token,
+                    "lease_expires_at": self.clock + lease_seconds,
+                })
                 return FakeResult(1)
 
             return FakeResult(0)
 
         if normalized.startswith("update processed_updates"):
             update_id = int(params[0])
+            claim_token = str(params[1])
             row = self.processed_updates.get(update_id)
 
-            if row is not None and row["status"] == "processing":
+            if (
+                row is not None
+                and row["status"] == "processing"
+                and row["claim_token"] == claim_token
+            ):
                 row["status"] = "processed"
                 row["processed_at"] = self.clock
+                row["lease_expires_at"] = None
                 return FakeResult(1)
 
             return FakeResult(0)
 
         if normalized.startswith("delete from processed_updates"):
             update_id = int(params[0])
+            claim_token = str(params[1])
             row = self.processed_updates.get(update_id)
 
-            if row is not None and row["status"] == "processing":
+            if (
+                row is not None
+                and row["status"] == "processing"
+                and row["claim_token"] == claim_token
+            ):
                 del self.processed_updates[update_id]
                 return FakeResult(1)
 
@@ -193,12 +215,16 @@ class FakeDatabase:
             return self.rows.get(int(params[0]))
 
         if normalized.startswith(
-            "select status from processed_updates"
+            "select status, claim_token from processed_updates"
         ):
             row = self.processed_updates.get(int(params[0]))
             if row is None:
                 return None
-            return {"status": row["status"]}
+
+            return {
+                "status": row["status"],
+                "claim_token": row["claim_token"],
+            }
 
         raise AssertionError(f"Unexpected state SELECT: {query}")
 
@@ -455,6 +481,7 @@ class WorkerStateTests(unittest.TestCase):
             run(state.set_state(self.db, 10, "search", ["invalid"]))
 
 
+
 class ProcessedUpdateTests(unittest.TestCase):
     def setUp(self):
         self.db = FakeDatabase()
@@ -463,20 +490,32 @@ class ProcessedUpdateTests(unittest.TestCase):
     def test_processed_updates_table_can_be_initialized(self):
         self.assertIn("processed_updates", self.db.tables)
 
-    def test_first_claim_succeeds_and_duplicate_claim_fails(self):
-        self.assertTrue(run(state.claim_update(self.db, 100)))
-        self.assertFalse(run(state.claim_update(self.db, 100)))
+    def test_first_claim_returns_token_and_duplicate_claim_fails(self):
+        token = run(state.claim_update(self.db, 100))
+
+        self.assertIsInstance(token, str)
+        self.assertTrue(token)
+
+        self.assertIsNone(
+            run(state.claim_update(self.db, 100))
+        )
+
+    def test_each_claim_has_a_unique_token(self):
+        first = run(state.claim_update(self.db, 100))
+        self.assertTrue(
+            run(state.release_update_claim(self.db, 100, first))
+        )
+
+        second = run(state.claim_update(self.db, 100))
+
+        self.assertIsInstance(second, str)
+        self.assertNotEqual(first, second)
 
     def test_expired_processing_claim_can_be_reclaimed(self):
         update_id = 104
 
-        self.assertTrue(
-            run(
-                state.claim_update(
-                    self.db,
-                    update_id,
-                )
-            )
+        first_token = run(
+            state.claim_update(self.db, update_id)
         )
 
         original_claimed_at = (
@@ -487,42 +526,140 @@ class ProcessedUpdateTests(unittest.TestCase):
             state.UPDATE_CLAIM_LEASE_SECONDS + 1
         )
 
-        self.assertTrue(
+        second_token = run(
+            state.claim_update(self.db, update_id)
+        )
+
+        self.assertIsInstance(second_token, str)
+        self.assertNotEqual(first_token, second_token)
+
+        row = self.db.processed_updates[update_id]
+
+        self.assertEqual(row["status"], "processing")
+        self.assertGreater(
+            row["claimed_at"],
+            original_claimed_at,
+        )
+        self.assertEqual(
+            row["claim_token"],
+            second_token,
+        )
+
+    def test_expired_claim_can_be_reclaimed_at_exact_lease_boundary(self):
+        update_id = 105
+
+        first_token = run(
+            state.claim_update(self.db, update_id)
+        )
+
+        self.db.clock += state.UPDATE_CLAIM_LEASE_SECONDS
+
+        second_token = run(
+            state.claim_update(self.db, update_id)
+        )
+
+        self.assertIsInstance(second_token, str)
+        self.assertNotEqual(first_token, second_token)
+
+    def test_old_owner_cannot_mark_reclaimed_update_processed(self):
+        update_id = 106
+
+        old_token = run(
+            state.claim_update(self.db, update_id)
+        )
+
+        self.db.clock += state.UPDATE_CLAIM_LEASE_SECONDS
+
+        new_token = run(
+            state.claim_update(self.db, update_id)
+        )
+
+        with self.assertRaises(RuntimeError):
             run(
-                state.claim_update(
+                state.mark_update_processed(
                     self.db,
                     update_id,
+                    old_token,
+                )
+            )
+
+        self.assertEqual(
+            self.db.processed_updates[update_id]["claim_token"],
+            new_token,
+        )
+        self.assertEqual(
+            self.db.processed_updates[update_id]["status"],
+            "processing",
+        )
+
+    def test_old_owner_cannot_release_new_owners_claim(self):
+        update_id = 107
+
+        old_token = run(
+            state.claim_update(self.db, update_id)
+        )
+
+        self.db.clock += state.UPDATE_CLAIM_LEASE_SECONDS
+
+        new_token = run(
+            state.claim_update(self.db, update_id)
+        )
+
+        released = run(
+            state.release_update_claim(
+                self.db,
+                update_id,
+                old_token,
+            )
+        )
+
+        self.assertFalse(released)
+        self.assertEqual(
+            self.db.processed_updates[update_id]["claim_token"],
+            new_token,
+        )
+
+    def test_current_owner_can_mark_update_processed(self):
+        update_id = 108
+
+        token = run(
+            state.claim_update(self.db, update_id)
+        )
+
+        self.assertTrue(
+            run(
+                state.mark_update_processed(
+                    self.db,
+                    update_id,
+                    token,
                 )
             )
         )
 
         self.assertEqual(
             self.db.processed_updates[update_id]["status"],
-            "processing",
+            "processed",
         )
 
-        self.assertGreater(
-            self.db.processed_updates[update_id]["claimed_at"],
-            original_claimed_at,
+        self.assertIsNone(
+            self.db.processed_updates[update_id]["lease_expires_at"]
         )
 
-    def test_processing_claim_cannot_be_reclaimed_at_exact_lease_boundary(self):
-        update_id = 105
+    def test_processed_update_cannot_be_claimed_again(self):
+        token = run(state.claim_update(self.db, 109))
 
         self.assertTrue(
-            run(state.claim_update(self.db, update_id))
+            run(
+                state.mark_update_processed(
+                    self.db,
+                    109,
+                    token,
+                )
+            )
         )
 
-        self.db.clock += state.UPDATE_CLAIM_LEASE_SECONDS
-
-        self.assertFalse(
-            run(state.claim_update(self.db, update_id))
-        )
-
-        self.db.clock += 1
-
-        self.assertTrue(
-            run(state.claim_update(self.db, update_id))
+        self.assertIsNone(
+            run(state.claim_update(self.db, 109))
         )
 
     def test_claim_update_rejects_invalid_update_ids(self):
@@ -538,7 +675,7 @@ class ProcessedUpdateTests(unittest.TestCase):
                     run(
                         state.claim_update(
                             self.db,
-                            106,
+                            110,
                             lease_seconds=lease_seconds,
                         )
                     )
@@ -551,6 +688,7 @@ class ProcessedUpdateTests(unittest.TestCase):
                         state.mark_update_processed(
                             self.db,
                             update_id,
+                            "test-token",
                         )
                     )
 
@@ -562,6 +700,28 @@ class ProcessedUpdateTests(unittest.TestCase):
                         state.release_update_claim(
                             self.db,
                             update_id,
+                            "test-token",
+                        )
+                    )
+
+    def test_mark_and_release_reject_invalid_tokens(self):
+        for token in ("", " ", None, 123):
+            with self.subTest(token=token):
+                with self.assertRaises(ValueError):
+                    run(
+                        state.mark_update_processed(
+                            self.db,
+                            111,
+                            token,
+                        )
+                    )
+
+                with self.assertRaises(ValueError):
+                    run(
+                        state.release_update_claim(
+                            self.db,
+                            111,
+                            token,
                         )
                     )
 
@@ -574,8 +734,12 @@ class ProcessedUpdateTests(unittest.TestCase):
 
         operations = (
             lambda: state.claim_update(db, 200),
-            lambda: state.mark_update_processed(db, 200),
-            lambda: state.release_update_claim(db, 200),
+            lambda: state.mark_update_processed(
+                db, 200, "test-token"
+            ),
+            lambda: state.release_update_claim(
+                db, 200, "test-token"
+            ),
         )
 
         for operation in operations:
@@ -602,30 +766,64 @@ class ProcessedUpdateTests(unittest.TestCase):
                 state.mark_update_processed(
                     FailingFetchDatabase(),
                     201,
+                    "test-token",
                 )
             )
 
-    def test_processed_update_cannot_be_claimed_again(self):
-        self.assertTrue(run(state.claim_update(self.db, 101)))
-        self.assertTrue(run(state.mark_update_processed(self.db, 101)))
-        self.assertFalse(run(state.claim_update(self.db, 101)))
-
     def test_marking_missing_update_as_processed_raises(self):
         with self.assertRaises(RuntimeError):
-            run(state.mark_update_processed(self.db, 999))
+            run(
+                state.mark_update_processed(
+                    self.db,
+                    999,
+                    "missing-token",
+                )
+            )
 
     def test_releasing_processing_claim_allows_retry(self):
-        self.assertTrue(run(state.claim_update(self.db, 102)))
-        run(state.release_update_claim(self.db, 102))
-        self.assertTrue(run(state.claim_update(self.db, 102)))
+        first_token = run(
+            state.claim_update(self.db, 112)
+        )
+
+        self.assertTrue(
+            run(
+                state.release_update_claim(
+                    self.db,
+                    112,
+                    first_token,
+                )
+            )
+        )
+
+        second_token = run(
+            state.claim_update(self.db, 112)
+        )
+
+        self.assertIsInstance(second_token, str)
+        self.assertNotEqual(first_token, second_token)
 
     def test_processed_claim_is_not_deleted_by_release(self):
-        self.assertTrue(run(state.claim_update(self.db, 103)))
-        run(state.mark_update_processed(self.db, 103))
-        run(state.release_update_claim(self.db, 103))
+        token = run(state.claim_update(self.db, 113))
 
+        run(
+            state.mark_update_processed(
+                self.db,
+                113,
+                token,
+            )
+        )
+
+        released = run(
+            state.release_update_claim(
+                self.db,
+                113,
+                token,
+            )
+        )
+
+        self.assertFalse(released)
         self.assertEqual(
-            self.db.processed_updates[103]["status"],
+            self.db.processed_updates[113]["status"],
             "processed",
         )
 
