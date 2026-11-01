@@ -19,19 +19,11 @@ jobs:
         with:
           version: "0.13.4"
 
-      - name: Generate lockfile
-        run: uv lock
+      - name: Verify lockfile
+        run: uv lock --check
 
       - name: Run tests
         run: uv run --locked python -m unittest discover -s tests -v
-
-      - name: Upload lockfile
-        uses: actions/upload-artifact@v4
-        with:
-          name: uv-lockfile
-          path: uv.lock
-          if-no-files-found: error
-          retention-days: 7
 
   deploy:
     name: Deploy Worker
@@ -52,12 +44,6 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           version: "0.13.4"
-
-      - name: Download lockfile
-        uses: actions/download-artifact@v4
-        with:
-          name: uv-lockfile
-          path: .
 
       - name: Deploy Worker
         run: uv run --locked pywrangler deploy
