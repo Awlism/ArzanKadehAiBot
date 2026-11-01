@@ -28,6 +28,7 @@ from worker.webhook import (
     parse_webhook_update,
     verify_webhook_secret,
 )
+from worker.webhook_setup import ensure_telegram_webhook
 
 from worker.router import WorkerRouter
 from worker.start import (
