@@ -1,3 +1,4 @@
+
 name: Test and Deploy ArzanKadeh AI Worker
 
 on:
@@ -26,7 +27,7 @@ jobs:
         run: uv run --locked python -m unittest discover -s tests -v
 
   deploy:
-    name: Deploy Worker
+    name: Migrate D1 and Deploy Worker
     needs: test
     runs-on: ubuntu-latest
 
@@ -44,6 +45,9 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           version: "0.13.4"
+
+      - name: Apply D1 Migrations
+        run: npx --yes wrangler@4.143.1 d1 migrations apply arzankadeh-db --remote
 
       - name: Deploy Worker
         run: uv run --locked pywrangler deploy
