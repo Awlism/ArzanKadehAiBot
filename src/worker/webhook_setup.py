@@ -25,11 +25,19 @@ ALLOWED_UPDATES = [
     "callback_query",
 ]
 
-CLAIM_LEASE_SECONDS = 120
+CLAIM_LEASE_SECONDS = 300
 
 _SECRET_PATTERN = re.compile(
     r"^[A-Za-z0-9_-]{1,256}$"
 )
+
+
+def _utc_now() -> str:
+    return datetime.now(
+        timezone.utc
+    ).isoformat(
+        timespec="microseconds"
+    )
 
 
 async def ensure_telegram_webhook(
@@ -47,7 +55,23 @@ async def ensure_telegram_webhook(
     invocation currently owns the lease.
     """
 
-    # Validate required credentials before claiming the lease.
+    # Avoid requiring credentials after setup is complete.
+    current = await db.fetchone(
+        """
+        SELECT status
+        FROM worker_webhook_setup
+        WHERE id = 1
+        LIMIT 1;
+        """
+    )
+
+    if (
+        current is not None
+        and current.get("status") == "configured"
+    ):
+        return False
+
+    # Validate credentials before claiming the lease.
     TelegramClient._read_token(env)
 
     secret = get_webhook_secret(env)
@@ -61,12 +85,7 @@ async def ensure_telegram_webhook(
         )
 
     claim_token = uuid.uuid4().hex
-
-    now = datetime.now(
-        timezone.utc
-    ).isoformat(
-        timespec="seconds"
-    )
+    now = _utc_now()
 
     await db.execute(
         """
@@ -135,11 +154,7 @@ async def ensure_telegram_webhook(
             },
         )
 
-        configured_at = datetime.now(
-            timezone.utc
-        ).isoformat(
-            timespec="seconds"
-        )
+        configured_at = _utc_now()
 
         await db.execute(
             """
@@ -163,7 +178,7 @@ async def ensure_telegram_webhook(
 
         result = await db.fetchone(
             """
-            SELECT status
+            SELECT status, configured_at
             FROM worker_webhook_setup
             WHERE id = 1
             LIMIT 1;
@@ -173,6 +188,7 @@ async def ensure_telegram_webhook(
         if (
             result is None
             or result.get("status") != "configured"
+            or result.get("configured_at") != configured_at
         ):
             raise RuntimeError(
                 "Telegram webhook setup state could not be confirmed."
@@ -198,11 +214,7 @@ async def ensure_telegram_webhook(
                   AND claim_token = ?;
                 """,
                 (
-                    datetime.now(
-                        timezone.utc
-                    ).isoformat(
-                        timespec="seconds"
-                    ),
+                    _utc_now(),
                     claim_token,
                 ),
             )
