@@ -335,6 +335,17 @@ class Default(WorkerEntrypoint):
 
         await backend.connect()
 
+        try:
+            await ensure_telegram_webhook(
+                backend,
+                self.env,
+            )
+        except Exception:
+            print(
+                "Telegram webhook setup failed; "
+                "it will be retried on the next scheduled run."
+            )
+
         await ensure_processed_updates_table(backend)
 
         await backend.execute(
